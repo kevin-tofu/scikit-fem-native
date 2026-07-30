@@ -1,0 +1,11 @@
+#include <pybind11/pybind11.h>
+
+#include "native_fem/python_bindings.hpp"
+
+PYBIND11_MODULE(_skfn, module) {
+    native_fem::bind_h1_assembler(module);
+    native_fem::bind_tabulated_assembler(module);
+    native_fem::bind_linear_form_assembler(module);
+    native_fem::bind_bilinear_form_assembler(module);
+    native_fem::bind_cross_bilinear_assembler(module);
+}

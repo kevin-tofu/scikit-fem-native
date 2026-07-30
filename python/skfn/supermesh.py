@@ -1,0 +1,488 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+from scipy.sparse import bmat, csr_matrix
+
+from ._skfn import CrossBilinearAssembler
+
+
+class BoundarySurface:
+    """Triangulated search geometry backed by parent high-order facet shapes."""
+
+    def __init__(
+        self,facet_basis,*,geometry_tolerance=None,max_subdivision_level=5
+    ):
+        self.basis=facet_basis
+        scale=np.linalg.norm(
+            facet_basis.mesh.p.max(axis=1)-facet_basis.mesh.p.min(axis=1)
+        )
+        tolerance=(
+            1e-6*max(scale,1.)
+            if geometry_tolerance is None else float(geometry_tolerance)
+        )
+        points=[];triangles=[];parents=[];point_lookup={};self.maximum_subdivision_level=0
+        for face_index,(local,element) in enumerate(zip(
+            facet_basis.local_faces,facet_basis.parent_elements
+        )):
+            local=tuple(local);element=int(element)
+            is_triangle=len(local) in (3,6)
+            corner_count=3 if is_triangle else 4
+            reference_corners=facet_basis.elem.elem.doflocs[
+                np.asarray(local[:corner_count] if len(local)!=9 else (local[0],local[2],local[8],local[6]))
+            ]
+            element_coordinates=facet_basis.mesh.p[:,facet_basis.mesh.t[:,element]]
+
+            def reference(uv):
+                r,s=uv
+                if is_triangle:
+                    return (1-r-s)*reference_corners[0]+r*reference_corners[1]+s*reference_corners[2]
+                weights=np.array([(1-r)*(1-s),r*(1-s),r*s,(1-r)*s])
+                return weights@reference_corners
+
+            def physical(uv):
+                shape,_=facet_basis.volume_basis._evaluate_reference(
+                    reference(uv)[:,None]
+                )
+                return element_coordinates@shape[0]
+
+            def point_index(uv):
+                key=(face_index,)+tuple(np.round(uv,14))
+                if key not in point_lookup:
+                    point_lookup[key]=len(points);points.append(physical(uv))
+                return point_lookup[key]
+
+            def subdivide(vertices,level):
+                xyz=np.array([physical(vertex) for vertex in vertices])
+                mids=np.array([
+                    .5*(vertices[0]+vertices[1]),
+                    .5*(vertices[1]+vertices[2]),
+                    .5*(vertices[2]+vertices[0]),
+                ])
+                exact=np.array([physical(mid) for mid in mids])
+                chord=np.array([
+                    .5*(xyz[0]+xyz[1]),.5*(xyz[1]+xyz[2]),.5*(xyz[2]+xyz[0])
+                ])
+                error=float(np.max(np.linalg.norm(exact-chord,axis=1)))
+                if error>tolerance and level<max_subdivision_level:
+                    subdivide(np.array([vertices[0],mids[0],mids[2]]),level+1)
+                    subdivide(np.array([mids[0],vertices[1],mids[1]]),level+1)
+                    subdivide(np.array([mids[2],mids[1],vertices[2]]),level+1)
+                    subdivide(np.array([mids[0],mids[1],mids[2]]),level+1)
+                    return
+                self.maximum_subdivision_level=max(
+                    self.maximum_subdivision_level,level
+                )
+                triangles.append(tuple(point_index(vertex) for vertex in vertices))
+                parents.append(element)
+
+            if is_triangle:
+                subdivide(np.array([[0.,0.],[1.,0.],[0.,1.]]),0)
+            else:
+                subdivide(np.array([[0.,0.],[1.,0.],[1.,1.]]),0)
+                subdivide(np.array([[0.,0.],[1.,1.],[0.,1.]]),0)
+        self.points=np.asarray(points,dtype=float).T
+        self.triangles=np.asarray(triangles,dtype=np.int64).T
+        self.parents=np.asarray(parents,dtype=np.int64)
+        self.geometry_tolerance=tolerance
+
+    @property
+    def components(self):
+        return self.basis.elem._dim
+
+    @property
+    def local_nodes(self):
+        return self.basis.mesh.t.shape[0]
+
+    def element_nodes(self, search_triangle):
+        return self.basis.mesh.t[:,self.parents[search_triangle]]
+
+    def evaluate(self, search_triangle, physical_points):
+        element=self.parents[search_triangle]
+        nodes=self.basis.mesh.t[:,element]
+        coordinates=self.basis.mesh.p[:,nodes]
+        if coordinates.shape[1] in (4,10):
+            guess=np.full((len(physical_points),3),.25)
+        else:
+            guess=np.full((len(physical_points),3),.5)
+        volume=self.basis.volume_basis
+        for point_index,point in enumerate(physical_points):
+            xi=guess[point_index]
+            for _ in range(15):
+                shape,reference_gradient=volume._evaluate_reference(xi[:,None])
+                residual=coordinates@shape[0]-point
+                jacobian=coordinates@reference_gradient[0]
+                increment=np.linalg.solve(jacobian,residual)
+                xi-=increment
+                if np.linalg.norm(increment)<1e-12:
+                    break
+            else:
+                raise ValueError("isoparametric inverse mapping did not converge")
+            guess[point_index]=xi
+        values=np.empty((len(physical_points),coordinates.shape[1]))
+        gradients=np.empty((len(physical_points),coordinates.shape[1],3))
+        for q,xi in enumerate(guess):
+            shape,reference_gradient=volume._evaluate_reference(xi[:,None])
+            jacobian=coordinates@reference_gradient[0]
+            values[q]=shape[0]
+            gradients[q]=reference_gradient[0]@np.linalg.inv(jacobian)
+        return values,gradients
+
+
+def _cross2(a, b):
+    return a[0]*b[1]-a[1]*b[0]
+
+
+def _clip(subject, clip_triangle, tolerance):
+    polygon=[np.asarray(point) for point in subject]
+    orientation=np.sign(sum(
+        _cross2(clip_triangle[(i+1)%3]-clip_triangle[i],
+                clip_triangle[(i+2)%3]-clip_triangle[(i+1)%3])
+        for i in range(3)
+    )) or 1.
+    for i in range(3):
+        a,b=clip_triangle[i],clip_triangle[(i+1)%3];edge=b-a
+        output=[];previous=polygon[-1] if polygon else None
+        for current in polygon:
+            current_inside=orientation*_cross2(edge,current-a)>=-tolerance
+            previous_inside=orientation*_cross2(edge,previous-a)>=-tolerance
+            if current_inside != previous_inside:
+                segment=current-previous
+                denominator=_cross2(segment,edge)
+                if abs(denominator)>tolerance:
+                    parameter=_cross2(a-previous,edge)/denominator
+                    output.append(previous+parameter*segment)
+            if current_inside:
+                output.append(current)
+            previous=current
+        polygon=output
+        if not polygon:
+            break
+    return polygon
+
+
+def _barycentric(point, triangle):
+    matrix=np.column_stack((triangle[1]-triangle[0],triangle[2]-triangle[0]))
+    coordinates=np.linalg.solve(matrix,point-triangle[0])
+    return np.array([1.-coordinates.sum(),coordinates[0],coordinates[1]])
+
+
+@dataclass(frozen=True)
+class SupermeshDiagnostics:
+    total_pair_count: int
+    candidate_pair_count: int
+    overlap_pair_count: int
+    integration_triangle_count: int
+    overlap_area: float
+    noncoplanar_rejection_count: int
+    maximum_plane_gap: float
+    master_search_triangle_count: int = 0
+    slave_search_triangle_count: int = 0
+    maximum_subdivision_level: int = 0
+
+
+def _aabb_candidates(master_xyz, slave_xyz, tolerance):
+    master_min=master_xyz.min(axis=1)-tolerance
+    master_max=master_xyz.max(axis=1)+tolerance
+    slave_min=slave_xyz.min(axis=1)-tolerance
+    slave_max=slave_xyz.max(axis=1)+tolerance
+    master_order=np.argsort(master_min[:,0])
+    slave_order=np.argsort(slave_min[:,0])
+    active=[];start=0
+    for master in master_order:
+        while start<len(slave_order) and slave_min[slave_order[start],0]<=master_max[master,0]:
+            active.append(int(slave_order[start]));start+=1
+        active=[slave for slave in active if slave_max[slave,0]>=master_min[master,0]]
+        for slave in active:
+            if (
+                slave_min[slave,0]<=master_max[master,0]
+                and slave_max[slave,1]>=master_min[master,1]
+                and slave_min[slave,1]<=master_max[master,1]
+                and slave_max[slave,2]>=master_min[master,2]
+                and slave_min[slave,2]<=master_max[master,2]
+            ):
+                yield int(master),slave
+
+
+class TriangleSupermesh:
+    """Reusable P1 coupling quadrature for coplanar nonmatching triangles."""
+
+    def __init__(
+        self, master_points, master_triangles, slave_points, slave_triangles,
+        *, components=1, tolerance=1e-10, projection_tolerance=None,
+    ):
+        self._initialize(
+            master_points,master_triangles,slave_points,slave_triangles,
+            components=components,tolerance=tolerance,
+            projection_tolerance=projection_tolerance,
+        )
+
+    def _initialize(
+        self,master_points,master_triangles,slave_points,slave_triangles,
+        *,components,tolerance,projection_tolerance,
+        master_surface=None,slave_surface=None,
+    ):
+        if np.isscalar(components):
+            row_components=column_components=int(components)
+        else:
+            row_components,column_components=map(int,components)
+        master_points=np.asarray(master_points,dtype=float)
+        slave_points=np.asarray(slave_points,dtype=float)
+        master_triangles=np.asarray(master_triangles,dtype=np.int64)
+        slave_triangles=np.asarray(slave_triangles,dtype=np.int64)
+        if master_points.shape[0]!=3: master_points=master_points.T
+        if slave_points.shape[0]!=3: slave_points=slave_points.T
+        if master_triangles.shape[0]!=3: master_triangles=master_triangles.T
+        if slave_triangles.shape[0]!=3: slave_triangles=slave_triangles.T
+        row_dofs=[];column_dofs=[];row_shape=[];column_shape=[];weights=[]
+        row_normal_gradient=[];column_normal_gradient=[]
+        candidates=0;overlaps=0;area_total=0.;noncoplanar=0;maximum_gap=0.
+        projection_tolerance=(
+            tolerance if projection_tolerance is None
+            else float(projection_tolerance)
+        )
+        a=.445948490915965;b=.091576213509771
+        quadrature_bary=np.array([
+            [a,a,1-2*a],[a,1-2*a,a],[1-2*a,a,a],
+            [b,b,1-2*b],[b,1-2*b,b],[1-2*b,b,b],
+        ])
+        quadrature_weights=np.array(
+            [.223381589678011]*3+[.109951743655322]*3
+        )
+        master_xyz_all=master_points[:,master_triangles].transpose(2,1,0)
+        slave_xyz_all=slave_points[:,slave_triangles].transpose(2,1,0)
+        for master_index,slave_index in _aabb_candidates(
+            master_xyz_all,slave_xyz_all,max(tolerance,projection_tolerance)
+        ):
+            master_nodes=master_triangles[:,master_index]
+            slave_nodes=slave_triangles[:,slave_index]
+            master_xyz=master_points[:,master_nodes].T
+            tangent0=master_xyz[1]-master_xyz[0]
+            normal=np.cross(tangent0,master_xyz[2]-master_xyz[0])
+            norm=np.linalg.norm(normal)
+            if norm<=tolerance: continue
+            normal/=norm;tangent0/=np.linalg.norm(tangent0)
+            tangent1=np.cross(normal,tangent0)
+            project=lambda xyz:np.column_stack(((xyz-master_xyz[0])@tangent0,
+                                                (xyz-master_xyz[0])@tangent1))
+            master_2d=project(master_xyz)
+            slave_xyz=slave_points[:,slave_nodes].T;candidates+=1
+            distances=(slave_xyz-master_xyz[0])@normal
+            gap=float(np.max(np.abs(distances)));maximum_gap=max(maximum_gap,gap)
+            if gap>projection_tolerance:
+                noncoplanar+=1;continue
+            slave_2d=project(slave_xyz)
+            polygon=_clip(master_2d,slave_2d,tolerance)
+            if len(polygon)<3: continue
+            pair_has_area=False
+            for i in range(1,len(polygon)-1):
+                triangle=np.array([polygon[0],polygon[i],polygon[i+1]])
+                area=abs(_cross2(triangle[1]-triangle[0],triangle[2]-triangle[0]))/2.
+                if area<=tolerance: continue
+                pair_has_area=True;area_total+=area
+                master_values=[];slave_values=[];physical_points=[]
+                for bary in quadrature_bary:
+                    point=bary@triangle
+                    master_values.append(_barycentric(point,master_2d))
+                    slave_values.append(_barycentric(point,slave_2d))
+                    physical_points.append(
+                        master_xyz[0]+point[0]*tangent0+point[1]*tangent1
+                    )
+                if master_surface is not None:
+                    master_values,master_gradients=master_surface.evaluate(
+                        master_index,np.asarray(physical_points)
+                    )
+                    master_element_nodes=master_surface.element_nodes(master_index)
+                else:
+                    master_element_nodes=master_nodes
+                if slave_surface is not None:
+                    slave_values,slave_gradients=slave_surface.evaluate(
+                        slave_index,np.asarray(physical_points)
+                    )
+                    slave_element_nodes=slave_surface.element_nodes(slave_index)
+                else:
+                    slave_element_nodes=slave_nodes
+                row_shape.append(master_values);column_shape.append(slave_values)
+                if master_surface is not None:
+                    slave_search_normal=np.cross(
+                        slave_xyz[1]-slave_xyz[0],slave_xyz[2]-slave_xyz[0]
+                    )
+                    slave_search_normal/=np.linalg.norm(slave_search_normal)
+                    if np.dot(slave_search_normal,normal)>0:
+                        slave_search_normal=-slave_search_normal
+                    row_normal_gradient.append(
+                        np.einsum("qni,i->qn",master_gradients,normal)
+                    )
+                    column_normal_gradient.append(
+                        np.einsum(
+                            "qni,i->qn",slave_gradients,slave_search_normal
+                        )
+                    )
+                weights.append(area*quadrature_weights)
+                row_dofs.append([[row_components*node+c for c in range(row_components)] for node in master_element_nodes])
+                column_dofs.append([[column_components*node+c for c in range(column_components)] for node in slave_element_nodes])
+            overlaps+=int(pair_has_area)
+        if not row_dofs:
+            raise ValueError("triangle surfaces have no positive-area overlap")
+        self._native=CrossBilinearAssembler(
+            np.asarray(row_dofs,dtype=np.int64),
+            np.asarray(column_dofs,dtype=np.int64),
+            np.asarray(row_shape,dtype=np.float64),
+            np.asarray(column_shape,dtype=np.float64),
+            np.asarray(weights,dtype=np.float64),
+        )
+        self._matrix=csr_matrix(
+            (self._native.values,self._native.indices,self._native.indptr),
+            shape=(self._native.rows,self._native.columns),copy=False,
+        )
+        self._coefficient_shape=np.asarray(weights).shape
+        self._row_dofs=np.asarray(row_dofs,dtype=np.int64)
+        self._column_dofs=np.asarray(column_dofs,dtype=np.int64)
+        self._row_shape=np.asarray(row_shape,dtype=np.float64)
+        self._column_shape=np.asarray(column_shape,dtype=np.float64)
+        self._weights=np.asarray(weights,dtype=np.float64)
+        self._row_normal_gradient=(
+            np.asarray(row_normal_gradient,dtype=np.float64)
+            if row_normal_gradient else None
+        )
+        self._column_normal_gradient=(
+            np.asarray(column_normal_gradient,dtype=np.float64)
+            if column_normal_gradient else None
+        )
+        self.master_size=self._native.rows
+        self.slave_size=self._native.columns
+        self.diagnostics=SupermeshDiagnostics(
+            master_triangles.shape[1]*slave_triangles.shape[1],
+            candidates,overlaps,len(weights),area_total,
+            noncoplanar,maximum_gap,
+        )
+
+    @classmethod
+    def from_facets(
+        cls, master_basis, slave_basis, *, tolerance=1e-10,
+        projection_tolerance=None,geometry_tolerance=None,
+        max_subdivision_level=5,
+    ):
+        master=BoundarySurface(
+            master_basis,geometry_tolerance=geometry_tolerance,
+            max_subdivision_level=max_subdivision_level,
+        )
+        slave=BoundarySurface(
+            slave_basis,geometry_tolerance=geometry_tolerance,
+            max_subdivision_level=max_subdivision_level,
+        )
+        return cls._from_surfaces(
+            master,slave,tolerance=tolerance,
+            projection_tolerance=projection_tolerance,
+        )
+
+    @classmethod
+    def _from_surfaces(
+        cls,master,slave,*,tolerance,projection_tolerance,
+    ):
+        instance=cls.__new__(cls)
+        instance._initialize(
+            master.points,master.triangles,slave.points,slave.triangles,
+            components=(master.components,slave.components),tolerance=tolerance,
+            projection_tolerance=projection_tolerance,
+            master_surface=master,slave_surface=slave,
+        )
+        instance.master_size=master.basis.N
+        instance.slave_size=slave.basis.N
+        old=instance.diagnostics
+        instance.diagnostics=SupermeshDiagnostics(
+            old.total_pair_count,old.candidate_pair_count,
+            old.overlap_pair_count,old.integration_triangle_count,
+            old.overlap_area,old.noncoplanar_rejection_count,
+            old.maximum_plane_gap,
+            master.triangles.shape[1],slave.triangles.shape[1],
+            max(master.maximum_subdivision_level,slave.maximum_subdivision_level),
+        )
+        return instance
+
+    def assemble(self, coefficient=1.):
+        coefficient=np.ascontiguousarray(np.broadcast_to(
+            np.asarray(coefficient,dtype=np.float64),self._coefficient_shape
+        ))
+        self._native.assemble(coefficient)
+        return self._matrix
+
+    def assemble_tensor(self, coefficient):
+        """Assemble master-by-slave coupling with a component tensor."""
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        target=self._coefficient_shape+(
+            self._row_dofs.shape[2],self._column_dofs.shape[2]
+        )
+        coefficient=np.ascontiguousarray(np.broadcast_to(coefficient,target))
+        self._native.assemble(coefficient)
+        self._matrix.resize((self.master_size,self.slave_size))
+        return self._matrix
+
+    def assemble_traces(
+        self, row_weights, column_weights, *,
+        row_kind="value", column_kind="value", coefficient=1.,
+    ):
+        """Assemble a 2-by-2 interface block from arbitrary trace weights."""
+        if row_kind not in ("value","normal_gradient") or column_kind not in (
+            "value","normal_gradient"
+        ):
+            raise ValueError("trace kind must be value or normal_gradient")
+        row_master=self._trace("master",row_kind)
+        row_slave=self._trace("slave",row_kind)
+        column_master=self._trace("master",column_kind)
+        column_slave=self._trace("slave",column_kind)
+        coefficient=np.ascontiguousarray(np.broadcast_to(
+            np.asarray(coefficient,dtype=np.float64),self._coefficient_shape
+        ))
+        blocks=[
+            [self._cross("mm",row_master,column_master,coefficient,self.master_size,self.master_size),
+             self._cross("ms",row_master,column_slave,coefficient,self.master_size,self.slave_size)],
+            [self._cross("sm",row_slave,column_master,coefficient,self.slave_size,self.master_size),
+             self._cross("ss",row_slave,column_slave,coefficient,self.slave_size,self.slave_size)],
+        ]
+        rw=np.asarray(row_weights,dtype=float);cw=np.asarray(column_weights,dtype=float)
+        return bmat([
+            [rw[0]*cw[0]*blocks[0][0],rw[0]*cw[1]*blocks[0][1]],
+            [rw[1]*cw[0]*blocks[1][0],rw[1]*cw[1]*blocks[1][1]],
+        ],format="csr")
+
+    def _trace(self,side,kind):
+        if kind=="value":
+            return self._row_shape if side=="master" else self._column_shape
+        trace=(
+            self._row_normal_gradient
+            if side=="master" else self._column_normal_gradient
+        )
+        if trace is None:
+            raise ValueError(
+                "normal gradients require a supermesh created from FacetBasis"
+            )
+        return trace
+
+    def _cross(self,key,row_shape,column_shape,coefficient,rows,columns):
+        cache=getattr(self,"_trace_assemblers",None)
+        if cache is None:
+            cache={};self._trace_assemblers=cache
+        signature=(key,id(row_shape),id(column_shape))
+        native=cache.get(signature)
+        if native is None:
+            if key=="mm":
+                row_dofs,column_dofs=self._row_dofs,self._row_dofs
+            elif key=="ms":
+                row_dofs,column_dofs=self._row_dofs,self._column_dofs
+            elif key=="sm":
+                row_dofs,column_dofs=self._column_dofs,self._row_dofs
+            else:
+                row_dofs,column_dofs=self._column_dofs,self._column_dofs
+            native=CrossBilinearAssembler(
+                row_dofs,column_dofs,row_shape,column_shape,self._weights
+            )
+            cache[signature]=native
+        native.assemble(coefficient)
+        matrix=csr_matrix(
+            (native.values,native.indices,native.indptr),
+            shape=(native.rows,native.columns),copy=False,
+        )
+        matrix.resize((rows,columns))
+        return matrix

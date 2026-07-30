@@ -1,0 +1,142 @@
+import numpy as np
+import pytest
+import skfem
+from skfem.helpers import ddot as skfem_ddot
+from skfem.helpers import dot as skfem_dot
+from skfem.helpers import grad as skfem_grad
+
+import skfn
+from skfn.helpers import ddot, dot, grad
+
+
+def vector_basis():
+    mesh = skfn.MeshTet.init_tensor(
+        np.linspace(0., 1., 3),
+        np.linspace(0., 1., 3),
+        np.linspace(0., 1., 3),
+    )
+    return skfn.Basis(
+        mesh, skfn.ElementVector(skfn.ElementTetP1()), intorder=2
+    )
+
+
+def reference_basis(basis, *, facets=False):
+    mesh = skfem.MeshTet(basis.mesh.p, basis.mesh.t)
+    element = skfem.ElementVector(skfem.ElementTetP1())
+    if facets:
+        return skfem.FacetBasis(
+            mesh, element, facets=mesh.boundary_facets(), intorder=2
+        )
+    return skfem.Basis(mesh, element, intorder=2)
+
+
+def test_import_skfn_as_skfem_uses_independent_core_api():
+    assert skfn.MeshTet is not skfem.MeshTet
+    assert skfn.Basis is not skfem.Basis
+    assert skfn.FacetBasis is not skfem.FacetBasis
+
+
+def test_native_volume_linear_form_uses_skfem_syntax():
+    basis = vector_basis()
+
+    @skfn.LinearForm
+    def native_load(v, w):
+        return dot(w.force, v)
+
+    @skfem.LinearForm
+    def reference_load(v, w):
+        return skfem_dot(w.force, v)
+
+    force = np.array([1.2, -0.7, 2.1])[:, None, None]
+    actual = skfn.asm(native_load, basis, force=force)
+    expected = skfem.asm(
+        reference_load, reference_basis(basis), force=force
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=2e-14)
+
+
+def test_native_facet_traction_uses_same_form():
+    basis = vector_basis()
+    facets = basis.mesh.boundary_facets()
+    facet_basis = skfn.FacetBasis(
+        basis.mesh, basis.elem, facets=facets, intorder=2
+    )
+
+    @skfn.LinearForm
+    def native_traction(v, w):
+        return dot(w.traction, v)
+
+    @skfem.LinearForm
+    def reference_traction(v, w):
+        return skfem_dot(w.traction, v)
+
+    traction = np.array([0.3, 1.1, -0.2])[:, None, None]
+    actual = skfn.asm(native_traction, facet_basis, traction=traction)
+    expected = skfem.asm(
+        reference_traction,
+        reference_basis(basis, facets=True),
+        traction=traction,
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=2e-14)
+
+
+def test_gradient_linear_form_uses_native_path():
+    basis = vector_basis()
+
+    @skfn.LinearForm
+    def native_form(v, w):
+        return ddot(w.tensor, grad(v))
+
+    @skfem.LinearForm
+    def reference_form(v, w):
+        return skfem_ddot(w.tensor, skfem_grad(v))
+
+    tensor = np.arange(9, dtype=float).reshape(3, 3, 1, 1) / 10
+    actual = native_form.assemble(basis, tensor=tensor)
+    expected = reference_form.assemble(
+        reference_basis(basis), tensor=tensor
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=2e-14)
+
+
+def test_unsupported_form_fails_instead_of_falling_back():
+    basis = vector_basis()
+
+    @skfn.LinearForm
+    def coordinate_load(v, w):
+        return w.x[0] * v[0]
+
+    with pytest.raises(
+        skfn.UnsupportedNativeForm, match="cannot be traced|indexing"
+    ):
+        skfn.asm(coordinate_load, basis)
+
+
+def test_native_bilinear_mass_form():
+    basis = vector_basis()
+
+    @skfn.BilinearForm
+    def mass(u, v, w):
+        return dot(u, v)
+
+    actual = skfn.asm(mass, basis)
+
+    @skfem.BilinearForm
+    def reference(u, v, w):
+        return skfem_dot(u, v)
+
+    expected = skfem.asm(reference, reference_basis(basis))
+    np.testing.assert_allclose(
+        actual.toarray(), expected.toarray(), rtol=3e-13, atol=3e-13
+    )
+
+
+def test_upstream_form_is_rejected_by_native_asm():
+    basis = vector_basis()
+
+    @skfem.LinearForm
+    def upstream(v, w):
+        return v[0]
+
+    with pytest.raises(TypeError, match="use skfem.asm explicitly"):
+        skfn.asm(upstream, basis)

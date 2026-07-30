@@ -1,0 +1,22 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "skfem-native"
+version = "0.1.0"
+description = "A small native assembly engine for nonlinear finite elements"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "scikit-fem>=10"]
+
+[tool.scikit-build]
+wheel.packages = ["python/skfn"]
+cmake.build-type = "Release"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
