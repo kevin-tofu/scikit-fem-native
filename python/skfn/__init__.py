@@ -20,7 +20,13 @@ from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
 from .supermesh import SupermeshDiagnostics, TriangleSupermesh
 from .interface import InterfaceField
-from .forms import BilinearForm, LinearForm, UnsupportedNativeForm, asm
+from .forms import (
+    BilinearForm,
+    Functional,
+    LinearForm,
+    UnsupportedNativeForm,
+    asm,
+)
 from .kernels import (
     LinearElasticHex8,
     LinearElasticTet4,
@@ -41,6 +47,7 @@ __all__ = [
     "NativeLinearForm",
     "NativeBilinearForm",
     "LinearForm",
+    "Functional",
     "BilinearForm",
     "Basis",
     "DiscreteField",

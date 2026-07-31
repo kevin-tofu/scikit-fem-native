@@ -333,6 +333,40 @@ class DiscreteField:
     def __getitem__(self,key):
         return self.value[key]
 
+    @staticmethod
+    def _value(other):
+        return other.value if isinstance(other,DiscreteField) else other
+
+    def __mul__(self,other):
+        if not isinstance(other,(DiscreteField,np.ndarray)) and not np.isscalar(other):
+            return NotImplemented
+        return self.value*self._value(other)
+
+    __rmul__=__mul__
+
+    def __add__(self,other):
+        return self.value+self._value(other)
+
+    __radd__=__add__
+
+    def __sub__(self,other):
+        return self.value-self._value(other)
+
+    def __rsub__(self,other):
+        return self._value(other)-self.value
+
+    def __truediv__(self,other):
+        return self.value/self._value(other)
+
+    def __rtruediv__(self,other):
+        return self._value(other)/self.value
+
+    def __pow__(self,other):
+        return self.value**other
+
+    def __neg__(self):
+        return -self.value
+
 
 class DofsView:
     """Selected DOF indices with the scikit-fem-style ``all()`` accessor."""
@@ -443,7 +477,7 @@ class Basis:
         components=self.elem._dim
         nodes=self.tabulated_shape.shape[2]
         local=coefficients[self.element_dofs.T].reshape(
-            self.mesh.nelements,nodes,components
+            self.dx.shape[0],nodes,components
         )
         value=np.einsum(
             "eqn,enc->ceq",self.tabulated_shape,local
@@ -894,6 +928,14 @@ class FacetBasis:
                 self.dx[f,q]=np.linalg.norm(np.cross(tangents[:,0],tangents[:,1]))*face_weights[q]
         self.basis = self._vector_fields()
         self.volume_basis=volume
+
+    def interpolate(self,coefficients):
+        coefficients=np.asarray(coefficients,dtype=np.float64)
+        if coefficients.shape!=(self.N,):
+            raise ValueError(
+                f"coefficients must have shape ({self.N},)"
+            )
+        return Basis._interpolate(self,coefficients)
 
     def _vector_fields(self):
         fields = []

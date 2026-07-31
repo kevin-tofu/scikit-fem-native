@@ -8,6 +8,7 @@ import numpy as np
 
 from .linear_form import NativeCompositeLinearForm,NativeLinearForm
 from .bilinear_form import NativeBilinearForm,NativeCompositeBilinearForm
+from ._skfn import integrate_functional
 
 
 class UnsupportedNativeForm(Exception):
@@ -596,6 +597,14 @@ class _LinearForm:
         return asm(self, *bases, **kwargs)
 
 
+class _Functional:
+    def __init__(self,function: Callable):
+        self.function=function
+
+    def assemble(self,*bases,**kwargs):
+        return asm(self,*bases,**kwargs)
+
+
 class _BilinearForm:
     def __init__(self, function: Callable):
         self.function = function
@@ -612,10 +621,43 @@ def LinearForm(function=None, **kwargs):
     return _LinearForm(function) if function is not None else _LinearForm
 
 
+def Functional(function=None,**kwargs):
+    if kwargs:
+        return lambda fn:_Functional(fn)
+    return _Functional(function) if function is not None else _Functional
+
+
 def BilinearForm(function=None, **kwargs):
     if kwargs:
         return lambda fn: _BilinearForm(fn)
     return _BilinearForm(function) if function is not None else _BilinearForm
+
+
+def _native_functional_assemble(form,basis,kwargs):
+    geometry={"x":_QuadratureValue(
+        np.moveaxis(basis.global_coordinates,-1,0)
+    )}
+    if basis.normals is not None:
+        geometry["n"]=_QuadratureValue(np.moveaxis(basis.normals,-1,0))
+    try:
+        expression=form.function(
+            _Parameters(_parameter_values(geometry,kwargs))
+        )
+        values=np.asarray(expression,dtype=np.float64)
+    except Exception as error:
+        raise UnsupportedNativeForm(
+            f"Functional contains an unsupported operation: {error}"
+        ) from error
+    try:
+        values=np.broadcast_to(values,basis.dx.shape)
+    except ValueError as error:
+        raise UnsupportedNativeForm(
+            "Functional must evaluate to one scalar per quadrature point"
+        ) from error
+    return integrate_functional(
+        np.ascontiguousarray(values),
+        np.ascontiguousarray(basis.dx,dtype=np.float64),
+    )
 
 
 def _compile_linear(form: _LinearForm,basis,kwargs):
@@ -1017,6 +1059,12 @@ def asm(form, *bases, **kwargs):
     Unsupported forms raise ``UnsupportedNativeForm``; this function never
     silently delegates assembly to scikit-fem.
     """
+    if isinstance(form,_Functional):
+        if len(bases)!=1:
+            raise UnsupportedNativeForm(
+                "native Functional requires one Basis or FacetBasis"
+            )
+        return _native_functional_assemble(form,bases[0],kwargs)
     if isinstance(form,_LinearForm):
         integration=kwargs.pop("integration",None)
         if integration is not None:
@@ -1055,8 +1103,9 @@ def asm(form, *bases, **kwargs):
             )
         return _native_bilinear_assemble(form, bases[0], kwargs)
     raise TypeError(
-        "skfn.asm accepts forms created by skfn.LinearForm or "
-        "skfn.BilinearForm; use skfem.asm explicitly for scikit-fem forms"
+        "skfn.asm accepts forms created by skfn.Functional, "
+        "skfn.LinearForm, or skfn.BilinearForm; use skfem.asm "
+        "explicitly for scikit-fem forms"
     )
 
 

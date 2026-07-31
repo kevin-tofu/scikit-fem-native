@@ -433,6 +433,29 @@ Interpolated scalar fields can also be passed as quadrature coefficients to a
 `BilinearForm`, enabling solution-dependent native assembly without adding a
 nonlinear solver policy to `skfn`.
 
+Scalar volume and surface quantities use `Functional`:
+
+```python
+@skfem.Functional
+def energy(w):
+    return (
+        0.5 * ddot(grad(w.u), grad(w.u))
+        + w.pressure**2
+    )
+
+velocity, pressure = basis.interpolate(solution)
+value = skfem.asm(
+    energy, basis,
+    u=velocity,
+    pressure=pressure,
+)
+```
+
+The same API works with `FacetBasis`, including `w.x`, `w.n`, and fields
+interpolated directly on its quadrature points.  A functional expression is
+evaluated to one scalar per quadrature point and its weighted reduction runs
+in C++ with the GIL released.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

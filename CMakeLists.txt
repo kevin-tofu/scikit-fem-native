@@ -10,6 +10,7 @@ pybind11_add_module(
   cpp/src/assembly/h1_assembler.cpp
   cpp/src/assembly/tabulated_assembler.cpp
   cpp/src/assembly/linear_form_assembler.cpp
+  cpp/src/assembly/functional_assembler.cpp
   cpp/src/assembly/bilinear_form_assembler.cpp
   cpp/src/assembly/cross_bilinear_assembler.cpp
 )
