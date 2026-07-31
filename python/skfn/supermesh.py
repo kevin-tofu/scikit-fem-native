@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import bmat, csr_matrix
 
+from .basis import DiscreteField
 from ._skfn import (
     CrossBilinearAssembler,
     LinearFormAssembler,
@@ -545,6 +546,38 @@ class TriangleSupermesh:
         ))
         self._native.assemble(coefficient)
         return self._matrix
+
+    def interpolate(self,master_coefficients,slave_coefficients):
+        """Interpolate both interface fields at overlap quadrature points."""
+        return (
+            self._interpolate_side("master",master_coefficients),
+            self._interpolate_side("slave",slave_coefficients),
+        )
+
+    def _interpolate_side(self,side,coefficients):
+        dofs=self._row_dofs if side=="master" else self._column_dofs
+        shape=self._row_shape if side=="master" else self._column_shape
+        gradients=(
+            self._row_gradients
+            if side=="master" else self._column_gradients
+        )
+        expected=self.master_size if side=="master" else self.slave_size
+        coefficients=np.asarray(coefficients,dtype=np.float64)
+        if coefficients.shape!=(expected,):
+            raise ValueError(
+                f"{side} coefficients must have shape ({expected},)"
+            )
+        local=coefficients[dofs]
+        value=np.einsum("eqn,enc->ceq",shape,local)
+        gradient=(
+            None if gradients is None else
+            np.einsum("eqnd,enc->cdeq",gradients,local)
+        )
+        if dofs.shape[2]==1:
+            value=value[0]
+            if gradient is not None:
+                gradient=gradient[0]
+        return DiscreteField(value,gradient)
 
     def assemble_tensor(self, coefficient):
         """Assemble master-by-slave coupling with a component tensor."""

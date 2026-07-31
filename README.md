@@ -239,6 +239,33 @@ rhs = skfem.asm(
 )
 ```
 
+Scalar overlap quantities use `Functional` without requiring bases at
+assembly time:
+
+```python
+master_trace, slave_trace = supermesh.interpolate(
+    master_solution,
+    slave_solution,
+)
+
+@skfem.Functional
+def interface_energy(w):
+    jump_value = w.slave - w.master
+    return 0.5 * w.penalty * jump_value**2 + w.gap**2
+
+energy = skfem.asm(
+    interface_energy,
+    integration=supermesh,
+    master=master_trace,
+    slave=slave_trace,
+    penalty=penalty,
+)
+```
+
+Interface functionals expose `w.x`, `w.n_master`, `w.n_slave`, and `w.gap`.
+`TriangleSupermesh.interpolate()` evaluates both value traces and, for
+`from_facets()`, their physical gradients at overlap quadrature points.
+
 `avg(v)`, `jump(grad(v))`, `avg(grad(v))`, and normal-gradient traces are
 assembled natively as well.  The weights supplied by `jump` produce equal and
 opposite master/slave resultants for a constant interface traction.

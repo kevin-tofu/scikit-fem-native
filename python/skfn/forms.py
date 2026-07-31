@@ -959,6 +959,32 @@ def _interface_geometry(integration,kwargs):
     return _parameter_values(geometry,kwargs)
 
 
+def _native_interface_functional_assemble(form,integration,kwargs):
+    try:
+        expression=form.function(
+            _Parameters(_interface_geometry(integration,kwargs))
+        )
+        values=np.asarray(expression,dtype=np.float64)
+    except Exception as error:
+        raise UnsupportedNativeForm(
+            f"interface Functional contains an unsupported "
+            f"operation: {error}"
+        ) from error
+    try:
+        values=np.broadcast_to(
+            values,integration._coefficient_shape
+        )
+    except ValueError as error:
+        raise UnsupportedNativeForm(
+            "interface Functional must evaluate to one scalar per "
+            "overlap quadrature point"
+        ) from error
+    return integrate_functional(
+        np.ascontiguousarray(values),
+        np.ascontiguousarray(integration._weights,dtype=np.float64),
+    )
+
+
 def _native_interface_assemble(form,integration,kwargs):
     try:
         expression=form.function(
@@ -1060,6 +1086,16 @@ def asm(form, *bases, **kwargs):
     silently delegates assembly to scikit-fem.
     """
     if isinstance(form,_Functional):
+        integration=kwargs.pop("integration",None)
+        if integration is not None:
+            if len(bases) not in (0,2):
+                raise UnsupportedNativeForm(
+                    "interface Functional accepts no bases or its "
+                    "master and slave bases"
+                )
+            return _native_interface_functional_assemble(
+                form,integration,kwargs
+            )
         if len(bases)!=1:
             raise UnsupportedNativeForm(
                 "native Functional requires one Basis or FacetBasis"

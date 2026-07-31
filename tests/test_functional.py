@@ -4,7 +4,7 @@ from skfem.helpers import ddot as reference_ddot
 from skfem.helpers import grad as reference_grad
 
 import skfn
-from skfn.helpers import ddot,grad
+from skfn.helpers import ddot,dot,grad
 
 
 def test_volume_functional_of_interpolated_field_matches_skfem():
@@ -149,3 +149,84 @@ def test_functional_rejects_vector_integrand():
         pass
     else:
         raise AssertionError("vector Functional result must be rejected")
+
+
+def test_supermesh_functional_integrates_geometry_context():
+    points=np.array([
+        [0.,1.,0.],
+        [0.,0.,1.],
+        [0.,0.,0.],
+    ])
+    slave_points=points.copy()
+    slave_points[2]+=.01
+    triangles=np.array([[0],[1],[2]])
+    integration=skfn.TriangleSupermesh(
+        points,triangles,slave_points,triangles,
+        projection_tolerance=.02,
+    )
+
+    @skfn.Functional
+    def geometry(w):
+        return (
+            1.+w.gap
+            +w.n_master[2]**2
+            +w.n_slave[2]**2
+        )
+
+    actual=skfn.asm(geometry,integration=integration)
+    expected=.5*(3.+.01)
+    np.testing.assert_allclose(actual,expected,rtol=2e-15,atol=2e-15)
+
+
+def test_supermesh_interpolated_jump_functional():
+    points=np.array([
+        [0.,1.,0.],
+        [0.,0.,1.],
+        [0.,0.,0.],
+    ])
+    triangles=np.array([[0],[1],[2]])
+    integration=skfn.TriangleSupermesh(
+        points,triangles,points,triangles
+    )
+    master=np.array([0.,1.,1.])
+    slave=master+2.
+    master_field,slave_field=integration.interpolate(master,slave)
+    assert master_field.grad is None
+    assert slave_field.grad is None
+
+    @skfn.Functional
+    def jump_energy(w):
+        jump_value=w.slave-w.master
+        return jump_value*jump_value
+
+    actual=skfn.asm(
+        jump_energy,integration=integration,
+        master=master_field,slave=slave_field,
+    )
+    np.testing.assert_allclose(actual,2.,rtol=2e-15,atol=2e-15)
+
+
+def test_facet_supermesh_functional_accepts_trace_gradients():
+    mesh=skfn.MeshTet()
+    facets=skfn.FacetBasis(
+        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=1)
+    )
+    integration=skfn.TriangleSupermesh.from_facets(facets,facets)
+    coefficients=facets.doflocs[0]+2.*facets.doflocs[1]
+    master,slave=integration.interpolate(coefficients,coefficients)
+    assert master.grad is not None
+    assert slave.grad is not None
+
+    @skfn.Functional
+    def gradient_energy(w):
+        return dot(grad(w.master),grad(w.slave))
+
+    actual=skfn.asm(
+        gradient_energy,integration=integration,
+        master=master,slave=slave,
+    )
+    expected=np.sum(
+        np.einsum("ieq,ieq->eq",master.grad,slave.grad)
+        *integration._weights
+    )
+    np.testing.assert_allclose(actual,expected,rtol=2e-15,atol=2e-15)

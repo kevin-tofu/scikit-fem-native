@@ -315,7 +315,7 @@ class DiscreteField:
 
     def __init__(self,value,grad):
         self.value=np.asarray(value)
-        self.grad=np.asarray(grad)
+        self.grad=None if grad is None else np.asarray(grad)
 
     def __array__(self,dtype=None):
         return np.asarray(self.value,dtype=dtype)
@@ -326,7 +326,11 @@ class DiscreteField:
 
     @property
     def div(self):
-        if self.value.ndim!=3 or self.grad.shape[0]!=self.grad.shape[1]:
+        if (
+            self.grad is None
+            or self.value.ndim!=3
+            or self.grad.shape[0]!=self.grad.shape[1]
+        ):
             return None
         return np.einsum("iieq->eq",self.grad)
 
