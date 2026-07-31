@@ -492,6 +492,36 @@ class ElementQuad2(_ComposableElement):
         ])
 
 
+class ElementTriP0(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array([[1./3.,1./3.]])
+
+
+class ElementQuad0(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array([[.5,.5]])
+
+
+class ElementTetP0(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array([[.25,.25,.25]])
+
+
+class ElementHex0(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array([[.5,.5,.5]])
+
+
+class ElementDG(_ComposableElement):
+    """Make the wrapped nodal element discontinuous between cells."""
+
+    def __init__(self,element):
+        if isinstance(element,(ElementComposite,ElementVector,ElementDG)):
+            raise TypeError("ElementDG expects a scalar element")
+        self.elem=element
+        self.doflocs=element.doflocs.copy()
+
+
 class ElementTetP2(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array(
@@ -687,30 +717,125 @@ def _interior_facets_2d(mesh):
     return np.asarray(values,dtype=np.int64).T
 
 
+def _corner_count(mesh):
+    if mesh.dim()==2:
+        return 3 if mesh.t.shape[0] in (3,6) else 4
+    return 4 if mesh.t.shape[0] in (4,10) else 8
+
+
+def _simplex_shapes(points,dimension,quadratic):
+    points=np.asarray(points)
+    bary=np.vstack((1.-points.sum(axis=0),points)).T
+    dl=np.vstack((-np.ones(dimension),np.eye(dimension)))
+    if not quadratic:
+        return bary,np.broadcast_to(
+            dl,(points.shape[1],dimension+1,dimension)
+        ).copy()
+    pairs=(
+        ((0,1),(1,2),(0,2)) if dimension==2 else
+        ((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
+    )
+    shape=np.empty((len(bary),len(bary[0])+len(pairs)))
+    grad=np.empty((len(bary),shape.shape[1],dimension))
+    for q,L in enumerate(bary):
+        for i in range(dimension+1):
+            shape[q,i]=L[i]*(2.*L[i]-1.)
+            grad[q,i]=(4.*L[i]-1.)*dl[i]
+        for k,(i,j) in enumerate(pairs,start=dimension+1):
+            shape[q,k]=4.*L[i]*L[j]
+            grad[q,k]=4.*(L[j]*dl[i]+L[i]*dl[j])
+    return shape,grad
+
+
+def _hex_shapes(points,quadratic):
+    points=np.asarray(points)
+    dimension=points.shape[0]
+    if quadratic:
+        count=3**dimension
+        shape=np.empty((points.shape[1],count))
+        grad=np.empty((points.shape[1],count,dimension))
+        for q,coordinate in enumerate(points.T):
+            values=[
+                np.array([2*(x-.5)*(x-1),4*x*(1-x),2*x*(x-.5)])
+                for x in coordinate
+            ]
+            derivatives=[
+                np.array([4*x-3,4-8*x,4*x-1])
+                for x in coordinate
+            ]
+            for node,index in enumerate(np.ndindex(*(3,)*dimension)):
+                index=index[::-1]
+                shape[q,node]=np.prod([
+                    values[d][index[d]] for d in range(dimension)
+                ])
+                for d in range(dimension):
+                    grad[q,node,d]=derivatives[d][index[d]]*np.prod([
+                        values[k][index[k]]
+                        for k in range(dimension) if k!=d
+                    ])
+        return shape,grad
+    bits=(
+        ((0,0),(1,0),(1,1),(0,1)) if dimension==2 else
+        ((0,0,0),(1,0,0),(0,1,0),(0,0,1),
+         (1,1,0),(1,0,1),(0,1,1),(1,1,1))
+    )
+    shape=np.empty((points.shape[1],len(bits)))
+    grad=np.empty((points.shape[1],len(bits),dimension))
+    for q,coordinate in enumerate(points.T):
+        for node,bit in enumerate(bits):
+            factors=np.where(bit,coordinate,1.-coordinate)
+            shape[q,node]=np.prod(factors)
+            for d in range(dimension):
+                grad[q,node,d]=(1. if bit[d] else -1.)*np.prod(
+                    np.delete(factors,d)
+                )
+    return shape,grad
+
+
+def _mesh_geometry_shapes(mesh,points):
+    nodes=mesh.t.shape[0]
+    if mesh.dim()==2 and nodes in (3,6):
+        return _simplex_shapes(points,2,nodes==6)
+    if mesh.dim()==2:
+        return _quad_shapes(points,nodes==9)
+    if nodes in (4,10):
+        return _simplex_shapes(points,3,nodes==10)
+    return _hex_shapes(points,nodes==27)
+
+
 class Basis:
     def __init__(self, mesh: MeshTet, element: ElementVector, intorder=2):
         self.intorder=intorder
         if isinstance(element,ElementComposite):
             self._init_composite(mesh,element,intorder)
             return
-        if not isinstance(element, ElementVector) or not isinstance(
-            element.elem, (
-                ElementTriP1,ElementTriP2,
-                ElementQuad1,ElementQuad2,
-                ElementTetP1,ElementTetP2,ElementHex1,ElementHex2,
-            )
-        ):
+        scalar=element.elem if isinstance(element,ElementVector) else None
+        base=scalar.elem if isinstance(scalar,ElementDG) else scalar
+        supported=(
+            ElementTriP0,ElementTriP1,ElementTriP2,
+            ElementQuad0,ElementQuad1,ElementQuad2,
+            ElementTetP0,ElementTetP1,ElementTetP2,
+            ElementHex0,ElementHex1,ElementHex2,
+        )
+        if not isinstance(element,ElementVector) or not isinstance(base,supported):
             raise NotImplementedError(
-                "independent Basis supports Tri/Quad/Tet P1/P2 and Hex1/2"
+                "independent Basis supports P0 and nodal H1/DG elements"
             )
         self.mesh, self.elem = mesh, element
-        self._tri=isinstance(element.elem,(ElementTriP1,ElementTriP2))
-        self._quadratic_tri=isinstance(element.elem,ElementTriP2)
-        self._quad=isinstance(element.elem,(ElementQuad1,ElementQuad2))
-        self._quadratic_quad=isinstance(element.elem,ElementQuad2)
-        self._tet = isinstance(element.elem, (ElementTetP1,ElementTetP2))
-        self._quadratic_tet=isinstance(element.elem,ElementTetP2)
-        self._quadratic_hex=isinstance(element.elem,ElementHex2)
+        self._base_element=base
+        self._discontinuous=isinstance(scalar,ElementDG) or isinstance(
+            base,(ElementTriP0,ElementQuad0,ElementTetP0,ElementHex0)
+        )
+        self._constant=isinstance(
+            base,(ElementTriP0,ElementQuad0,ElementTetP0,ElementHex0)
+        )
+        self._tri=isinstance(base,(ElementTriP0,ElementTriP1,ElementTriP2))
+        self._quadratic_tri=isinstance(base,ElementTriP2)
+        self._quad=isinstance(base,(ElementQuad0,ElementQuad1,ElementQuad2))
+        self._quadratic_quad=isinstance(base,ElementQuad2)
+        self._tet=isinstance(base,(ElementTetP0,ElementTetP1,ElementTetP2))
+        self._quadratic_tet=isinstance(base,ElementTetP2)
+        self._quadratic_hex=isinstance(base,ElementHex2)
         if self._quadratic_tri or (self._tri and intorder>=4):
             a=.445948490915965;b=.091576213509771
             bary=np.array([
@@ -779,19 +904,42 @@ class Basis:
             gauss=(1.+np.array([-1.,1.])/np.sqrt(3.))/2.
             self.X=np.array([[a,b,c] for c in gauss for b in gauss for a in gauss]).T
             self.W=np.full(8,1./8.)
-        connectivity=self._field_connectivity(mesh,element.elem)
+        base_connectivity=self._field_connectivity(mesh,base)
+        if self._discontinuous:
+            nodes=base_connectivity.shape[0]
+            connectivity=np.arange(
+                mesh.nelements*nodes,dtype=np.int64
+            ).reshape(mesh.nelements,nodes).T
+        else:
+            connectivity=base_connectivity
         nodes=connectivity.shape[0]
         components=element._dim
         active_nodes=np.unique(connectivity)
-        node_positions=np.full(mesh.p.shape[1],-1,dtype=np.int64)
-        node_positions[active_nodes]=np.arange(len(active_nodes))
-        self.N = len(active_nodes) * components
+        self.N=len(active_nodes)*components
         self.nodal_dofs = np.arange(self.N).reshape(-1, components).T
-        local_dofs=node_positions[connectivity]
+        if self._discontinuous:
+            local_dofs=connectivity
+        else:
+            node_positions=np.full(mesh.p.shape[1],-1,dtype=np.int64)
+            node_positions[active_nodes]=np.arange(len(active_nodes))
+            local_dofs=node_positions[connectivity]
         self.element_dofs = self.nodal_dofs[:,local_dofs].transpose(2,1,0).reshape(
             mesh.nelements, nodes*components
         ).T
-        self.doflocs = np.repeat(mesh.p[:,active_nodes],components,axis=1)
+        if self._discontinuous:
+            if self._constant:
+                positions=mesh.p[:,mesh.t[:_corner_count(mesh)]].mean(axis=1)
+            else:
+                positions=mesh.p[:,base_connectivity].transpose(0,2,1)
+            positions=(
+                positions.reshape(mesh.dim(),-1)
+                if positions.ndim==3 else positions
+            )
+            self.doflocs=np.repeat(positions,components,axis=1)
+        else:
+            self.doflocs=np.repeat(
+                mesh.p[:,active_nodes],components,axis=1
+            )
         self.active_nodes=active_nodes
         self.field_connectivity=connectivity
         self.tabulated_shape,self.tabulated_gradients,self.dx=self._geometry()
@@ -904,6 +1052,13 @@ class Basis:
                 if selected_facets.ndim==1:
                     selected_facets=boundary_facets[:,selected_facets]
             selected=np.unique(selected_facets)
+        if getattr(self,"_discontinuous",False):
+            dofs=(
+                np.unique(self.element_dofs[:,element_ids])
+                if elements is not None else
+                np.empty(0,dtype=np.int64)
+            )
+            return DofsView(dofs,self.doflocs)
         selected_set=set(map(int,selected))
         if hasattr(self,"subbases"):
             dofs=[]
@@ -925,6 +1080,10 @@ class Basis:
             for field in element.elems
         )
         subbases=[Basis(mesh,field,intorder=intorder) for field in vector_elements]
+        if any(basis._discontinuous for basis in subbases):
+            raise NotImplementedError(
+                "ElementComposite with discontinuous fields is not implemented"
+            )
         quadrature_shapes={(basis.X.shape,basis.dx.shape) for basis in subbases}
         if len(quadrature_shapes)!=1 or any(
             not np.array_equal(subbases[0].X,basis.X)
@@ -990,6 +1149,10 @@ class Basis:
 
     @staticmethod
     def _field_connectivity(mesh,scalar):
+        if isinstance(
+            scalar,(ElementTriP0,ElementQuad0,ElementTetP0,ElementHex0)
+        ):
+            return np.arange(mesh.nelements,dtype=np.int64)[None,:]
         if isinstance(scalar,ElementTriP1):
             return mesh.t[:3]
         if isinstance(scalar,ElementTriP2):
@@ -1011,7 +1174,12 @@ class Basis:
         raise NotImplementedError("unsupported scalar element")
 
     def _geometry(self):
-        if self._quadratic_tri:
+        if self._constant:
+            shape=np.ones((self.X.shape[1],1))
+            refgrad=np.zeros((
+                self.X.shape[1],1,self.mesh.dim()
+            ))
+        elif self._quadratic_tri:
             bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
             pairs=((0,1),(1,2),(0,2))
             dl=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
@@ -1080,7 +1248,11 @@ class Basis:
         geometry_refgrad=refgrad
         geometry_nodes=self.mesh.t.shape[0]
         if geometry_nodes!=shape.shape[1]:
-            if self._tri and geometry_nodes==6:
+            if self._constant:
+                geometry_shape,geometry_refgrad=_mesh_geometry_shapes(
+                    self.mesh,self.X
+                )
+            elif self._tri and geometry_nodes==6:
                 bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
                 pairs=((0,1),(1,2),(0,2))
                 dl=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
@@ -1165,6 +1337,11 @@ class Basis:
         old_points = self.X
         self.X = np.asarray(points)
         try:
+            if self._constant:
+                return (
+                    np.ones((self.X.shape[1],1)),
+                    np.zeros((self.X.shape[1],1,self.mesh.dim())),
+                )
             if self._quadratic_tri:
                 bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
                 pairs=((0,1),(1,2),(0,2))
@@ -1387,10 +1564,16 @@ class FacetBasis:
         else:
             points,weights=np.polynomial.legendre.leggauss(2)
         points=(points+1.)/2.;weights=weights/2.
-        is_quad=isinstance(element.elem,(ElementQuad1,ElementQuad2))
+        facet_scalar=(
+            element.elem.elem
+            if isinstance(element.elem,ElementDG) else element.elem
+        )
+        is_quad=isinstance(
+            facet_scalar,(ElementQuad0,ElementQuad1,ElementQuad2)
+        )
         if is_quad:
             local_edges=((0,1),(1,2),(2,3),(3,0))
-            if isinstance(element.elem,ElementQuad2):
+            if isinstance(facet_scalar,ElementQuad2):
                 local_edges=tuple(
                     edge+(midpoint,) for edge,midpoint in zip(
                         local_edges,(4,5,6,7)
@@ -1399,7 +1582,7 @@ class FacetBasis:
         else:
             edge_mid={(0,1):3,(1,2):4,(0,2):5}
             local_edges=((0,1),(1,2),(0,2))
-            if isinstance(element.elem,ElementTriP2):
+            if isinstance(facet_scalar,ElementTriP2):
                 local_edges=tuple(
                     edge+(edge_mid[tuple(sorted(edge))],)
                     for edge in local_edges
@@ -1442,9 +1625,12 @@ class FacetBasis:
             self.parent_elements[facet]=entity
             self.local_faces.append(tuple(edge))
             self.element_dofs[:,facet]=volume.element_dofs[:,entity]
-            reference_corners=element.elem.doflocs[
-                np.asarray(edge[:2])
-            ]
+            reference_vertices=(
+                np.array([[0.,0.],[1.,0.],[1.,1.],[0.,1.]])
+                if is_quad else
+                np.array([[0.,0.],[1.,0.],[0.,1.]])
+            )
+            reference_corners=reference_vertices[np.asarray(edge[:2])]
             global_edge=mesh.t[np.asarray(edge[:2]),entity]
             if tuple(map(int,global_edge))!=tuple(
                 map(int,facet_nodes[:2])
@@ -1463,27 +1649,11 @@ class FacetBasis:
                 geometry_shape=shape
                 geometry_refgrad=refgrad
                 if x.shape[1]!=shape.shape[1]:
-                    if is_quad:
-                        geometry_shape,geometry_refgrad=_quad_shapes(
-                            reference[:,None],True
+                    geometry_shape,geometry_refgrad=(
+                        _mesh_geometry_shapes(
+                            mesh,reference[:,None]
                         )
-                    else:
-                        L=np.array([
-                            1.-reference.sum(),reference[0],reference[1]
-                        ])
-                        dl=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
-                        geometry_shape=np.empty((1,6))
-                        geometry_refgrad=np.empty((1,6,2))
-                        for i in range(3):
-                            geometry_shape[0,i]=L[i]*(2.*L[i]-1.)
-                            geometry_refgrad[0,i]=(4.*L[i]-1.)*dl[i]
-                        for k,(i,j) in enumerate(
-                            ((0,1),(1,2),(0,2)),start=3
-                        ):
-                            geometry_shape[0,k]=4.*L[i]*L[j]
-                            geometry_refgrad[0,k]=4.*(
-                                L[j]*dl[i]+L[i]*dl[j]
-                            )
+                    )
                 jacobian=x@geometry_refgrad[0]
                 physical=refgrad[0]@np.linalg.inv(jacobian)
                 tangent=jacobian@(

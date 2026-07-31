@@ -20,7 +20,7 @@ no runtime fallback to scikit-fem or Python element assembly.
 | Forms | `BilinearForm`, `LinearForm`, `Functional`, `asm` |
 | Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
 | Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
-| Elements | Tri P1/P2, Quad Q1/Q2, Tet P1/P2, Hex Q1/Q2, `ElementVector`, `ElementComposite` |
+| Elements | Tri/Quad/Tet/Hex P0, nodal P1/P2 or Q1/Q2, `ElementDG`, `ElementVector`, `ElementComposite` |
 | Bases | `Basis`, `FacetBasis`, 2D `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
 | Mixed forms | Expanded signatures such as `u, p, v, q, w` |
@@ -116,6 +116,18 @@ def penalty(u, v, w):
 
 matrix = skfem.asm(penalty, side, side)
 ```
+
+Cellwise constants and discontinuous nodal spaces use the familiar element
+wrappers:
+
+```python
+cellwise = skfem.Basis(mesh, skfem.ElementTriP0())
+dg = skfem.Basis(mesh, skfem.ElementDG(skfem.ElementTriP1()))
+```
+
+P0 volume assembly is available on Tri, Quad, Tet, and Hex meshes.
+`ElementDG` supports the nodal elements above; two-dimensional DG jump
+assembly is available through `InteriorFacetBasis`.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 
