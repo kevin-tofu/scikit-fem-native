@@ -40,6 +40,11 @@ class _TopologyMesh:
                 )
                 for face in faces
             )
+        if rows==6:
+            raise NotImplementedError(
+                "wedge facet topology with mixed triangle and quadrilateral "
+                "faces is not implemented yet"
+            )
         if rows==8:
             return ((0,1,4,2),(0,2,6,3),(0,3,5,1),
                     (2,4,7,6),(1,5,7,4),(3,6,7,5))
@@ -466,6 +471,57 @@ class MeshTet2(MeshTet):
         return np.array([v for v in faces.values() if v is not None],dtype=np.int64).T
 
 
+class MeshWedge1(_TopologyMesh):
+    """Linear triangular-prism mesh compatible with scikit-fem's Wedge1."""
+
+    def __init__(self,p=None,t=None):
+        self.p=np.asarray(
+            p if p is not None else
+            [[0.,1.,0.,0.,1.,0.],
+             [0.,0.,1.,0.,0.,1.],
+             [0.,0.,0.,1.,1.,1.]],
+            dtype=np.float64,
+        )
+        self.t=np.asarray(
+            t if t is not None else np.arange(6)[:,None],dtype=np.int64
+        )
+        if self.p.ndim!=2 or self.p.shape[0]!=3:
+            raise ValueError("p must have shape (3, nodes)")
+        if self.t.ndim!=2 or self.t.shape[0]!=6:
+            raise ValueError("t must have shape (6, elements)")
+        self._boundaries={}
+
+    @classmethod
+    def init_tensor(cls,x,y,z):
+        x,y,z=map(np.asarray,(x,y,z))
+        base=MeshTri.init_tensor(x,y)
+        count=base.p.shape[1]
+        points=np.vstack((
+            np.tile(base.p,(1,len(z))),
+            np.repeat(z,count)[None,:],
+        ))
+        cells=[]
+        for layer in range(len(z)-1):
+            lower=layer*count
+            upper=(layer+1)*count
+            for triangle in base.t.T:
+                a,b,c=map(int,triangle)
+                cells.append((lower+a,lower+b,lower+c,
+                              upper+a,upper+b,upper+c))
+        return cls(points,np.asarray(cells,dtype=np.int64).T)
+
+    @property
+    def nelements(self):
+        return self.t.shape[1]
+
+    def dim(self):
+        return 3
+
+    @property
+    def boundaries(self):
+        return dict(self._boundaries)
+
+
 class MeshHex(_TopologyMesh):
     def __init__(self, p: np.ndarray | None = None, t: np.ndarray | None = None):
         self.p = np.asarray(
@@ -656,6 +712,14 @@ class ElementTetP2(_ComposableElement):
         )
 
 
+class ElementWedge1(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array(
+            [[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],
+             [0.,0.,1.],[1.,0.,1.],[0.,1.,1.]]
+        )
+
+
 class ElementHex1(_ComposableElement):
     def __init__(self):
         self.doflocs = np.array(
@@ -843,6 +907,10 @@ def _interior_facets_2d(mesh):
 
 
 def _interior_facets_3d(mesh):
+    if mesh.t.shape[0]==6:
+        raise NotImplementedError(
+            "wedge interior facets are not implemented yet"
+        )
     is_tet=mesh.t.shape[0] in (4,10)
     if is_tet:
         corner_faces=((0,1,2),(0,1,3),(0,2,3),(1,2,3))
@@ -893,7 +961,9 @@ def _interior_facets_3d(mesh):
 def _corner_count(mesh):
     if mesh.dim()==2:
         return 3 if mesh.t.shape[0] in (3,6) else 4
-    return 4 if mesh.t.shape[0] in (4,10) else 8
+    if mesh.t.shape[0] in (4,10):
+        return 4
+    return 6 if mesh.t.shape[0]==6 else 8
 
 
 def _simplex_shapes(points,dimension,quadratic):
@@ -965,6 +1035,24 @@ def _hex_shapes(points,quadratic):
     return shape,grad
 
 
+def _wedge_shapes(points):
+    points=np.asarray(points)
+    r,s,z=points
+    triangle=np.vstack((1.-r-s,r,s)).T
+    triangle_grad=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
+    shape=np.empty((points.shape[1],6))
+    grad=np.empty((points.shape[1],6,3))
+    for q in range(points.shape[1]):
+        for node in range(3):
+            value=triangle[q,node]
+            for layer,factor,dz in ((0,1.-z[q],-1.),(1,z[q],1.)):
+                index=node+3*layer
+                shape[q,index]=value*factor
+                grad[q,index,:2]=triangle_grad[node]*factor
+                grad[q,index,2]=value*dz
+    return shape,grad
+
+
 def _mesh_geometry_shapes(mesh,points):
     nodes=mesh.t.shape[0]
     if mesh.dim()==2 and nodes in (3,6):
@@ -973,6 +1061,8 @@ def _mesh_geometry_shapes(mesh,points):
         return _quad_shapes(points,nodes==9)
     if nodes in (4,10):
         return _simplex_shapes(points,3,nodes==10)
+    if nodes==6:
+        return _wedge_shapes(points)
     return _hex_shapes(points,nodes==27)
 
 
@@ -1030,6 +1120,17 @@ def _simplex_quadrature(dimension,intorder):
     return np.asarray(transformed).T,np.asarray(transformed_weights)
 
 
+def _wedge_quadrature(intorder):
+    triangle,triangle_weights=_simplex_quadrature(2,intorder)
+    line,line_weights=_tensor_quadrature(1,intorder)
+    points=[];weights=[]
+    for k,z in enumerate(line[0]):
+        for q in range(triangle.shape[1]):
+            points.append((triangle[0,q],triangle[1,q],z))
+            weights.append(triangle_weights[q]*line_weights[k])
+    return np.asarray(points).T,np.asarray(weights)
+
+
 class Basis:
     def __init__(
         self,mesh:MeshTet,element:ElementVector,intorder=2,
@@ -1049,6 +1150,7 @@ class Basis:
             ElementTriP0,ElementTriP1,ElementTriP2,
             ElementQuad0,ElementQuad1,ElementQuad2,
             ElementTetP0,ElementTetP1,ElementTetP2,
+            ElementWedge1,
             ElementHex0,ElementHex1,ElementHex2,
         )
         if not isinstance(element,ElementVector) or not isinstance(base,supported):
@@ -1069,11 +1171,14 @@ class Basis:
         self._quadratic_quad=isinstance(base,ElementQuad2)
         self._tet=isinstance(base,(ElementTetP0,ElementTetP1,ElementTetP2))
         self._quadratic_tet=isinstance(base,ElementTetP2)
+        self._wedge=isinstance(base,ElementWedge1)
         self._quadratic_hex=isinstance(base,ElementHex2)
         if quadrature is not None:
             self.X,self.W=_validate_quadrature(
                 quadrature,mesh.dim()
             )
+        elif self._wedge:
+            self.X,self.W=_wedge_quadrature(intorder)
         elif intorder>4:
             self.X,self.W=(
                 _simplex_quadrature(mesh.dim(),intorder)
@@ -1481,6 +1586,8 @@ class Basis:
             return mesh.t[:4]
         if isinstance(scalar,ElementTetP2):
             return mesh.t[:10]
+        if isinstance(scalar,ElementWedge1):
+            return mesh.t[:6]
         if isinstance(scalar,ElementHex1):
             if mesh.t.shape[0]==27:
                 return mesh.t[[0,2,6,18,8,20,24,26]]
@@ -1532,6 +1639,8 @@ class Basis:
             reference=np.array([[-1.,-1.,-1.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]])
             shape=np.vstack((1.-self.X.sum(axis=0),self.X)).T
             refgrad=np.broadcast_to(reference,(self.X.shape[1],4,3))
+        elif self._wedge:
+            shape,refgrad=_wedge_shapes(self.X)
         elif self._quadratic_hex:
             grid=(0.,.5,1.)
             def values(x):
@@ -1624,6 +1733,8 @@ class Basis:
                 grad=np.broadcast_to(np.array([[-1.,-1.,-1.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]]),
                                      (shape.shape[0],4,3))
                 return shape,grad
+            if self._wedge:
+                return _wedge_shapes(self.X)
             if self._quadratic_hex:
                 values=lambda x:np.array([2*(x-.5)*(x-1),4*x*(1-x),2*x*(x-.5)])
                 deriv=lambda x:np.array([4*x-3,4-8*x,4*x-1])

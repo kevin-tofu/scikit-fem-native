@@ -19,9 +19,9 @@ no runtime fallback to scikit-fem or Python element assembly.
 |---|---|
 | Forms | `BilinearForm`, `LinearForm`, `Functional`, `asm` |
 | Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
-| Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
+| Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshWedge1`, `MeshHex`, `MeshHex2` |
 | Mesh topology | cached `facets`, `t2f`, `f2t`, `boundary_facets`, facet/element predicates |
-| Elements | Tri/Quad/Tet/Hex P0, nodal P1/P2 or Q1/Q2, `ElementDG`, `ElementVector`, `ElementComposite` |
+| Elements | Tri/Quad/Tet/Hex P0, nodal P1/P2 or Q1/Q2, Wedge6, `ElementDG`, `ElementVector`, `ElementComposite` |
 | Bases | `Basis`, `FacetBasis`, `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
 | Mixed forms | Expanded signatures such as `u, p, v, q, w` |
@@ -50,7 +50,8 @@ unchanged with upstream scikit-fem.
 - importing scikit-fem at runtime.
 
 The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
-Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Hex8/Hex27, volume and facet integration,
+Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Wedge6, Hex8/Hex27 volume integration,
+facet integration for the non-wedge elements,
 mixed fields, and nonmatching surface coupling.
 
 Reproducible scaling reports live under `benchmarks/`.  In addition to the
@@ -114,10 +115,14 @@ and integration-point plastic strain history.  It supports any three-component
 H1 `Basis` whose tabulated gradients fit the native element-size limit,
 including the Tet and Hex orders implemented by skfn.
 
-Stateful material assembly is regression-tested on Tet4, Tet10, Hex8, and
-Hex27.  Tet10 and Hex27 coverage includes curved/distorted geometry,
+Stateful material assembly is regression-tested on Tet4, Tet10, Wedge6,
+Hex8, and Hex27.  Tet10, Wedge6, and Hex27 coverage includes distorted geometry,
 integration orders 2, 4, and 6, serial/parallel agreement, finite-difference
 consistent tangents, and J2 comparison with scikit-fem forms.
+
+Wedge6 currently supports volume `Basis` and assembly.  Its mixed triangular
+and quadrilateral facet topology is intentionally rejected until `FacetBasis`
+can represent both face types without ambiguity.
 
 Native element loops use one thread by default.  Geometry tabulation can use
 the shared native thread pool explicitly:

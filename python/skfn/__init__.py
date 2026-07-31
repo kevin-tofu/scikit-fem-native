@@ -22,6 +22,7 @@ from .basis import (
     ElementTetP1,
     ElementTetP2,
     ElementTetP0,
+    ElementWedge1,
     ElementVector,
     FacetBasis,
     InteriorFacetBasis,
@@ -33,6 +34,7 @@ from .basis import (
     MeshTri2,
     MeshTet,
     MeshTet2,
+    MeshWedge1,
 )
 from .evaluation import EvaluationDiagnostics, NativeEvaluation
 from .linear_form import LinearFormDiagnostics, NativeLinearForm
@@ -115,6 +117,7 @@ __all__ = [
     "ElementTetP1",
     "ElementTetP2",
     "ElementTetP0",
+    "ElementWedge1",
     "ElementHex1",
     "ElementHex2",
     "ElementHex0",
@@ -131,6 +134,7 @@ __all__ = [
     "InteriorFacetBasis",
     "MeshTet",
     "MeshTet2",
+    "MeshWedge1",
     "MeshHex",
     "MeshHex2",
     "MeshQuad",
