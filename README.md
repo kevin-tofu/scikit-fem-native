@@ -19,8 +19,8 @@ no runtime fallback to scikit-fem or Python element assembly.
 |---|---|
 | Forms | `BilinearForm`, `LinearForm`, `Functional`, `asm` |
 | Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
-| Meshes | `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
-| Elements | Tet P1/P2, Hex Q1/Q2, `ElementVector`, `ElementComposite` |
+| Meshes | `MeshTri`, `MeshTri2`, `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
+| Elements | Tri P1/P2, Tet P1/P2, Hex Q1/Q2, `ElementVector`, `ElementComposite` |
 | Bases | `Basis`, `FacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
 | Mixed forms | Expanded signatures such as `u, p, v, q, w` |
@@ -48,8 +48,8 @@ unchanged with upstream scikit-fem.
 - importing scikit-fem at runtime.
 
 The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
-Tet4/Tet10, Hex8/Hex27, volume and facet integration, mixed fields, and
-nonmatching surface coupling.
+Tri3/Tri6, Tet4/Tet10, Hex8/Hex27, volume and facet integration, mixed fields,
+and nonmatching surface coupling.
 
 ```python
 from skfn import LinearElasticity, NativeAssembler
@@ -86,6 +86,19 @@ See `examples/neo_hookean_tet4.py` for a complete Newton solve.
 
 Quadratic Tet10 and Hex27 nodal H1 elements are available through the
 independent mesh, mapping, basis, facet, interpolation, and form APIs.
+The same APIs support two-dimensional Tri3/Tri6 elements, including edge
+normals and mixed-order P2/P1 Taylor--Hood fields:
+
+```python
+mesh = skfem.MeshTri2.from_mesh(
+    skfem.MeshTri.init_tensor(x, y)
+)
+element = (
+    skfem.ElementVector(skfem.ElementTriP2())
+    * skfem.ElementTriP1()
+)
+basis = skfem.Basis(mesh, element, intorder=4)
+```
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 
