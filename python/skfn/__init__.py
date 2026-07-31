@@ -18,7 +18,11 @@ from .basis import (
 from .evaluation import EvaluationDiagnostics, NativeEvaluation
 from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
-from .supermesh import SupermeshDiagnostics, TriangleSupermesh
+from .supermesh import (
+    SupermeshDiagnostics,
+    SupermeshSearch,
+    TriangleSupermesh,
+)
 from .interface import InterfaceField
 from .forms import (
     BilinearForm,
@@ -67,6 +71,7 @@ __all__ = [
     "UnsupportedNativeForm",
     "TriangleSupermesh",
     "SupermeshDiagnostics",
+    "SupermeshSearch",
     "InterfaceField",
     "NeoHookeanTet4",
     "NeoHookeanHex8",

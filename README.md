@@ -177,6 +177,28 @@ is available as:
 python benchmarks/supermesh_builder.py 16 32 64 128
 ```
 
+Planar topology can be retained across geometry updates:
+
+```python
+search = skfem.SupermeshSearch(
+    master_triangles,
+    slave_triangles,
+)
+integration = search.build(master_points, slave_points)
+
+for master_x, slave_x in deformed_coordinates:
+    integration = search.update(master_x, slave_x)
+    matrix = integration.assemble()
+```
+
+When the integration-triangle DOF maps are unchanged,
+`CrossBilinearAssembler` updates shape values and weights while retaining its
+CSR pattern and scatter map.  Sliding that changes overlap pairs rebuilds the
+pattern safely.  A fully open interface is represented by empty quadrature and
+a correctly sized zero matrix, so subsequent closing can reuse the same search
+object.  Update diagnostics report created and disappeared overlap pairs,
+pattern reuse, and update count.
+
 For curved Tet10/Hex27 facets, search geometry is refined adaptively:
 
 ```python

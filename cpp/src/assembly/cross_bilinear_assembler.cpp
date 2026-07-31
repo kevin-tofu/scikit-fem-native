@@ -175,6 +175,40 @@ public:
         ).count();
         return py::make_tuple(checksum,seconds);
     }
+    void update_tabulation(
+        py::array_t<double,py::array::c_style|py::array::forcecast>row_shape,
+        py::array_t<double,py::array::c_style|py::array::forcecast>column_shape,
+        py::array_t<double,py::array::c_style|py::array::forcecast>weights,
+        py::object row_gradients_object=py::none(),
+        py::object column_gradients_object=py::none()){
+        auto rs=row_shape.request(),cs=column_shape.request(),w=weights.request();
+        if(rs.ndim!=3||rs.shape[0]!=entities_||rs.shape[1]!=quadrature_||
+           rs.shape[2]!=row_nodes_)
+            throw std::invalid_argument("updated row shape values have an invalid shape");
+        if(cs.ndim!=3||cs.shape[0]!=entities_||cs.shape[1]!=quadrature_||
+           cs.shape[2]!=column_nodes_)
+            throw std::invalid_argument("updated column shape values have an invalid shape");
+        if(w.ndim!=2||w.shape[0]!=entities_||w.shape[1]!=quadrature_)
+            throw std::invalid_argument("updated cross weights have an invalid shape");
+        std::vector<double>new_row_gradients,new_column_gradients;
+        int new_row_dimension=0,new_column_dimension=0;
+        read_gradients(
+            row_gradients_object,new_row_gradients,new_row_dimension,
+            row_nodes_,"updated row"
+        );
+        read_gradients(
+            column_gradients_object,new_column_gradients,new_column_dimension,
+            column_nodes_,"updated column"
+        );
+        if(new_row_dimension!=row_dimension_||
+           new_column_dimension!=column_dimension_)
+            throw std::invalid_argument("updated gradient dimensions differ");
+        row_shape_.assign((double*)rs.ptr,(double*)rs.ptr+rs.size);
+        column_shape_.assign((double*)cs.ptr,(double*)cs.ptr+cs.size);
+        weights_.assign((double*)w.ptr,(double*)w.ptr+w.size);
+        row_gradients_.swap(new_row_gradients);
+        column_gradients_.swap(new_column_gradients);
+    }
     py::array indptr(){return view(indptr_);}py::array indices(){return view(indices_);}
     py::array values(){return view(values_);}std::size_t rows()const{return rows_;}
     std::size_t columns()const{return columns_;}
@@ -276,6 +310,10 @@ void native_fem::bind_cross_bilinear_assembler(py::module_&m){py::class_<CrossBi
     .def("contract_only",&CrossBilinearAssembler::contract_only,
         py::arg("coefficient")=py::none(),py::arg("row_kind")="value",
         py::arg("column_kind")="value")
+    .def("update_tabulation",&CrossBilinearAssembler::update_tabulation,
+        py::arg("row_shape"),py::arg("column_shape"),py::arg("weights"),
+        py::arg("row_gradients")=py::none(),
+        py::arg("column_gradients")=py::none())
     .def_property_readonly("indptr",&CrossBilinearAssembler::indptr)
     .def_property_readonly("indices",&CrossBilinearAssembler::indices)
     .def_property_readonly("values",&CrossBilinearAssembler::values)

@@ -205,6 +205,10 @@ class SupermeshDiagnostics:
     master_search_triangle_count: int = 0
     slave_search_triangle_count: int = 0
     maximum_subdivision_level: int = 0
+    created_overlap_pair_count: int = 0
+    disappeared_overlap_pair_count: int = 0
+    pattern_reused: bool = False
+    update_count: int = 0
 
 
 def _aabb_candidates(master_xyz, slave_xyz, tolerance):
@@ -228,6 +232,41 @@ def _aabb_candidates(master_xyz, slave_xyz, tolerance):
                 and slave_min[slave,2]<=master_max[master,2]
             ):
                 yield int(master),slave
+
+
+class SupermeshSearch:
+    """Reusable planar triangle topology and overlap integration state."""
+
+    def __init__(
+        self,master_triangles,slave_triangles,*,components=1,
+        tolerance=1e-10,projection_tolerance=None,
+    ):
+        master_triangles=np.asarray(master_triangles,dtype=np.int64)
+        slave_triangles=np.asarray(slave_triangles,dtype=np.int64)
+        if master_triangles.shape[0]!=3:
+            master_triangles=master_triangles.T
+        if slave_triangles.shape[0]!=3:
+            slave_triangles=slave_triangles.T
+        self.master_triangles=np.ascontiguousarray(master_triangles)
+        self.slave_triangles=np.ascontiguousarray(slave_triangles)
+        self.components=components
+        self.tolerance=float(tolerance)
+        self.projection_tolerance=projection_tolerance
+        self.integration=None
+
+    def build(self,master_points,slave_points):
+        self.integration=TriangleSupermesh(
+            master_points,self.master_triangles,
+            slave_points,self.slave_triangles,
+            components=self.components,tolerance=self.tolerance,
+            projection_tolerance=self.projection_tolerance,
+        )
+        return self.integration
+
+    def update(self,master_points,slave_points):
+        if self.integration is None:
+            return self.build(master_points,slave_points)
+        return self.integration.update(master_points,slave_points)
 
 
 class TriangleSupermesh:
@@ -436,6 +475,12 @@ class TriangleSupermesh:
         slave_points,slave_triangles,*,row_components,
         column_components,tolerance,projection_tolerance,
     ):
+        old_native=getattr(self,"_native",None)
+        old_matrix=getattr(self,"_matrix",None)
+        old_row_dofs=getattr(self,"_row_dofs",None)
+        old_column_dofs=getattr(self,"_column_dofs",None)
+        old_pairs=getattr(self,"_pair_set",set())
+        update_count=getattr(self,"_update_count",0)
         built=build_triangle_supermesh(
             np.ascontiguousarray(master_points,dtype=np.float64),
             np.ascontiguousarray(master_triangles,dtype=np.int64),
@@ -447,21 +492,47 @@ class TriangleSupermesh:
         slave_indices=np.asarray(built["slave_indices"])
         master_nodes=master_triangles[:,master_indices].T
         slave_nodes=slave_triangles[:,slave_indices].T
-        self._row_dofs=np.ascontiguousarray(
+        row_dofs=np.ascontiguousarray(
             row_components*master_nodes[...,None]
             +np.arange(row_components)
         )
-        self._column_dofs=np.ascontiguousarray(
+        column_dofs=np.ascontiguousarray(
             column_components*slave_nodes[...,None]
             +np.arange(column_components)
         )
-        self._row_shape=np.asarray(
+        row_shape=np.asarray(
             built["row_shape"],dtype=np.float64
         )
-        self._column_shape=np.asarray(
+        column_shape=np.asarray(
             built["column_shape"],dtype=np.float64
         )
-        self._weights=np.asarray(built["weights"],dtype=np.float64)
+        weights=np.asarray(built["weights"],dtype=np.float64)
+        pattern_reused=(
+            old_native is not None
+            and old_row_dofs.shape==row_dofs.shape
+            and old_column_dofs.shape==column_dofs.shape
+            and np.array_equal(old_row_dofs,row_dofs)
+            and np.array_equal(old_column_dofs,column_dofs)
+        )
+        if pattern_reused:
+            old_native.update_tabulation(
+                row_shape,column_shape,weights
+            )
+            native=old_native
+        else:
+            native=CrossBilinearAssembler(
+                row_dofs,column_dofs,row_shape,column_shape,weights,
+            )
+        pair_set=set(zip(
+            map(int,master_indices),map(int,slave_indices)
+        ))
+        created=len(pair_set-old_pairs) if update_count else 0
+        disappeared=len(old_pairs-pair_set) if update_count else 0
+        self._row_dofs=row_dofs
+        self._column_dofs=column_dofs
+        self._row_shape=row_shape
+        self._column_shape=column_shape
+        self._weights=weights
         self._row_gradients=None
         self._column_gradients=None
         self._row_normal_gradient=None
@@ -476,17 +547,32 @@ class TriangleSupermesh:
             built["slave_normals"],dtype=np.float64
         )
         self.gap=np.asarray(built["gaps"],dtype=np.float64)
-        self._native=CrossBilinearAssembler(
-            self._row_dofs,self._column_dofs,
-            self._row_shape,self._column_shape,self._weights,
-        )
-        self._matrix=csr_matrix(
-            (self._native.values,self._native.indices,self._native.indptr),
-            shape=(self._native.rows,self._native.columns),copy=False,
+        self._native=native
+        self._matrix=(
+            old_matrix if pattern_reused else
+            csr_matrix(
+                (
+                    self._native.values,
+                    self._native.indices,
+                    self._native.indptr,
+                ),
+                shape=(self._native.rows,self._native.columns),
+                copy=False,
+            )
         )
         self._coefficient_shape=self._weights.shape
-        self.master_size=self._native.rows
-        self.slave_size=self._native.columns
+        self.master_size=row_components*master_points.shape[1]
+        self.slave_size=column_components*slave_points.shape[1]
+        self._matrix.resize((self.master_size,self.slave_size))
+        self._master_points=np.array(master_points,copy=True)
+        self._slave_points=np.array(slave_points,copy=True)
+        self._master_triangles=np.array(master_triangles,copy=True)
+        self._slave_triangles=np.array(slave_triangles,copy=True)
+        self._components=(row_components,column_components)
+        self._tolerance=float(tolerance)
+        self._projection_tolerance=float(projection_tolerance)
+        self._pair_set=pair_set
+        self._update_count=update_count
         self.diagnostics=SupermeshDiagnostics(
             master_triangles.shape[1]*slave_triangles.shape[1],
             int(built["candidate_count"]),
@@ -495,7 +581,43 @@ class TriangleSupermesh:
             float(built["overlap_area"]),
             int(built["noncoplanar_rejection_count"]),
             float(built["maximum_plane_gap"]),
+            created_overlap_pair_count=created,
+            disappeared_overlap_pair_count=disappeared,
+            pattern_reused=pattern_reused,
+            update_count=update_count,
         )
+
+    def update(self,master_points,slave_points):
+        """Update planar coordinates and reuse the CSR pattern when possible."""
+        if not hasattr(self,"_master_triangles"):
+            raise NotImplementedError(
+                "update() currently supports direct planar triangle "
+                "supermeshes"
+            )
+        master_points=np.asarray(master_points,dtype=np.float64)
+        slave_points=np.asarray(slave_points,dtype=np.float64)
+        if master_points.shape[0]!=3:
+            master_points=master_points.T
+        if slave_points.shape[0]!=3:
+            slave_points=slave_points.T
+        if master_points.shape!=self._master_points.shape:
+            raise ValueError("master point topology cannot change")
+        if slave_points.shape!=self._slave_points.shape:
+            raise ValueError("slave point topology cannot change")
+        self._update_count+=1
+        try:
+            self._initialize_planar_native(
+                master_points,self._master_triangles,
+                slave_points,self._slave_triangles,
+                row_components=self._components[0],
+                column_components=self._components[1],
+                tolerance=self._tolerance,
+                projection_tolerance=self._projection_tolerance,
+            )
+        except Exception:
+            self._update_count-=1
+            raise
+        return self
 
     @classmethod
     def from_facets(

@@ -69,6 +69,109 @@ def test_repeated_supermesh_assembly_reuses_csr():
     np.testing.assert_allclose(second.toarray(),2*values)
 
 
+def test_planar_update_reuses_pattern_and_matches_fresh_build():
+    master_points,master_triangles=master_surface()
+    slave_points,slave_triangles=split_slave_surface()
+    supermesh=skfn.TriangleSupermesh(
+        master_points,master_triangles,slave_points,slave_triangles
+    )
+    native_id=id(supermesh._native)
+    translation=np.array([[.2],[-.1],[.0]])
+    updated_master=master_points+translation
+    updated_slave=slave_points+translation
+    supermesh.update(updated_master,updated_slave)
+    fresh=skfn.TriangleSupermesh(
+        updated_master,master_triangles,
+        updated_slave,slave_triangles,
+    )
+    assert id(supermesh._native)==native_id
+    assert supermesh.diagnostics.pattern_reused
+    assert supermesh.diagnostics.update_count==1
+    np.testing.assert_allclose(
+        supermesh.assemble().toarray(),
+        fresh.assemble().toarray(),
+        rtol=2e-14,atol=2e-14,
+    )
+    np.testing.assert_allclose(
+        supermesh.global_coordinates,
+        fresh.global_coordinates,
+        rtol=0.,atol=2e-15,
+    )
+
+
+def test_planar_sliding_update_rebuilds_changed_pair_pattern():
+    first_points,triangle=master_surface()
+    second_points=first_points+np.array([[2.],[0.],[0.]])
+    master_points=np.concatenate((first_points,second_points),axis=1)
+    master_triangles=np.concatenate((triangle,triangle+3),axis=1)
+    slave_points=first_points.copy()
+    supermesh=skfn.TriangleSupermesh(
+        master_points,master_triangles,slave_points,triangle
+    )
+    native_id=id(supermesh._native)
+    moved_slave=slave_points+np.array([[2.],[0.],[0.]])
+    supermesh.update(master_points,moved_slave)
+    fresh=skfn.TriangleSupermesh(
+        master_points,master_triangles,moved_slave,triangle
+    )
+    assert id(supermesh._native)!=native_id
+    assert not supermesh.diagnostics.pattern_reused
+    assert supermesh.diagnostics.created_overlap_pair_count==1
+    assert supermesh.diagnostics.disappeared_overlap_pair_count==1
+    assert supermesh.assemble().shape==(6,3)
+    np.testing.assert_allclose(
+        supermesh.assemble().toarray(),
+        fresh.assemble().toarray(),
+        rtol=2e-14,atol=2e-14,
+    )
+
+
+def test_planar_update_supports_opening_and_closing():
+    points,triangles=master_surface()
+    supermesh=skfn.TriangleSupermesh(
+        points,triangles,points,triangles
+    )
+    opened=points+np.array([[0.],[0.],[1.]])
+    supermesh.update(points,opened)
+    assert supermesh.diagnostics.integration_triangle_count==0
+    assert supermesh.diagnostics.disappeared_overlap_pair_count==1
+    assert supermesh.assemble().shape==(3,3)
+    assert supermesh.assemble().nnz==0
+
+    supermesh.update(points,points)
+    assert supermesh.diagnostics.integration_triangle_count==1
+    assert supermesh.diagnostics.created_overlap_pair_count==1
+    assert supermesh.diagnostics.update_count==2
+    expected=skfn.TriangleSupermesh(
+        points,triangles,points,triangles
+    ).assemble()
+    np.testing.assert_allclose(
+        supermesh.assemble().toarray(),expected.toarray(),
+        rtol=2e-14,atol=2e-14,
+    )
+
+
+def test_supermesh_search_reuses_topology_and_stable_pattern():
+    master_points,master_triangles=master_surface()
+    slave_points,slave_triangles=split_slave_surface()
+    search=skfn.SupermeshSearch(
+        master_triangles,slave_triangles
+    )
+    integration=search.build(master_points,slave_points)
+    native_id=id(integration._native)
+    matrix_id=id(integration._matrix)
+    for step in range(1,6):
+        translation=np.array([[.01*step],[0.],[0.]])
+        updated=search.update(
+            master_points+translation,slave_points+translation
+        )
+        assert updated is integration
+        assert id(updated._native)==native_id
+        assert id(updated._matrix)==matrix_id
+        assert updated.diagnostics.pattern_reused
+        assert updated.diagnostics.update_count==step
+
+
 def test_contraction_profiler_matches_assembled_matrix_sum():
     master_points,master_triangles=master_surface()
     slave_points,slave_triangles=split_slave_surface()

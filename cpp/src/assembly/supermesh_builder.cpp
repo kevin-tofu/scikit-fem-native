@@ -104,11 +104,13 @@ py::array_t<T> array_from(
     const std::vector<py::ssize_t>& shape
 ) {
     py::array_t<T> result(shape);
-    std::memcpy(
-        result.mutable_data(),
-        values.data(),
-        values.size() * sizeof(T)
-    );
+    if (!values.empty()) {
+        std::memcpy(
+            result.mutable_data(),
+            values.data(),
+            values.size() * sizeof(T)
+        );
+    }
     return result;
 }
 
@@ -365,11 +367,6 @@ py::dict build_triangle_supermesh(
                 overlap_count += has_area ? 1 : 0;
             }
         }
-    }
-    if (master_indices.empty()) {
-        throw std::invalid_argument(
-            "triangle surfaces have no positive-area overlap"
-        );
     }
     const py::ssize_t count = static_cast<py::ssize_t>(master_indices.size());
     py::dict result;
