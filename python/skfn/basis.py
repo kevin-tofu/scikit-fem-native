@@ -7,29 +7,152 @@ from itertools import combinations
 import numpy as np
 
 
+class _TopologyMesh:
+    """Cached codimension-one topology shared by independent meshes."""
+
+    def _local_facets(self,full=False):
+        rows=self.t.shape[0]
+        if self.dim()==2:
+            if rows in (3,6):
+                return (
+                    ((0,1,3),(1,2,4),(0,2,5)) if full and rows==6
+                    else ((0,1),(1,2),(0,2))
+                )
+            return (
+                ((0,1,4),(1,2,5),(2,3,6),(0,3,7))
+                if full and rows==9 else
+                ((0,1),(1,2),(2,3),(0,3))
+            )
+        if rows in (4,10):
+            faces=((0,1,2),(0,1,3),(0,2,3),(1,2,3))
+            if not full or rows==4:
+                return faces
+            edge={(0,1):4,(1,2):5,(0,2):6,
+                  (0,3):7,(1,3):8,(2,3):9}
+            return tuple(
+                face+tuple(
+                    edge[tuple(sorted(pair))]
+                    for pair in ((face[0],face[1]),
+                                 (face[1],face[2]),
+                                 (face[0],face[2]))
+                )
+                for face in faces
+            )
+        if rows==8:
+            return ((0,1,4,2),(0,2,6,3),(0,3,5,1),
+                    (2,4,7,6),(1,5,7,4),(3,6,7,5))
+        index=lambda i,j,k:i+3*j+9*k
+        full_faces=(
+            tuple(index(i,j,0) for j in range(3) for i in range(3)),
+            tuple(index(0,j,k) for k in range(3) for j in range(3)),
+            tuple(index(i,0,k) for k in range(3) for i in range(3)),
+            tuple(index(i,2,k) for k in range(3) for i in range(3)),
+            tuple(index(2,j,k) for k in range(3) for j in range(3)),
+            tuple(index(i,j,2) for j in range(3) for i in range(3)),
+        )
+        return full_faces if full else tuple(
+            (face[0],face[2],face[8],face[6]) for face in full_faces
+        )
+
+    def _build_topology(self):
+        if hasattr(self,"_facets"):
+            return
+        local=self._local_facets()
+        indexing=np.hstack(tuple(self.t[np.asarray(face)] for face in local))
+        sorted_indexing=np.sort(indexing,axis=0)
+        canonical,first,inverse=np.unique(
+            sorted_indexing,axis=1,return_index=True,return_inverse=True
+        )
+        facets=(
+            indexing[:,first]
+            if self.dim()==3 and self.t.shape[0] in (8,27)
+            else canonical
+        )
+        t2f=inverse.reshape(len(local),self.nelements)
+        flat=t2f.ravel(order="C")
+        elements=np.tile(np.arange(self.nelements),len(local))
+        f2t=np.full((2,facets.shape[1]),-1,dtype=np.int64)
+        for facet,element in zip(flat,elements):
+            row=0 if f2t[0,facet]==-1 else 1
+            f2t[row,facet]=element
+        self._facets=np.ascontiguousarray(facets,dtype=np.int64)
+        self._t2f=np.ascontiguousarray(t2f,dtype=np.int64)
+        self._f2t=f2t
+
+    @property
+    def facets(self):
+        self._build_topology();return self._facets
+
+    @property
+    def t2f(self):
+        self._build_topology();return self._t2f
+
+    @property
+    def f2t(self):
+        self._build_topology();return self._f2t
+
+    def boundary_facets(self):
+        return np.flatnonzero(self.f2t[1]==-1)
+
+    def interior_facets(self):
+        return np.flatnonzero(self.f2t[1]!=-1)
+
+    def elements_satisfying(self,test):
+        centers=self.p[:,self.t[:_corner_count(self)]].mean(axis=1)
+        mask=np.asarray(test(centers),dtype=bool)
+        if mask.shape!=(self.nelements,):
+            raise ValueError("element predicate must return one boolean per cell")
+        return np.flatnonzero(mask)
+
+    def facets_satisfying(self,test,boundaries_only=False,normal=None):
+        if normal is not None:
+            raise NotImplementedError("normal-oriented facet queries are not implemented")
+        candidates=(
+            self.boundary_facets() if boundaries_only else
+            np.arange(self.facets.shape[1],dtype=np.int64)
+        )
+        centers=self.p[:,self.facets[:,candidates]].mean(axis=1)
+        mask=np.asarray(test(centers),dtype=bool)
+        if mask.shape!=(len(candidates),):
+            raise ValueError("facet predicate must return one boolean per facet")
+        return candidates[mask]
+
+    def _facet_connectivity(self,facets,full=True):
+        ids=np.asarray(facets,dtype=np.int64).reshape(-1)
+        local=self._local_facets(full=full)
+        result=[]
+        for facet in ids:
+            element=int(self.f2t[0,facet])
+            local_index=int(np.flatnonzero(self.t2f[:,element]==facet)[0])
+            result.append(self.t[np.asarray(local[local_index]),element])
+        width=len(local[0])
+        return (
+            np.asarray(result,dtype=np.int64).T if result else
+            np.empty((width,0),dtype=np.int64)
+        )
+
+
 def _with_boundaries(mesh,boundaries):
     result=copy(mesh)
     facets=mesh.boundary_facets()
-    centers=mesh.p[:,facets].mean(axis=1)
+    centers=mesh.p[:,mesh.facets[:,facets]].mean(axis=1)
     result._boundaries={}
     for name,selector in boundaries.items():
         if callable(selector):
             mask=np.asarray(selector(centers),dtype=bool)
-            if mask.shape!=(facets.shape[1],):
+            if mask.shape!=(len(facets),):
                 raise ValueError(
                     f"boundary selector {name!r} must return one "
                     "boolean per boundary facet"
                 )
-            result._boundaries[name]=facets[:,mask]
+            result._boundaries[name]=facets[mask]
         else:
             selected=np.asarray(selector,dtype=np.int64)
-            if selected.ndim==1:
-                selected=facets[:,selected]
-            result._boundaries[name]=selected
+            result._boundaries[name]=selected.reshape(-1)
     return result
 
 
-class MeshTri:
+class MeshTri(_TopologyMesh):
     """Two-dimensional triangular mesh."""
 
     def __init__(self,p=None,t=None):
@@ -67,7 +190,7 @@ class MeshTri:
     def dim(self):
         return 2
 
-    def boundary_facets(self):
+    def _legacy_boundary_facets(self):
         found={}
         for nodes in self.t.T:
             for edge in ((1,2),(2,0),(0,1)):
@@ -116,7 +239,7 @@ class MeshTri2(MeshTri):
             raise ValueError("quadratic triangle mesh requires p (2,n), t (6,e)")
         self._boundaries={}
 
-    def boundary_facets(self):
+    def _legacy_boundary_facets(self):
         found={}
         edge_node={(0,1):3,(1,2):4,(0,2):5}
         for nodes in self.t.T:
@@ -131,7 +254,7 @@ class MeshTri2(MeshTri):
         ).T
 
 
-class MeshQuad:
+class MeshQuad(_TopologyMesh):
     """Two-dimensional quadrilateral mesh."""
 
     def __init__(self,p=None,t=None):
@@ -169,7 +292,7 @@ class MeshQuad:
     def dim(self):
         return 2
 
-    def boundary_facets(self):
+    def _legacy_boundary_facets(self):
         found={}
         for nodes in self.t.T:
             for a,b in ((0,1),(1,2),(2,3),(3,0)):
@@ -223,7 +346,7 @@ class MeshQuad2(MeshQuad):
             )
         self._boundaries={}
 
-    def boundary_facets(self):
+    def _legacy_boundary_facets(self):
         found={}
         for nodes in self.t.T:
             for (a,b),midpoint in zip(
@@ -238,7 +361,7 @@ class MeshQuad2(MeshQuad):
         ).T
 
 
-class MeshTet:
+class MeshTet(_TopologyMesh):
     """Minimal tetrahedral mesh container compatible with skfn.Basis."""
 
     def __init__(self, p: np.ndarray | None = None, t: np.ndarray | None = None):
@@ -282,7 +405,7 @@ class MeshTet:
     def dim(self):
         return 3
 
-    def boundary_facets(self):
+    def _legacy_boundary_facets(self):
         faces={}
         for element in range(self.nelements):
             for local in ((1,2,3),(0,3,2),(0,1,3),(0,2,1)):
@@ -328,7 +451,7 @@ class MeshTet2(MeshTet):
             raise ValueError("quadratic tetra mesh requires p (3,n) and t (10,e)")
         self._boundaries={}
 
-    def boundary_facets(self):
+    def _legacy_boundary_facets(self):
         edge={(0,1):4,(1,2):5,(0,2):6,(0,3):7,(1,3):8,(2,3):9}
         faces={};vertices=((1,2,3),(0,3,2),(0,1,3),(0,2,1))
         for e,nodes in enumerate(self.t.T):
@@ -341,7 +464,7 @@ class MeshTet2(MeshTet):
         return np.array([v for v in faces.values() if v is not None],dtype=np.int64).T
 
 
-class MeshHex:
+class MeshHex(_TopologyMesh):
     def __init__(self, p: np.ndarray | None = None, t: np.ndarray | None = None):
         self.p = np.asarray(
             p if p is not None else
@@ -384,7 +507,7 @@ class MeshHex:
     def dim(self):
         return 3
 
-    def boundary_facets(self):
+    def _legacy_boundary_facets(self):
         if self.t.shape[0] == 8:
             local_faces=((0,1,4,2),(3,6,7,5),(0,3,5,1),
                          (2,4,7,6),(0,2,6,3),(1,5,7,4))
@@ -1068,7 +1191,9 @@ class Basis:
             selected=np.asarray(selected,dtype=np.int64).reshape(-1)
         elif elements is not None:
             if callable(elements):
-                centers=self.mesh.p[:,self.mesh.t].mean(axis=1)
+                centers=self.mesh.p[
+                    :,self.mesh.t[:_corner_count(self.mesh)]
+                ].mean(axis=1)
                 element_ids=np.flatnonzero(elements(centers))
             else:
                 element_ids=np.asarray(
@@ -1087,19 +1212,25 @@ class Basis:
                         f"unknown boundary {facets!r}"
                     ) from error
             elif callable(facets):
-                centers=self.mesh.p[:,boundary_facets].mean(axis=1)
+                centers=self.mesh.p[
+                    :,self.mesh.facets[:,boundary_facets]
+                ].mean(axis=1)
                 mask=np.asarray(facets(centers),dtype=bool)
-                if mask.shape!=(boundary_facets.shape[1],):
+                if mask.shape!=(len(boundary_facets),):
                     raise ValueError(
                         "facet predicate must return one boolean per "
                         "boundary facet"
                     )
-                selected_facets=boundary_facets[:,mask]
+                selected_facets=boundary_facets[mask]
             else:
-                selected_facets=np.asarray(facets,dtype=np.int64)
-                if selected_facets.ndim==1:
-                    selected_facets=boundary_facets[:,selected_facets]
-            selected=np.unique(selected_facets)
+                selected_facets=np.asarray(
+                    facets,dtype=np.int64
+                ).reshape(-1)
+            selected=np.unique(
+                self.mesh._facet_connectivity(
+                    selected_facets,full=True
+                )
+            )
         if getattr(self,"_discontinuous",False):
             dofs=(
                 np.unique(self.element_dofs[:,element_ids])
@@ -1493,18 +1624,19 @@ class FacetBasis:
             scalar,(ElementTetP2,ElementHex2)
         )
         if _interior:
-            all_facets=_interior_facets_3d(mesh)
-            if facets is None:
-                facets=all_facets
-            else:
-                facets=np.asarray(facets)
-                if facets.ndim==1:
-                    facets=all_facets[:,facets]
+            facet_ids=(
+                mesh.interior_facets() if facets is None else
+                np.asarray(facets,dtype=np.int64)
+            )
         else:
-            facets=(
+            facet_ids=(
                 mesh.boundary_facets()
                 if facets is None else np.asarray(facets)
             )
+        if np.asarray(facet_ids).ndim==1:
+            facets=mesh._facet_connectivity(facet_ids,full=True)
+        else:
+            facets=np.asarray(facet_ids,dtype=np.int64)
         quadratic_geometry=mesh.t.shape[0] in (10,27)
         expected_face_nodes=(
             6 if is_tet and quadratic_geometry else
@@ -1652,18 +1784,19 @@ class FacetBasis:
     ):
         volume=Basis(mesh,element,intorder=intorder)
         if interior:
-            all_facets=_interior_facets_2d(mesh)
-            if facets is None:
-                facets=all_facets
-            else:
-                facets=np.asarray(facets)
-                if facets.ndim==1:
-                    facets=all_facets[:,facets]
+            facet_ids=(
+                mesh.interior_facets() if facets is None else
+                np.asarray(facets,dtype=np.int64)
+            )
         else:
-            facets=(
+            facet_ids=(
                 mesh.boundary_facets()
                 if facets is None else np.asarray(facets)
             )
+        if np.asarray(facet_ids).ndim==1:
+            facets=mesh._facet_connectivity(facet_ids,full=True)
+        else:
+            facets=np.asarray(facet_ids,dtype=np.int64)
         quadratic_geometry=mesh.t.shape[0] in (6,9)
         expected=3 if quadratic_geometry else 2
         if facets.shape[0]!=expected:

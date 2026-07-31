@@ -20,6 +20,7 @@ no runtime fallback to scikit-fem or Python element assembly.
 | Forms | `BilinearForm`, `LinearForm`, `Functional`, `asm` |
 | Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
 | Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
+| Mesh topology | cached `facets`, `t2f`, `f2t`, `boundary_facets`, facet/element predicates |
 | Elements | Tri/Quad/Tet/Hex P0, nodal P1/P2 or Q1/Q2, `ElementDG`, `ElementVector`, `ElementComposite` |
 | Bases | `Basis`, `FacetBasis`, `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
@@ -150,6 +151,21 @@ P0 volume assembly is available on Tri, Quad, Tet, and Hex meshes.
 `ElementDG` supports the nodal elements above.  Interior jump assembly is
 available on Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, and Hex8/Hex27 through
 `InteriorFacetBasis`.
+
+Facet arguments use global facet numbers, matching scikit-fem:
+
+```python
+left = mesh.facets_satisfying(
+    lambda x: np.isclose(x[0], 0.0),
+    boundaries_only=True,
+)
+fbasis = skfem.FacetBasis(mesh, element, facets=left)
+boundary_dofs = basis.get_dofs(facets=left)
+```
+
+The cached `mesh.facets`, `mesh.t2f`, and `mesh.f2t` arrays are shared by
+repeated Basis construction.  `mesh.interior_facets()` is a small skfn
+convenience returning `np.flatnonzero(mesh.f2t[1] != -1)`.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 
