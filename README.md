@@ -70,8 +70,21 @@ To build the complete Linux wheel matrix locally, install Docker and
 
 ```bash
 python -m pip install --upgrade cibuildwheel
-python -m cibuildwheel --platform linux
+python tools/build_wheels.py --platform linux
 ```
+
+The same wrapper runs natively on macOS and Windows.  A single-version build is
+useful while iterating:
+
+```bash
+python tools/build_wheels.py --platform linux --python 3.12
+python tools/build_wheels.py --platform macos --python 3.12
+python tools/build_wheels.py --platform windows --python 3.12
+```
+
+Linux uses Docker to produce repaired manylinux wheels.  macOS wheels must be
+built on macOS and Windows wheels on Windows; they cannot be produced by the
+Linux Docker build.
 
 GitHub Releases whose tag is `v<version>` trigger `.github/workflows/workflow.yml`.
 The workflow verifies the tag against `pyproject.toml`, builds CPython 3.10--3.14
