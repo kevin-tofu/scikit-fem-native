@@ -33,6 +33,7 @@ class NativeBilinearForm:
             shape=(self._native.ndofs, self._native.ndofs),
             copy=False,
         )
+        self._matrix.resize((basis.N,basis.N))
 
     def assemble(self, *, value=None, gradient=None):
         value = self._coefficient("value", value)

@@ -125,6 +125,21 @@ Custom points use reference-cell coordinates and have shape `(dim, nq)`;
 weights have shape `(nq,)`.  Both sides of an interior facet retain the same
 quadrature-point ordering.
 
+Cell integration can be restricted to material or physical regions using the
+same element-subset API as scikit-fem.  The assembled vector or matrix keeps
+the global space size; elements outside the selection contribute zero:
+
+```python
+steel = skfem.Basis(mesh, element, elements=steel_elements)
+rubber = basis.with_elements(rubber_elements)
+
+matrix = skfem.asm(steel_form, steel)
+matrix += skfem.asm(rubber_form, rubber)
+```
+
+Integer element indices and Boolean masks are accepted.  `tind` records the
+selected global element indices, while `nelems` reports their count.
+
 Interior edge forms use the same two-sided basis-list convention and
 `jump(w, u)` helper as scikit-fem:
 

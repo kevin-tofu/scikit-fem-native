@@ -1031,12 +1031,15 @@ def _simplex_quadrature(dimension,intorder):
 class Basis:
     def __init__(
         self,mesh:MeshTet,element:ElementVector,intorder=2,
-        quadrature=None,
+        quadrature=None,elements=None,
     ):
         intorder=2 if intorder is None else int(intorder)
         self.intorder=intorder
         if isinstance(element,ElementComposite):
             self._init_composite(mesh,element,intorder,quadrature)
+            self.tind=np.arange(mesh.nelements,dtype=np.int64)
+            if elements is not None:
+                self._restrict_elements(elements)
             return
         scalar=element.elem if isinstance(element,ElementVector) else None
         base=scalar.elem if isinstance(scalar,ElementDG) else scalar
@@ -1192,6 +1195,65 @@ class Basis:
         )
         self.normals=None
         self.basis = self._vector_fields()
+        self.tind=np.arange(mesh.nelements,dtype=np.int64)
+        if elements is not None:
+            self._restrict_elements(elements)
+
+    @property
+    def nelems(self):
+        return self.dx.shape[0]
+
+    def _element_ids(self,elements):
+        if callable(elements):
+            centers=self.mesh.p[
+                :,self.mesh.t[:_corner_count(self.mesh)]
+            ].mean(axis=1)
+            selected=np.asarray(elements(centers))
+        else:
+            selected=np.asarray(elements)
+        if selected.dtype==bool:
+            if selected.shape!=(self.mesh.nelements,):
+                raise ValueError(
+                    "element mask must have shape (mesh.nelements,)"
+                )
+            selected=np.flatnonzero(selected)
+        selected=np.asarray(selected,dtype=np.int64).reshape(-1)
+        if np.any(selected<0) or np.any(selected>=self.mesh.nelements):
+            raise IndexError("element index is out of bounds")
+        if len(np.unique(selected))!=len(selected):
+            raise ValueError("element selection contains duplicates")
+        return selected
+
+    def _restrict_elements(self,elements):
+        selected=self._element_ids(elements)
+        positions={int(entity):local for local,entity in enumerate(self.tind)}
+        try:
+            local=np.asarray(
+                [positions[int(entity)] for entity in selected],dtype=np.int64
+            )
+        except KeyError as error:
+            raise ValueError(
+                "element selection is not contained in this Basis"
+            ) from error
+        self.tind=selected.copy()
+        self.element_dofs=self.element_dofs[:,local]
+        self.dx=self.dx[local]
+        self.global_coordinates=self.global_coordinates[local]
+        if hasattr(self,"subbases"):
+            for subbasis in self.subbases:
+                subbasis._restrict_elements(selected)
+        else:
+            self.field_connectivity=self.field_connectivity[:,local]
+            self.tabulated_shape=self.tabulated_shape[local]
+            self.tabulated_gradients=self.tabulated_gradients[local]
+            self.basis=self._vector_fields()
+        return self
+
+    def with_elements(self,elements):
+        return type(self)(
+            self.mesh,self.elem,quadrature=self.quadrature,
+            elements=elements,
+        )
 
     def interpolate(self,coefficients):
         coefficients=np.asarray(coefficients,dtype=np.float64)
@@ -1229,7 +1291,7 @@ class Basis:
         return tuple(
             Basis(
                 self.mesh,element,intorder=self.intorder,
-                quadrature=self.quadrature,
+                quadrature=self.quadrature,elements=self.tind,
             )
             for element in (
                 field if isinstance(field,ElementVector)
@@ -1262,15 +1324,7 @@ class Basis:
                 selected=np.flatnonzero(selected)
             selected=np.asarray(selected,dtype=np.int64).reshape(-1)
         elif elements is not None:
-            if callable(elements):
-                centers=self.mesh.p[
-                    :,self.mesh.t[:_corner_count(self.mesh)]
-                ].mean(axis=1)
-                element_ids=np.flatnonzero(elements(centers))
-            else:
-                element_ids=np.asarray(
-                    elements,dtype=np.int64
-                ).reshape(-1)
+            element_ids=self._element_ids(elements)
             selected=np.unique(self.mesh.t[:,element_ids])
         else:
             boundary_facets=self.mesh.boundary_facets()
@@ -1304,11 +1358,18 @@ class Basis:
                 )
             )
         if getattr(self,"_discontinuous",False):
-            dofs=(
-                np.unique(self.element_dofs[:,element_ids])
-                if elements is not None else
-                np.empty(0,dtype=np.int64)
-            )
+            if elements is not None:
+                positions={
+                    int(entity):local
+                    for local,entity in enumerate(self.tind)
+                }
+                local_elements=np.asarray([
+                    positions[int(entity)] for entity in element_ids
+                    if int(entity) in positions
+                ],dtype=np.int64)
+                dofs=np.unique(self.element_dofs[:,local_elements])
+            else:
+                dofs=np.empty(0,dtype=np.int64)
             return DofsView(dofs,self.doflocs)
         selected_set=set(map(int,selected))
         if hasattr(self,"subbases"):
@@ -1608,11 +1669,12 @@ class Basis:
         fields = []
         nodes=self.tabulated_shape.shape[2];nq=self.X.shape[1]
         components=self.elem._dim
+        entities=self.dx.shape[0]
         for node in range(nodes):
             for component in range(components):
-                value=np.zeros((components,self.mesh.nelements,nq))
+                value=np.zeros((components,entities,nq))
                 grad=np.zeros((
-                    components,self.mesh.dim(),self.mesh.nelements,nq
+                    components,self.mesh.dim(),entities,nq
                 ))
                 value[component] = self.tabulated_shape[:, :, node]
                 grad[component] = self.tabulated_gradients[:, :, node].transpose(2, 0, 1)
