@@ -41,15 +41,10 @@ class _TopologyMesh:
                 for face in faces
             )
         if rows==6:
-            raise NotImplementedError(
-                "wedge facet topology with mixed triangle and quadrilateral "
-                "faces is not implemented yet"
-            )
+            return ((0,2,1),(3,4,5),(0,1,4,3),
+                    (1,2,5,4),(2,0,3,5))
         if rows==5:
-            raise NotImplementedError(
-                "pyramid facet topology with mixed triangle and quadrilateral "
-                "faces is not implemented yet"
-            )
+            return ((0,3,2,1),(0,1,4),(1,2,4),(2,3,4),(3,0,4))
         if rows==8:
             return ((0,1,4,2),(0,2,6,3),(0,3,5,1),
                     (2,4,7,6),(1,5,7,4),(3,6,7,5))
@@ -70,6 +65,35 @@ class _TopologyMesh:
         if hasattr(self,"_facets"):
             return
         local=self._local_facets()
+        if self.dim()==3 and self.t.shape[0] in (5,6):
+            found={}
+            for element,nodes in enumerate(self.t.T):
+                for local_index,face in enumerate(local):
+                    oriented=tuple(int(nodes[i]) for i in face)
+                    key=tuple(sorted(oriented))
+                    found.setdefault(key,[]).append(
+                        (element,local_index,oriented)
+                    )
+            entries=list(found.values())
+            facets=np.full((4,len(entries)),-1,dtype=np.int64)
+            sizes=np.empty(len(entries),dtype=np.int64)
+            t2f=np.empty((len(local),self.nelements),dtype=np.int64)
+            f2t=np.full((2,len(entries)),-1,dtype=np.int64)
+            for facet,adjacent in enumerate(entries):
+                oriented=adjacent[0][2]
+                facets[:len(oriented),facet]=oriented
+                facets[len(oriented):,facet]=oriented[-1]
+                sizes[facet]=len(oriented)
+                for side,(element,local_index,_) in enumerate(adjacent):
+                    if side>1:
+                        raise ValueError("non-manifold facet has more than two cells")
+                    t2f[local_index,element]=facet
+                    f2t[side,facet]=element
+            self._facets=np.ascontiguousarray(facets)
+            self._facet_sizes=sizes
+            self._t2f=np.ascontiguousarray(t2f)
+            self._f2t=f2t
+            return
         indexing=np.hstack(tuple(self.t[np.asarray(face)] for face in local))
         sorted_indexing=np.sort(indexing,axis=0)
         canonical,first,inverse=np.unique(
@@ -123,7 +147,13 @@ class _TopologyMesh:
             self.boundary_facets() if boundaries_only else
             np.arange(self.facets.shape[1],dtype=np.int64)
         )
-        centers=self.p[:,self.facets[:,candidates]].mean(axis=1)
+        if hasattr(self,"_facet_sizes"):
+            centers=np.column_stack([
+                self.p[:,self.facets[:self._facet_sizes[facet],facet]].mean(axis=1)
+                for facet in candidates
+            ])
+        else:
+            centers=self.p[:,self.facets[:,candidates]].mean(axis=1)
         mask=np.asarray(test(centers),dtype=bool)
         if mask.shape!=(len(candidates),):
             raise ValueError("facet predicate must return one boolean per facet")
@@ -131,6 +161,16 @@ class _TopologyMesh:
 
     def _facet_connectivity(self,facets,full=True):
         ids=np.asarray(facets,dtype=np.int64).reshape(-1)
+        if self.dim()==3 and self.t.shape[0] in (5,6):
+            self._build_topology()
+            sizes=self._facet_sizes[ids]
+            if len(set(map(int,sizes)))>1:
+                raise ValueError(
+                    "mixed triangle/quadrilateral connectivity is ragged; "
+                    "pass facet IDs directly to FacetBasis"
+                )
+            width=int(sizes[0]) if len(sizes) else 0
+            return self.facets[:width,ids]
         local=self._local_facets(full=full)
         result=[]
         for facet in ids:
@@ -147,7 +187,13 @@ class _TopologyMesh:
 def _with_boundaries(mesh,boundaries):
     result=copy(mesh)
     facets=mesh.boundary_facets()
-    centers=mesh.p[:,mesh.facets[:,facets]].mean(axis=1)
+    if hasattr(mesh,"_facet_sizes"):
+        centers=np.column_stack([
+            mesh.p[:,mesh.facets[:mesh._facet_sizes[facet],facet]].mean(axis=1)
+            for facet in facets
+        ])
+    else:
+        centers=mesh.p[:,mesh.facets[:,facets]].mean(axis=1)
     result._boundaries={}
     for name,selector in boundaries.items():
         if callable(selector):
@@ -526,6 +572,9 @@ class MeshWedge1(_TopologyMesh):
     def boundaries(self):
         return dict(self._boundaries)
 
+    def with_boundaries(self,boundaries):
+        return _with_boundaries(self,boundaries)
+
 
 class MeshPyramid1(_TopologyMesh):
     """Five-node pyramid mesh; an skfn extension not present in scikit-fem."""
@@ -557,6 +606,9 @@ class MeshPyramid1(_TopologyMesh):
     @property
     def boundaries(self):
         return dict(self._boundaries)
+
+    def with_boundaries(self,boundaries):
+        return _with_boundaries(self,boundaries)
 
 
 class MeshHex(_TopologyMesh):
@@ -1886,6 +1938,12 @@ class FacetBasis:
                 quadrature=quadrature,
             )
             return
+        if mesh.t.shape[0] in (5,6):
+            self._init_mixed_3d(
+                mesh,element,facets,intorder,
+                side=_side,interior=_interior,quadrature=quadrature,
+            )
+            return
         volume = Basis(mesh, element, intorder=intorder)
         scalar=(
             element.elem.elem
@@ -2063,6 +2121,110 @@ class FacetBasis:
                 self.normals[f,q]=normal
                 self.dx[f,q]=np.linalg.norm(np.cross(tangents[:,0],tangents[:,1]))*face_weights[q]
         self.basis = self._vector_fields()
+        self.volume_basis=volume
+
+    def _init_mixed_3d(
+        self,mesh,element,facets,intorder,*,side,interior,quadrature
+    ):
+        volume=Basis(mesh,element,intorder=intorder)
+        if facets is None:
+            facet_ids=(
+                mesh.interior_facets() if interior else mesh.boundary_facets()
+            )
+        else:
+            facet_ids=np.asarray(facets,dtype=np.int64)
+        if facet_ids.ndim!=1:
+            raise ValueError(
+                "Wedge6/Pyramid5 FacetBasis expects one-dimensional facet IDs"
+            )
+        mesh._build_topology()
+        if quadrature is None:
+            parameter_points,parameter_weights=_tensor_quadrature(2,intorder)
+        else:
+            parameter_points,parameter_weights=_validate_quadrature(
+                quadrature,2
+            )
+        face_points=parameter_points.T
+        nq=len(parameter_weights)
+        scalar=(
+            element.elem.elem
+            if isinstance(element.elem,ElementDG) else element.elem
+        )
+        if not isinstance(scalar,(ElementWedge1,ElementPyramid1)):
+            raise ValueError("mixed-face mesh requires its matching nodal element")
+        local_faces=mesh._local_facets()
+        reference_vertices=scalar.doflocs
+        nodes_per_element=len(scalar.doflocs)
+        components=element._dim
+        count=len(facet_ids)
+        self.mesh,self.elem=mesh,element
+        self.facet_ids=np.asarray(facet_ids,dtype=np.int64)
+        self.X=parameter_points;self.W=parameter_weights
+        self.quadrature=(self.X.copy(),self.W.copy())
+        self.N=volume.N;self.doflocs=volume.doflocs
+        self.element_dofs=np.empty(
+            (nodes_per_element*components,count),dtype=np.int64
+        )
+        self.tabulated_shape=np.empty((count,nq,nodes_per_element))
+        self.tabulated_gradients=np.empty((count,nq,nodes_per_element,3))
+        self.dx=np.empty((count,nq))
+        self.global_coordinates=np.empty((count,nq,3))
+        self.normals=np.empty((count,nq,3))
+        self.parent_elements=np.empty(count,dtype=np.int64)
+        self.local_faces=[]
+        for f,facet in enumerate(facet_ids):
+            element_index=int(mesh.f2t[side,facet])
+            if element_index<0:
+                raise ValueError(f"facet {facet} does not have side {side}")
+            local_index=int(np.flatnonzero(
+                mesh.t2f[:,element_index]==facet
+            )[0])
+            local=local_faces[local_index]
+            corners=reference_vertices[np.asarray(local)]
+            self.parent_elements[f]=element_index
+            self.local_faces.append(tuple(local))
+            self.element_dofs[:,f]=volume.element_dofs[:,element_index]
+            geometry_nodes=mesh.p[:,mesh.t[:,element_index]]
+            for q,(u,v) in enumerate(face_points):
+                if len(local)==3:
+                    r=u;s=(1.-u)*v
+                    reference=(1.-r-s)*corners[0]+r*corners[1]+s*corners[2]
+                    derivatives=np.stack((
+                        corners[1]-corners[0]-v*(corners[2]-corners[0]),
+                        (1.-u)*(corners[2]-corners[0]),
+                    ),axis=1)
+                else:
+                    weights4=np.array(
+                        [(1.-u)*(1.-v),u*(1.-v),u*v,(1.-u)*v]
+                    )
+                    reference=weights4@corners
+                    derivatives=np.stack((
+                        (1.-v)*(corners[1]-corners[0])
+                        +v*(corners[2]-corners[3]),
+                        (1.-u)*(corners[3]-corners[0])
+                        +u*(corners[2]-corners[1]),
+                    ),axis=1)
+                shape,refgrad=volume._evaluate_reference(reference[:,None])
+                geometry_shape,geometry_refgrad=_mesh_geometry_shapes(
+                    mesh,reference[:,None]
+                )
+                jacobian=geometry_nodes@geometry_refgrad[0]
+                physical=refgrad[0]@np.linalg.inv(jacobian)
+                tangents=jacobian@derivatives
+                point=geometry_shape[0]@geometry_nodes.T
+                cross=np.cross(tangents[:,0],tangents[:,1])
+                measure=np.linalg.norm(cross)
+                normal=cross/measure
+                if np.dot(normal,point-geometry_nodes.mean(axis=1))<0.:
+                    normal=-normal
+                if interior and side==1:
+                    normal=-normal
+                self.tabulated_shape[f,q]=shape[0]
+                self.tabulated_gradients[f,q]=physical
+                self.global_coordinates[f,q]=point
+                self.normals[f,q]=normal
+                self.dx[f,q]=measure*parameter_weights[q]
+        self.basis=self._vector_fields()
         self.volume_basis=volume
 
     def _init_2d(

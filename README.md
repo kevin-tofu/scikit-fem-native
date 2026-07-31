@@ -40,7 +40,7 @@ unchanged with upstream scikit-fem.
 | `TriangleSupermesh.update()` | Refit/rebuild overlap data after motion |
 | Interface `Functional` | Integrate gap, normals, and two-sided traces |
 | `NativeAssembler` and native kernels | Direct residual/tangent evaluation |
-| `MeshPyramid1` / `ElementPyramid1` | Pyramid5 volume assembly (not provided by scikit-fem) |
+| `MeshPyramid1` / `ElementPyramid1` | Pyramid5 volume and mixed-face assembly (not provided by scikit-fem) |
 
 ### Intentionally out of scope
 
@@ -51,8 +51,7 @@ unchanged with upstream scikit-fem.
 - importing scikit-fem at runtime.
 
 The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
-Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Wedge6, Pyramid5, and Hex8/Hex27 volume integration,
-facet integration for the non-wedge elements,
+Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Wedge6, Pyramid5, and Hex8/Hex27 volume and facet integration,
 mixed fields, and nonmatching surface coupling.
 
 Reproducible scaling reports live under `benchmarks/`.  In addition to the
@@ -121,12 +120,13 @@ Pyramid5, Hex8, and Hex27.  Tet10, Wedge6, Pyramid5, and Hex27 coverage includes
 integration orders 2, 4, and 6, serial/parallel agreement, finite-difference
 consistent tangents, and J2 comparison with scikit-fem forms.
 
-Wedge6 currently supports volume `Basis` and assembly.  Its mixed triangular
-and quadrilateral facet topology is intentionally rejected until `FacetBasis`
-can represent both face types without ambiguity.
+Wedge6 and Pyramid5 support mixed triangular/quadrilateral boundary and
+interior facets in one `FacetBasis`.  A common collapsed-square quadrature
+keeps the per-facet arrays rectangular; `mesh._facet_sizes` identifies the
+three- or four-node topology represented by each padded `mesh.facets` column.
 
-Pyramid5 follows the same volume-only rule for mixed-face topology.  It is an
-explicit skfn extension rather than part of the scikit-fem-compatible subset;
+Pyramid5 is an explicit skfn extension rather than part of the
+scikit-fem-compatible subset;
 its rational shape functions are tested by volume, partition-of-unity,
 constant-strain, material-tangent, and serial/parallel checks.
 

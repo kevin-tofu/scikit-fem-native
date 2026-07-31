@@ -7,6 +7,7 @@ import skfem
 from skfem.models.elasticity import linear_elasticity
 
 import skfn
+from skfn.helpers import dot
 
 
 sys.path.insert(0,str(Path(__file__).parents[1]/"benchmarks"))
@@ -133,7 +134,64 @@ def test_wedge6_material_tangent_and_parallel(material):
     )
 
 
-def test_wedge_facets_fail_explicitly_until_mixed_topology_is_supported():
+def test_wedge_mixed_facets_area_normals_and_functional():
     mesh=skfn.MeshWedge1()
-    with pytest.raises(NotImplementedError,match="mixed triangle"):
-        mesh.boundary_facets()
+    facets=skfn.FacetBasis(
+        mesh,skfn.ElementVector(skfn.ElementWedge1()),intorder=6
+    )
+    np.testing.assert_allclose(
+        facets.dx.sum(),3.+np.sqrt(2.),rtol=2e-14,atol=2e-14
+    )
+    np.testing.assert_allclose(
+        np.sum(facets.normals*facets.dx[:,:,None],axis=(0,1)),0.,
+        atol=3e-14,
+    )
+    assert sorted(mesh._facet_sizes.tolist())==[3,3,4,4,4]
+
+    @skfn.Functional
+    def moment(w):
+        return 1.+w.x[0]+w.n[2]**2
+
+    value=skfn.asm(moment,facets)
+    direct=np.sum(
+        (1.+facets.global_coordinates[:,:,0]+facets.normals[:,:,2]**2)
+        *facets.dx
+    )
+    np.testing.assert_allclose(value,direct,rtol=2e-14,atol=2e-14)
+
+    @skfn.LinearForm
+    def normal_load(v,w):
+        return dot(w.n,v)
+
+    resultant=np.array([
+        skfn.asm(normal_load,facets)[component::3].sum()
+        for component in range(3)
+    ])
+    np.testing.assert_allclose(resultant,0.,atol=3e-14)
+
+
+def test_wedge_mixed_interior_facets_and_predicate():
+    mesh=skfn.MeshWedge1.init_tensor([0.,1.],[0.,1.],[0.,1.,2.])
+    interior=mesh.interior_facets()
+    assert sorted(mesh._facet_sizes[interior].tolist())==[3,3,4,4]
+    side0=skfn.InteriorFacetBasis(
+        mesh,skfn.ElementVector(skfn.ElementWedge1()),facets=interior,
+        side=0,intorder=4,
+    )
+    side1=skfn.InteriorFacetBasis(
+        mesh,skfn.ElementVector(skfn.ElementWedge1()),facets=interior,
+        side=1,intorder=4,
+    )
+    np.testing.assert_allclose(
+        side0.dx.sum(axis=1),side1.dx.sum(axis=1),rtol=2e-14,atol=2e-14
+    )
+    np.testing.assert_allclose(
+        side0.normals,side1.normals,rtol=2e-14,atol=2e-14
+    )
+    bottom=mesh.facets_satisfying(
+        lambda x:np.isclose(x[2],0.),boundaries_only=True
+    )
+    assert len(bottom)==2
+    assert np.all(mesh._facet_sizes[bottom]==3)
+    marked=mesh.with_boundaries({"bottom":lambda x:np.isclose(x[2],0.)})
+    np.testing.assert_array_equal(marked.boundaries["bottom"],bottom)

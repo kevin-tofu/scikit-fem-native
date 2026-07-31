@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 import skfn
+from skfn.helpers import dot
 
 
 def basis(*,distorted=False,intorder=4):
@@ -89,6 +90,37 @@ def test_pyramid5_material_tangent_and_parallel(material):
     )
 
 
-def test_pyramid_facets_fail_explicitly_until_mixed_topology_is_supported():
-    with pytest.raises(NotImplementedError,match="mixed triangle"):
-        skfn.MeshPyramid1().boundary_facets()
+def test_pyramid_mixed_facets_area_normals_and_functional():
+    mesh=skfn.MeshPyramid1()
+    facets=skfn.FacetBasis(
+        mesh,skfn.ElementVector(skfn.ElementPyramid1()),intorder=6
+    )
+    np.testing.assert_allclose(
+        facets.dx.sum(),1.+np.sqrt(5.),rtol=2e-14,atol=2e-14
+    )
+    np.testing.assert_allclose(
+        np.sum(facets.normals*facets.dx[:,:,None],axis=(0,1)),0.,
+        atol=3e-14,
+    )
+    assert sorted(mesh._facet_sizes.tolist())==[3,3,3,3,4]
+
+    @skfn.Functional
+    def moment(w):
+        return 1.+w.x[1]+w.n[0]**2
+
+    value=skfn.asm(moment,facets)
+    direct=np.sum(
+        (1.+facets.global_coordinates[:,:,1]+facets.normals[:,:,0]**2)
+        *facets.dx
+    )
+    np.testing.assert_allclose(value,direct,rtol=2e-14,atol=2e-14)
+
+    @skfn.LinearForm
+    def normal_load(v,w):
+        return dot(w.n,v)
+
+    resultant=np.array([
+        skfn.asm(normal_load,facets)[component::3].sum()
+        for component in range(3)
+    ])
+    np.testing.assert_allclose(resultant,0.,atol=3e-14)
