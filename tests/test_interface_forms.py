@@ -176,3 +176,64 @@ def test_interface_linear_normal_gradient_uses_both_sides():
         (1.,-1.),trace_kind="normal_gradient",coefficient=flux
     )
     np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
+
+
+def test_interface_linear_coordinate_context_evaluates_at_overlap_points():
+    master,slave,integration=interface()
+
+    def load(x):
+        return np.stack((1.+x[0],x[1]**2,-x[2]),axis=0)
+
+    @skfn.LinearForm
+    def form(v,w):
+        return dot(load(w.x),jump(v))
+
+    actual=skfn.asm(
+        form,master,slave,integration=integration
+    )
+    coefficient=load(np.moveaxis(
+        integration.global_coordinates,-1,0
+    ))
+    expected=integration.assemble_linear_trace(
+        (1.,-1.),coefficient=coefficient
+    )
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
+
+
+def test_interface_master_normal_is_available_to_linear_form():
+    master,slave,integration=interface()
+
+    @skfn.LinearForm
+    def form(v,w):
+        return dot(w.n_master,jump(v))
+
+    actual=form.assemble(
+        master,slave,integration=integration
+    )
+    expected=integration.assemble_linear_trace(
+        (1.,-1.),
+        coefficient=np.moveaxis(integration.master_normals,-1,0),
+    )
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
+    np.testing.assert_allclose(
+        np.linalg.norm(integration.master_normals,axis=2),1.,
+        rtol=2e-14,atol=2e-14,
+    )
+
+
+def test_interface_gap_can_weight_bilinear_form():
+    master,slave,integration=interface()
+
+    @skfn.BilinearForm
+    def form(u,v,w):
+        return (1.+w.gap**2)*dot(jump(u),jump(v))
+
+    actual=skfn.asm(
+        form,master,slave,integration=integration
+    )
+    expected=integration.assemble_traces(
+        (1.,-1.),(1.,-1.),coefficient=1.+integration.gap**2
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
+    )

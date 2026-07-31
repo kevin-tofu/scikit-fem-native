@@ -209,6 +209,28 @@ def test_adaptive_curved_surface_tessellation_converges():
     assert errors[1]<.3*errors[0]
 
 
+def test_curved_supermesh_normals_are_evaluated_at_quadrature_points():
+    mesh=skfn.MeshTet2()
+    points=mesh.p.copy()
+    points[:,4]+=np.array([0.,0.,.25])
+    curved=skfn.MeshTet2(points,mesh.t)
+    facets=skfn.FacetBasis(
+        curved,skfn.ElementVector(skfn.ElementTetP2()),intorder=4
+    )
+    supermesh=skfn.TriangleSupermesh.from_facets(
+        facets,facets,geometry_tolerance=.01,
+        max_subdivision_level=4,
+    )
+    np.testing.assert_allclose(
+        np.linalg.norm(supermesh.master_normals,axis=2),1.,
+        rtol=3e-14,atol=3e-14,
+    )
+    variation=np.linalg.norm(
+        supermesh.master_normals-supermesh.master_normals[:,:1],axis=2
+    )
+    assert variation.max()>1e-3
+
+
 def test_scalar_multiplier_to_vector_tensor_coupling():
     mesh=skfn.MeshTet()
     multiplier=skfn.FacetBasis(

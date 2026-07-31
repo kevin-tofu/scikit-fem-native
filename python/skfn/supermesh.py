@@ -22,7 +22,8 @@ class BoundarySurface:
             1e-6*max(scale,1.)
             if geometry_tolerance is None else float(geometry_tolerance)
         )
-        points=[];triangles=[];parents=[];point_lookup={};self.maximum_subdivision_level=0
+        points=[];triangles=[];parents=[];search_faces=[];point_lookup={}
+        reference_tangents=[];self.maximum_subdivision_level=0
         for face_index,(local,element) in enumerate(zip(
             facet_basis.local_faces,facet_basis.parent_elements
         )):
@@ -32,6 +33,10 @@ class BoundarySurface:
             reference_corners=facet_basis.elem.elem.doflocs[
                 np.asarray(local[:corner_count] if len(local)!=9 else (local[0],local[2],local[8],local[6]))
             ]
+            reference_tangents.append(np.stack((
+                reference_corners[1]-reference_corners[0],
+                reference_corners[-1]-reference_corners[0],
+            ),axis=1))
             element_coordinates=facet_basis.mesh.p[:,facet_basis.mesh.t[:,element]]
 
             def reference(uv):
@@ -76,6 +81,7 @@ class BoundarySurface:
                 )
                 triangles.append(tuple(point_index(vertex) for vertex in vertices))
                 parents.append(element)
+                search_faces.append(face_index)
 
             if is_triangle:
                 subdivide(np.array([[0.,0.],[1.,0.],[0.,1.]]),0)
@@ -85,6 +91,8 @@ class BoundarySurface:
         self.points=np.asarray(points,dtype=float).T
         self.triangles=np.asarray(triangles,dtype=np.int64).T
         self.parents=np.asarray(parents,dtype=np.int64)
+        self.search_faces=np.asarray(search_faces,dtype=np.int64)
+        self.reference_tangents=tuple(reference_tangents)
         self.geometry_tolerance=tolerance
 
     @property
@@ -122,12 +130,24 @@ class BoundarySurface:
             guess[point_index]=xi
         values=np.empty((len(physical_points),coordinates.shape[1]))
         gradients=np.empty((len(physical_points),coordinates.shape[1],3))
+        normals=np.empty((len(physical_points),3))
+        reference_tangents=self.reference_tangents[
+            self.search_faces[search_triangle]
+        ]
+        centroid=coordinates.mean(axis=1)
         for q,xi in enumerate(guess):
             shape,reference_gradient=volume._evaluate_reference(xi[:,None])
             jacobian=coordinates@reference_gradient[0]
             values[q]=shape[0]
             gradients[q]=reference_gradient[0]@np.linalg.inv(jacobian)
-        return values,gradients
+            tangents=jacobian@reference_tangents
+            normal=np.cross(tangents[:,0],tangents[:,1])
+            normal/=np.linalg.norm(normal)
+            point=coordinates@shape[0]
+            if np.dot(normal,point-centroid)<0.:
+                normal=-normal
+            normals[q]=normal
+        return values,gradients,normals
 
 
 def _cross2(a, b):
@@ -238,6 +258,7 @@ class TriangleSupermesh:
         row_dofs=[];column_dofs=[];row_shape=[];column_shape=[];weights=[]
         row_gradients=[];column_gradients=[]
         row_normal_gradient=[];column_normal_gradient=[]
+        quadrature_coordinates=[];master_normals=[];slave_normals=[];gaps=[]
         candidates=0;overlaps=0;area_total=0.;noncoplanar=0;maximum_gap=0.
         projection_tolerance=(
             tolerance if projection_tolerance is None
@@ -290,36 +311,55 @@ class TriangleSupermesh:
                     physical_points.append(
                         master_xyz[0]+point[0]*tangent0+point[1]*tangent1
                     )
+                physical_points=np.asarray(physical_points)
+                slave_search_values=np.asarray(slave_values)
+                slave_search_normal=np.cross(
+                    slave_xyz[1]-slave_xyz[0],slave_xyz[2]-slave_xyz[0]
+                )
+                slave_search_normal/=np.linalg.norm(slave_search_normal)
+                if np.dot(slave_search_normal,normal)>0:
+                    slave_search_normal=-slave_search_normal
                 if master_surface is not None:
-                    master_values,master_gradients=master_surface.evaluate(
+                    master_values,master_gradients,master_q_normals=master_surface.evaluate(
                         master_index,np.asarray(physical_points)
                     )
                     master_element_nodes=master_surface.element_nodes(master_index)
                 else:
                     master_element_nodes=master_nodes
                 if slave_surface is not None:
-                    slave_values,slave_gradients=slave_surface.evaluate(
+                    slave_values,slave_gradients,slave_q_normals=slave_surface.evaluate(
                         slave_index,np.asarray(physical_points)
                     )
                     slave_element_nodes=slave_surface.element_nodes(slave_index)
                 else:
                     slave_element_nodes=slave_nodes
                 row_shape.append(master_values);column_shape.append(slave_values)
+                quadrature_coordinates.append(physical_points)
+                if master_surface is None:
+                    master_q_normals=np.broadcast_to(
+                        normal,physical_points.shape
+                    )
+                    slave_q_normals=np.broadcast_to(
+                        slave_search_normal,physical_points.shape
+                    )
+                master_normals.append(master_q_normals)
+                slave_normals.append(slave_q_normals)
+                slave_physical=slave_search_values@slave_xyz
+                gaps.append(np.einsum(
+                    "qi,qi->q",slave_physical-physical_points,
+                    master_q_normals,
+                ))
                 if master_surface is not None:
                     row_gradients.append(master_gradients)
                     column_gradients.append(slave_gradients)
-                    slave_search_normal=np.cross(
-                        slave_xyz[1]-slave_xyz[0],slave_xyz[2]-slave_xyz[0]
-                    )
-                    slave_search_normal/=np.linalg.norm(slave_search_normal)
-                    if np.dot(slave_search_normal,normal)>0:
-                        slave_search_normal=-slave_search_normal
                     row_normal_gradient.append(
-                        np.einsum("qni,i->qn",master_gradients,normal)
+                        np.einsum(
+                            "qni,qi->qn",master_gradients,master_q_normals
+                        )
                     )
                     column_normal_gradient.append(
                         np.einsum(
-                            "qni,i->qn",slave_gradients,slave_search_normal
+                            "qni,qi->qn",slave_gradients,slave_q_normals
                         )
                     )
                 weights.append(area*quadrature_weights)
@@ -355,6 +395,12 @@ class TriangleSupermesh:
         self._row_shape=np.asarray(row_shape,dtype=np.float64)
         self._column_shape=np.asarray(column_shape,dtype=np.float64)
         self._weights=np.asarray(weights,dtype=np.float64)
+        self.global_coordinates=np.asarray(
+            quadrature_coordinates,dtype=np.float64
+        )
+        self.master_normals=np.asarray(master_normals,dtype=np.float64)
+        self.slave_normals=np.asarray(slave_normals,dtype=np.float64)
+        self.gap=np.asarray(gaps,dtype=np.float64)
         self._row_normal_gradient=(
             np.asarray(row_normal_gradient,dtype=np.float64)
             if row_normal_gradient else None

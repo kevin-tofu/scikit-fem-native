@@ -232,6 +232,27 @@ rhs = skfem.asm(
 assembled natively as well.  The weights supplied by `jump` produce equal and
 opposite master/slave resultants for a constant interface traction.
 
+Supermesh forms receive geometry evaluated at every overlap quadrature point:
+
+```python
+@skfem.LinearForm
+def varying_interface_load(v, w):
+    return dot(load(w.x), jump(v))
+
+@skfem.LinearForm
+def master_pressure(v, w):
+    return dot(w.n_master, jump(v))
+
+@skfem.BilinearForm
+def gap_weighted_penalty(u, v, w):
+    return (1.0 + w.gap ** 2) * dot(jump(u), jump(v))
+```
+
+`w.n_master` and `w.n_slave` are the independent outward unit normals;
+`w.gap` is the signed search-geometry separation measured along the master
+normal.  Curved Tet10 and Hex27 normals are evaluated from the original
+isoparametric facets rather than copied from the tessellated search triangles.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.
