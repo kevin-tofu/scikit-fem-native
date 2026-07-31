@@ -197,14 +197,21 @@ class MeshHex2(MeshHex):
             raise ValueError("quadratic hex mesh requires p (3,n) and t (27,e)")
 
 
-class ElementTetP1:
+class _ComposableElement:
+    def __mul__(self,other):
+        if isinstance(other,ElementComposite):
+            return ElementComposite(self,*other.elems)
+        return ElementComposite(self,other)
+
+
+class ElementTetP1(_ComposableElement):
     def __init__(self):
         self.doflocs = np.array(
             [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
         )
 
 
-class ElementTetP2:
+class ElementTetP2(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array(
             [[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.],
@@ -213,7 +220,7 @@ class ElementTetP2:
         )
 
 
-class ElementHex1:
+class ElementHex1(_ComposableElement):
     def __init__(self):
         self.doflocs = np.array(
             [[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.],
@@ -221,7 +228,7 @@ class ElementHex1:
         )
 
 
-class ElementHex2:
+class ElementHex2(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array(
             [[x,y,z] for z in (0.,.5,1.) for y in (0.,.5,1.)
@@ -229,10 +236,25 @@ class ElementHex2:
         )
 
 
-class ElementVector:
+class ElementVector(_ComposableElement):
     def __init__(self, element, dim: int = 3):
         self.elem = element
         self._dim = dim
+
+
+class ElementComposite(_ComposableElement):
+    """Ordered collection of nodal H1 subfields."""
+
+    def __init__(self,*elements):
+        if len(elements)<2:
+            raise ValueError("ElementComposite requires at least two fields")
+        flattened=[]
+        for element in elements:
+            if isinstance(element,ElementComposite):
+                flattened.extend(element.elems)
+            else:
+                flattened.append(element)
+        self.elems=tuple(flattened)
 
 
 class _Field:
@@ -246,6 +268,9 @@ class _Field:
 
 class Basis:
     def __init__(self, mesh: MeshTet, element: ElementVector, intorder=2):
+        if isinstance(element,ElementComposite):
+            self._init_composite(mesh,element,intorder)
+            return
         if not isinstance(element, ElementVector) or not isinstance(
             element.elem, (ElementTetP1, ElementTetP2, ElementHex1, ElementHex2)
         ):
@@ -304,6 +329,52 @@ class Basis:
         )
         self.normals=None
         self.basis = self._vector_fields()
+
+    def _init_composite(self,mesh,element,intorder):
+        vector_elements=tuple(
+            field if isinstance(field,ElementVector)
+            else ElementVector(field,dim=1)
+            for field in element.elems
+        )
+        scalar_types=tuple(type(field.elem) for field in vector_elements)
+        if len(set(scalar_types))!=1:
+            raise NotImplementedError(
+                "composite fields currently require the same nodal order"
+            )
+        subbases=[Basis(mesh,field,intorder=intorder) for field in vector_elements]
+        components=tuple(field._dim for field in vector_elements)
+        total_components=sum(components)
+        node_count=mesh.p.shape[1]
+        offsets=np.cumsum((0,)+components[:-1])
+        for subbasis,offset,count in zip(subbases,offsets,components):
+            nodal=np.stack([
+                total_components*np.arange(node_count)+offset+c
+                for c in range(count)
+            ])
+            subbasis.nodal_dofs=nodal
+            subbasis.N=node_count*total_components
+            local_nodes=mesh.t.shape[0]
+            subbasis.element_dofs=nodal[:,mesh.t].transpose(
+                2,1,0
+            ).reshape(mesh.nelements,local_nodes*count).T
+            subbasis.doflocs=np.repeat(mesh.p,count,axis=1)
+        first=subbases[0]
+        self.mesh,self.elem=mesh,element
+        self.subbases=tuple(subbases)
+        self.field_components=components
+        self.N=node_count*total_components
+        self.nodal_dofs=np.arange(self.N).reshape(
+            node_count,total_components
+        ).T
+        self.element_dofs=np.concatenate(
+            [subbasis.element_dofs for subbasis in subbases],axis=0
+        )
+        self.doflocs=np.repeat(mesh.p,total_components,axis=1)
+        self.X,self.W=first.X,first.W
+        self.dx=first.dx
+        self.global_coordinates=first.global_coordinates
+        self.normals=None
+        self.basis=tuple()
 
     def _geometry(self):
         if self._quadratic_tet:

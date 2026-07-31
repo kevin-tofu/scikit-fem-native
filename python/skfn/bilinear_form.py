@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from ._skfn import BilinearFormAssembler
+from ._skfn import BilinearFormAssembler,CrossBilinearAssembler
 
 
 class NativeBilinearForm:
@@ -56,3 +56,57 @@ class NativeBilinearForm:
                 f"{self._coefficient_shape}"
             ) from error
         return np.ascontiguousarray(coefficient)
+
+
+class NativeCompositeBilinearForm:
+    """Reusable rectangular native blocks for a composite H1 basis."""
+
+    def __init__(self,basis):
+        self.basis=basis
+        self._assemblers={}
+
+    def assemble(
+        self,row_field,column_field,*,kind,coefficient,
+    ):
+        row=self.basis.subbases[row_field]
+        column=self.basis.subbases[column_field]
+        row_components=row.elem._dim
+        column_components=column.elem._dim
+        if row_components!=column_components:
+            raise ValueError(
+                "component-mismatched composite coupling requires "
+                "an explicit tensor contraction"
+            )
+        key=(row_field,column_field,kind)
+        native=self._assemblers.get(key)
+        if native is None:
+            row_nodes=len(row.elem.elem.doflocs)
+            column_nodes=len(column.elem.elem.doflocs)
+            entities,quadrature=self.basis.dx.shape
+            row_dofs=row.element_dofs.T.reshape(
+                entities,row_nodes,row_components
+            )
+            column_dofs=column.element_dofs.T.reshape(
+                entities,column_nodes,column_components
+            )
+            native=CrossBilinearAssembler(
+                np.ascontiguousarray(row_dofs,dtype=np.int64),
+                np.ascontiguousarray(column_dofs,dtype=np.int64),
+                np.ascontiguousarray(row.tabulated_shape),
+                np.ascontiguousarray(column.tabulated_shape),
+                np.ascontiguousarray(self.basis.dx),
+                np.ascontiguousarray(row.tabulated_gradients),
+                np.ascontiguousarray(column.tabulated_gradients),
+            )
+            self._assemblers[key]=native
+        target=self.basis.dx.shape
+        coefficient=np.ascontiguousarray(np.broadcast_to(
+            np.asarray(coefficient,dtype=np.float64),target
+        ))
+        native.assemble(coefficient,kind,kind)
+        matrix=csr_matrix(
+            (native.values,native.indices,native.indptr),
+            shape=(native.rows,native.columns),copy=False,
+        )
+        matrix.resize((self.basis.N,self.basis.N))
+        return matrix.copy()

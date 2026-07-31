@@ -7,7 +7,7 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from .linear_form import NativeLinearForm
-from .bilinear_form import NativeBilinearForm
+from .bilinear_form import NativeBilinearForm,NativeCompositeBilinearForm
 
 
 class UnsupportedNativeForm(Exception):
@@ -37,12 +37,22 @@ class _QuadratureValue:
         return _QuadratureValue(result)
 
     def __mul__(self,other):
-        if isinstance(other,(_BilinearTerm,_InterfaceBilinearTerm)):
+        if isinstance(other,(
+            _BilinearTerm,_CompositeBilinearTerm,
+            _InterfaceBilinearTerm,
+        )):
             return other*np.asarray(self.value)
+        if isinstance(other,_CompositeField):
+            return _CompositeWeightedField(
+                other,np.asarray(self.value)
+            )
         return _QuadratureValue(self.value*np.asarray(other))
 
     def __rmul__(self,other):
-        if isinstance(other,(_BilinearTerm,_InterfaceBilinearTerm)):
+        if isinstance(other,(
+            _BilinearTerm,_CompositeBilinearTerm,
+            _InterfaceBilinearTerm,
+        )):
             return other*np.asarray(self.value)
         return _QuadratureValue(np.asarray(other)*self.value)
 
@@ -92,6 +102,43 @@ class _TrialGradient:
 
 
 @dataclass(frozen=True)
+class _CompositeField:
+    role: str
+    field: int
+    kind: str = "value"
+
+    def __mul__(self,other):
+        if isinstance(other,_CompositeField):
+            if self.kind!="value" or other.kind!="value":
+                return NotImplemented
+            return _composite_contraction(self,other,"value")
+        if np.isscalar(other) or isinstance(
+            other,(np.ndarray,_QuadratureValue)
+        ):
+            return _CompositeWeightedField(self,np.asarray(other))
+        return NotImplemented
+
+    __rmul__=__mul__
+
+
+@dataclass(frozen=True)
+class _CompositeWeightedField:
+    field: _CompositeField
+    coefficient: Any
+
+    def __mul__(self,other):
+        if not isinstance(other,_CompositeField):
+            return NotImplemented
+        term=_composite_contraction(self.field,other,"value")
+        return _CompositeBilinearTerm(
+            term.row_field,term.column_field,term.kind,
+            np.asarray(self.coefficient),term.factor,
+        )
+
+    __rmul__=__mul__
+
+
+@dataclass(frozen=True)
 class _Coefficient:
     name: str
 
@@ -101,7 +148,15 @@ class _Coefficient:
         )
 
     def __mul__(self, other):
-        if isinstance(other, (_BilinearTerm,_InterfaceBilinearTerm)):
+        if isinstance(other, (
+            _BilinearTerm,_CompositeBilinearTerm,
+            _InterfaceBilinearTerm,
+        )):
+            if isinstance(other,_CompositeBilinearTerm):
+                return _CompositeBilinearTerm(
+                    other.row_field,other.column_field,
+                    other.kind,self.name,other.factor
+                )
             if isinstance(other,_InterfaceBilinearTerm):
                 return _InterfaceBilinearTerm(
                     other.row,other.column,self.name,other.factor
@@ -209,6 +264,75 @@ class _BilinearSum:
 
     def __neg__(self):
         return _BilinearSum(tuple(-term for term in self.terms))
+
+    def __sub__(self,other):
+        return self+(-other)
+
+
+@dataclass(frozen=True)
+class _CompositeBilinearTerm:
+    row_field: int
+    column_field: int
+    kind: str
+    coefficient: Any = None
+    factor: float = 1.
+
+    def __mul__(self,other):
+        if np.isscalar(other):
+            return _CompositeBilinearTerm(
+                self.row_field,self.column_field,self.kind,
+                self.coefficient,self.factor*other,
+            )
+        if isinstance(other,_Coefficient):
+            return _CompositeBilinearTerm(
+                self.row_field,self.column_field,self.kind,
+                other.name,self.factor,
+            )
+        if isinstance(other,np.ndarray):
+            if self.coefficient is not None:
+                raise UnsupportedNativeForm(
+                    "multiple composite coefficients are not supported"
+                )
+            return _CompositeBilinearTerm(
+                self.row_field,self.column_field,self.kind,
+                other,self.factor,
+            )
+        return NotImplemented
+
+    __rmul__=__mul__
+
+    def __neg__(self):
+        return _CompositeBilinearTerm(
+            self.row_field,self.column_field,self.kind,
+            self.coefficient,-self.factor,
+        )
+
+    def __add__(self,other):
+        if isinstance(other,_CompositeBilinearTerm):
+            return _CompositeBilinearSum((self,other))
+        if isinstance(other,_CompositeBilinearSum):
+            return _CompositeBilinearSum((self,)+other.terms)
+        return NotImplemented
+
+    def __sub__(self,other):
+        return self+(-other)
+
+
+@dataclass(frozen=True)
+class _CompositeBilinearSum:
+    terms: tuple[_CompositeBilinearTerm,...]
+
+    def __add__(self,other):
+        if isinstance(other,_CompositeBilinearTerm):
+            return _CompositeBilinearSum(self.terms+(other,))
+        if isinstance(other,_CompositeBilinearSum):
+            return _CompositeBilinearSum(self.terms+other.terms)
+        return NotImplemented
+
+    __radd__=__add__
+
+    def __neg__(self):
+        return _CompositeBilinearSum(tuple(-term for term in self.terms))
 
     def __sub__(self,other):
         return self+(-other)
@@ -501,6 +625,69 @@ def _native_bilinear_assemble(form, basis, kwargs):
     return native.assemble(value=value,gradient=gradient)
 
 
+def _native_composite_bilinear_assemble(form,basis,kwargs):
+    geometry={"x":_QuadratureValue(
+        np.moveaxis(basis.global_coordinates,-1,0)
+    )}
+    trial=tuple(
+        _CompositeField("trial",field)
+        for field in range(len(basis.subbases))
+    )
+    test=tuple(
+        _CompositeField("test",field)
+        for field in range(len(basis.subbases))
+    )
+    try:
+        expression=form.function(
+            *trial,*test,
+            _Parameters(_parameter_values(geometry,kwargs)),
+        )
+    except UnsupportedNativeForm:
+        raise
+    except Exception as error:
+        raise UnsupportedNativeForm(
+            f"composite BilinearForm contains an unsupported "
+            f"operation: {error}"
+        ) from error
+    terms=(
+        expression.terms
+        if isinstance(expression,_CompositeBilinearSum)
+        else (expression,)
+        if isinstance(expression,_CompositeBilinearTerm)
+        else None
+    )
+    if terms is None:
+        raise UnsupportedNativeForm(
+            "composite BilinearForm must reduce to subfield value or "
+            "gradient contractions"
+        )
+    native=form._native_cache.get(basis)
+    if native is None:
+        native=NativeCompositeBilinearForm(basis)
+        form._native_cache[basis]=native
+    result=None
+    for term in terms:
+        coefficient=term.factor
+        if term.coefficient is not None:
+            if isinstance(term.coefficient,str):
+                if term.coefficient not in kwargs:
+                    raise ValueError(
+                        f"missing form parameter {term.coefficient!r}"
+                    )
+                raw=kwargs[term.coefficient]
+            else:
+                raw=term.coefficient
+            coefficient=coefficient*np.asarray(raw,dtype=np.float64)
+            if coefficient.ndim>2:
+                coefficient=np.squeeze(coefficient)
+        block=native.assemble(
+            term.row_field,term.column_field,
+            kind=term.kind,coefficient=coefficient,
+        )
+        result=block if result is None else result+block
+    return result
+
+
 def _interface_geometry(integration,kwargs):
     geometry={
         "x":_QuadratureValue(np.moveaxis(
@@ -645,10 +832,32 @@ def asm(form, *bases, **kwargs):
             raise UnsupportedNativeForm(
                 "native BilinearForm currently requires one shared basis"
             )
+        if hasattr(bases[0],"subbases"):
+            return _native_composite_bilinear_assemble(
+                form,bases[0],kwargs
+            )
         return _native_bilinear_assemble(form, bases[0], kwargs)
     raise TypeError(
         "skfn.asm accepts forms created by skfn.LinearForm or "
         "skfn.BilinearForm; use skfem.asm explicitly for scikit-fem forms"
+    )
+
+
+def _composite_contraction(left,right,kind):
+    if not isinstance(left,_CompositeField) or not isinstance(
+        right,_CompositeField
+    ):
+        raise UnsupportedNativeForm(
+            "composite contraction requires two subfields"
+        )
+    if left.role==right.role:
+        raise UnsupportedNativeForm(
+            "composite contraction requires trial and test subfields"
+        )
+    row=left if left.role=="test" else right
+    column=right if left.role=="test" else left
+    return _CompositeBilinearTerm(
+        row.field,column.field,kind
     )
 
 
@@ -697,6 +906,16 @@ def dot(left, right):
         and isinstance(left, _TestValue)
     ):
         return _BilinearTerm("value")
+    if isinstance(left,_CompositeField) and isinstance(
+        right,_CompositeField
+    ):
+        if left.kind=="gradient" and right.kind=="gradient":
+            return _composite_contraction(left,right,"gradient")
+        if left.kind!="value" or right.kind!="value":
+            raise UnsupportedNativeForm(
+                "composite dot requires two values or two gradients"
+            )
+        return _composite_contraction(left,right,"value")
     if isinstance(left,_Coefficient) and isinstance(right,_InterfaceTrace):
         if right.role=="test":
             if right.kind=="gradient":
@@ -767,6 +986,14 @@ def ddot(left, right):
         and isinstance(left, _TestGradient)
     ):
         return _BilinearTerm("gradient")
+    if isinstance(left,_CompositeField) and isinstance(
+        right,_CompositeField
+    ):
+        if left.kind!="gradient" or right.kind!="gradient":
+            raise UnsupportedNativeForm(
+                "composite ddot requires two gradients"
+            )
+        return _composite_contraction(left,right,"gradient")
     if isinstance(left,_Coefficient) and isinstance(right,_InterfaceTrace):
         if right.role=="test" and right.kind=="gradient":
             return _InterfaceLinearTerm(right,left)
@@ -803,6 +1030,8 @@ def grad(value):
         return _TrialGradient()
     if isinstance(value,_InterfaceTrace):
         return value._interface_transform("kind","gradient")
+    if isinstance(value,_CompositeField):
+        return _CompositeField(value.role,value.field,"gradient")
     try:
         return value.grad
     except AttributeError as error:

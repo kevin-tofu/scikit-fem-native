@@ -295,6 +295,29 @@ Terms of the same kind are added as quadrature coefficients.  The combined
 value and gradient coefficients are then assembled in one native traversal,
 with one CSR zeroing and scatter pass.
 
+Composite nodal H1 fields use the same expanded signature as scikit-fem:
+
+```python
+element = skfem.ElementTetP1() * skfem.ElementTetP1()
+basis = skfem.Basis(mesh, element)
+
+@skfem.BilinearForm
+def coupled(u1, u2, v1, v2, w):
+    return (
+        (1.0 + w.x[0]) * u1 * v1
+        + 2.0 * u2 * v2
+        + 0.3 * u2 * v1
+        - 0.4 * u1 * v2
+        + w.diffusion * dot(grad(u1), grad(v1))
+    )
+```
+
+`ElementComposite` interleaves its nodal subfield DOFs and caches each native
+rectangular block assembler.  The initial implementation supports fields with
+the same nodal order and component-compatible value or gradient contractions;
+explicit vector-scalar divergence coupling is handled separately rather than
+being inferred from an ambiguous contraction.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.
