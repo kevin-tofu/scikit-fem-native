@@ -339,6 +339,29 @@ is used.  Mixed-order nodal fields share one geometry and quadrature context;
 for example, the Taylor–Hood pair above places velocity DOFs on Tet10 vertices
 and edges while pressure DOFs remain on its four vertices.
 
+Composite right-hand sides use the corresponding expanded `LinearForm`
+signature:
+
+```python
+@skfem.LinearForm
+def load(v, q, w):
+    return (
+        dot(w.force, v)
+        + w.source * q
+        + ddot(w.flux, grad(v))
+    )
+
+rhs = skfem.asm(
+    load, basis,
+    force=force,
+    source=source,
+    flux=flux,
+)
+```
+
+Value and full-gradient terms are grouped per subfield and each cached native
+linear assembler is traversed once.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

@@ -216,3 +216,93 @@ def test_taylor_hood_p2_p1_form_matches_skfem():
     np.testing.assert_allclose(
         actual.toarray(),expected.toarray(),rtol=2e-12,atol=2e-12
     )
+
+
+def test_taylor_hood_composite_linear_form_matches_skfem():
+    linear=skfn.MeshTet.init_tensor(
+        np.linspace(0.,1.,3),
+        np.linspace(0.,1.,2),
+        np.linspace(0.,1.,2),
+    )
+    mesh=skfn.MeshTet2.from_mesh(linear)
+    basis=skfn.Basis(
+        mesh,
+        skfn.ElementVector(skfn.ElementTetP2())
+        *skfn.ElementTetP1(),
+        intorder=4,
+    )
+
+    @skfn.LinearForm
+    def load(v,q,w):
+        return (
+            dot(w.force,v)
+            +w.source*q
+            +ddot(w.flux,grad(v))
+        )
+
+    force=np.array([1.2,-.4,.7])[:,None,None]
+    flux=np.array([
+        [.2,-.1,.3],
+        [.4,.5,-.2],
+        [-.3,.1,.6],
+    ])[:,:,None,None]
+    actual=skfn.asm(
+        load,basis,force=force,source=.35,flux=flux
+    )
+    native=load._native_cache[basis]
+    assembler_ids={
+        field:id(assembler)
+        for field,assembler in native._assemblers.items()
+    }
+    repeated=skfn.asm(
+        load,basis,force=2.*force,source=.7,flux=2.*flux
+    )
+    assert assembler_ids=={
+        field:id(assembler)
+        for field,assembler in native._assemblers.items()
+    }
+    np.testing.assert_allclose(repeated,2.*actual,rtol=2e-15,atol=2e-15)
+
+    reference_mesh=skfem.MeshTet2.from_mesh(
+        skfem.MeshTet(linear.p,linear.t)
+    )
+    reference_basis=skfem.Basis(
+        reference_mesh,
+        skfem.ElementVector(skfem.ElementTetP2())
+        *skfem.ElementTetP1(),
+        intorder=4,
+    )
+
+    @skfem.LinearForm
+    def reference(v,q,w):
+        return (
+            reference_dot(w.force,v)
+            +w.source*q
+            +reference_ddot(w.flux,reference_grad(v))
+        )
+
+    expected=skfem.asm(
+        reference,reference_basis,
+        force=force,source=.35,flux=flux,
+    )
+    reference_fields=reference_basis.split_indices()
+    native_fields=(
+        basis.subbases[0].nodal_dofs.reshape(-1,order="F"),
+        basis.subbases[1].nodal_dofs.reshape(-1,order="F"),
+    )
+    permutation=np.empty(basis.N,dtype=np.int64)
+    for native_dofs,reference_dofs,components in zip(
+        native_fields,reference_fields,(3,1)
+    ):
+        lookup={}
+        for dof in reference_dofs:
+            coordinate=tuple(np.round(reference_basis.doflocs[:,dof],14))
+            lookup.setdefault(coordinate,[]).append(int(dof))
+        for offset,native_dof in enumerate(native_dofs):
+            coordinate=tuple(np.round(
+                basis.doflocs[:,native_dof],14
+            ))
+            permutation[native_dof]=lookup[coordinate][offset%components]
+    np.testing.assert_allclose(
+        actual,expected[permutation],rtol=2e-12,atol=2e-12
+    )

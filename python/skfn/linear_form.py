@@ -88,3 +88,28 @@ class NativeLinearForm:
                 f"{name} coefficient must broadcast to {shape}"
             ) from error
         return np.ascontiguousarray(coefficient)
+
+
+class NativeCompositeLinearForm:
+    """Reusable native linear assemblers for composite H1 subfields."""
+
+    def __init__(self,basis) -> None:
+        self.basis=basis
+        self._assemblers={}
+
+    def assembler(self,field):
+        native=self._assemblers.get(field)
+        if native is None:
+            native=NativeLinearForm(self.basis.subbases[field])
+            self._assemblers[field]=native
+        return native
+
+    def assemble(self,field,*,value=None,gradient=None):
+        vector,_=self.assembler(field).assemble(
+            value=value,gradient=gradient
+        )
+        if vector.shape[0]==self.basis.N:
+            return vector
+        result=np.zeros(self.basis.N,dtype=np.float64)
+        result[:vector.shape[0]]=vector
+        return result

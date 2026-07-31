@@ -6,7 +6,7 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 
-from .linear_form import NativeLinearForm
+from .linear_form import NativeCompositeLinearForm,NativeLinearForm
 from .bilinear_form import NativeBilinearForm,NativeCompositeBilinearForm
 
 
@@ -114,6 +114,8 @@ class _CompositeField:
             if self.kind!="value" or other.kind!="value":
                 return NotImplemented
             return _composite_contraction(self,other,"value")
+        if isinstance(other,_Coefficient):
+            return _CompositeWeightedField(self,other.name)
         if np.isscalar(other) or isinstance(
             other,(np.ndarray,_QuadratureValue)
         ):
@@ -136,17 +138,41 @@ class _CompositeWeightedField:
             term=_composite_divergence_contraction(self.field,other)
             return _CompositeBilinearTerm(
                 term.row_field,term.column_field,term.kind,
-                np.asarray(self.coefficient),term.factor,
+                self.coefficient,term.factor,
             )
         if not isinstance(other,_CompositeField):
             return NotImplemented
         term=_composite_contraction(self.field,other,"value")
         return _CompositeBilinearTerm(
             term.row_field,term.column_field,term.kind,
-            np.asarray(self.coefficient),term.factor,
+            self.coefficient,term.factor,
         )
 
     __rmul__=__mul__
+
+    def _linear_term(self):
+        if self.field.role!="test":
+            raise UnsupportedNativeForm(
+                "composite LinearForm requires test subfields"
+            )
+        return _CompositeLinearTerm(
+            self.field.field,self.field.kind,self.coefficient
+        )
+
+    def __add__(self,other):
+        return self._linear_term()+other
+
+    __radd__=__add__
+
+    def __neg__(self):
+        if isinstance(self.coefficient,str):
+            return _CompositeLinearTerm(
+                self.field.field,self.field.kind,self.coefficient,-1.
+            )
+        return _CompositeWeightedField(self.field,-np.asarray(self.coefficient))
+
+    def __sub__(self,other):
+        return self+(-other)
 
 
 @dataclass(frozen=True)
@@ -162,6 +188,64 @@ class _CompositeDivergence:
 
 
 @dataclass(frozen=True)
+class _CompositeLinearTerm:
+    field: int
+    kind: str
+    coefficient: Any
+    factor: float = 1.
+
+    def __mul__(self,other):
+        if np.isscalar(other):
+            return _CompositeLinearTerm(
+                self.field,self.kind,self.coefficient,self.factor*other
+            )
+        return NotImplemented
+
+    __rmul__=__mul__
+
+    def __neg__(self):
+        return _CompositeLinearTerm(
+            self.field,self.kind,self.coefficient,-self.factor
+        )
+
+    def __add__(self,other):
+        if isinstance(other,_CompositeWeightedField):
+            other=other._linear_term()
+        if isinstance(other,_CompositeLinearTerm):
+            return _CompositeLinearSum((self,other))
+        if isinstance(other,_CompositeLinearSum):
+            return _CompositeLinearSum((self,)+other.terms)
+        return NotImplemented
+
+    __radd__=__add__
+
+    def __sub__(self,other):
+        return self+(-other)
+
+
+@dataclass(frozen=True)
+class _CompositeLinearSum:
+    terms: tuple[_CompositeLinearTerm,...]
+
+    def __add__(self,other):
+        if isinstance(other,_CompositeWeightedField):
+            other=other._linear_term()
+        if isinstance(other,_CompositeLinearTerm):
+            return _CompositeLinearSum(self.terms+(other,))
+        if isinstance(other,_CompositeLinearSum):
+            return _CompositeLinearSum(self.terms+other.terms)
+        return NotImplemented
+
+    __radd__=__add__
+
+    def __neg__(self):
+        return _CompositeLinearSum(tuple(-term for term in self.terms))
+
+    def __sub__(self,other):
+        return self+(-other)
+
+
+@dataclass(frozen=True)
 class _Coefficient:
     name: str
 
@@ -171,6 +255,8 @@ class _Coefficient:
         )
 
     def __mul__(self, other):
+        if isinstance(other,_CompositeField):
+            return other*self
         if isinstance(other, (
             _BilinearTerm,_CompositeBilinearTerm,
             _InterfaceBilinearTerm,
@@ -586,6 +672,85 @@ def _native_linear_assemble(form, basis, kwargs):
     return result
 
 
+def _native_composite_linear_assemble(form,basis,kwargs):
+    geometry={"x":_QuadratureValue(
+        np.moveaxis(basis.global_coordinates,-1,0)
+    )}
+    test=tuple(
+        _CompositeField("test",field)
+        for field in range(len(basis.subbases))
+    )
+    try:
+        expression=form.function(
+            *test,_Parameters(_parameter_values(geometry,kwargs))
+        )
+    except UnsupportedNativeForm:
+        raise
+    except Exception as error:
+        raise UnsupportedNativeForm(
+            f"composite LinearForm contains an unsupported "
+            f"operation: {error}"
+        ) from error
+    if isinstance(expression,_CompositeWeightedField):
+        expression=expression._linear_term()
+    terms=(
+        expression.terms
+        if isinstance(expression,_CompositeLinearSum)
+        else (expression,)
+        if isinstance(expression,_CompositeLinearTerm)
+        else None
+    )
+    if terms is None:
+        raise UnsupportedNativeForm(
+            "composite LinearForm must reduce to subfield value or "
+            "gradient contractions"
+        )
+    native=form._native_cache.get(basis)
+    if native is None:
+        native=NativeCompositeLinearForm(basis)
+        form._native_cache[basis]=native
+    grouped={}
+    for term in terms:
+        if isinstance(term.coefficient,str):
+            if term.coefficient not in kwargs:
+                raise ValueError(
+                    f"missing form parameter {term.coefficient!r}"
+                )
+            raw=kwargs[term.coefficient]
+        else:
+            raw=term.coefficient
+        coefficient=term.factor*np.asarray(raw,dtype=np.float64)
+        field_native=native.assembler(term.field)
+        if term.kind=="value":
+            if (
+                coefficient.ndim
+                and coefficient.shape[0]==field_native._shape[-1]
+            ):
+                coefficient=np.moveaxis(coefficient,0,-1)
+        elif term.kind=="gradient":
+            if (
+                coefficient.ndim>=2
+                and coefficient.shape[:2]
+                ==field_native._gradient_shape[-2:]
+            ):
+                coefficient=np.moveaxis(coefficient,(0,1),(-2,-1))
+        else:
+            raise UnsupportedNativeForm(
+                f"unsupported composite linear kind {term.kind!r}"
+            )
+        values=grouped.setdefault(
+            term.field,{"value":None,"gradient":None}
+        )
+        previous=values[term.kind]
+        values[term.kind]=(
+            coefficient if previous is None else previous+coefficient
+        )
+    result=np.zeros(basis.N,dtype=np.float64)
+    for field,values in grouped.items():
+        result+=native.assemble(field,**values)
+    return result
+
+
 def _native_bilinear_assemble(form, basis, kwargs):
     geometry={"x":_QuadratureValue(
         np.moveaxis(basis.global_coordinates,-1,0)
@@ -838,6 +1003,10 @@ def asm(form, *bases, **kwargs):
                 form,integration,kwargs
             )
         if len(bases)==1:
+            if hasattr(bases[0],"subbases"):
+                return _native_composite_linear_assemble(
+                    form,bases[0],kwargs
+                )
             return _native_linear_assemble(form,bases[0],kwargs)
         raise UnsupportedNativeForm(
             "native LinearForm requires one basis, or two bases with "
@@ -900,6 +1069,26 @@ def _composite_divergence_contraction(value,divergence):
 
 
 def dot(left, right):
+    if isinstance(left,_Coefficient) and isinstance(right,_CompositeField):
+        if right.role=="test" and right.kind=="value":
+            return _CompositeLinearTerm(right.field,"value",left.name)
+    if isinstance(right,_Coefficient) and isinstance(left,_CompositeField):
+        if left.role=="test" and left.kind=="value":
+            return _CompositeLinearTerm(left.field,"value",right.name)
+    if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
+        right,_CompositeField
+    ):
+        if right.role=="test" and right.kind=="value":
+            return _CompositeLinearTerm(
+                right.field,"value",np.asarray(left)
+            )
+    if isinstance(right,(np.ndarray,_QuadratureValue)) and isinstance(
+        left,_CompositeField
+    ):
+        if left.role=="test" and left.kind=="value":
+            return _CompositeLinearTerm(
+                left.field,"value",np.asarray(right)
+            )
     if isinstance(left, _Coefficient) and isinstance(right, _TestValue):
         return _Term("value", left)
     if isinstance(right, _Coefficient) and isinstance(left, _TestValue):
@@ -1004,6 +1193,26 @@ def dot(left, right):
 
 
 def ddot(left, right):
+    if isinstance(left,_Coefficient) and isinstance(right,_CompositeField):
+        if right.role=="test" and right.kind=="gradient":
+            return _CompositeLinearTerm(right.field,"gradient",left.name)
+    if isinstance(right,_Coefficient) and isinstance(left,_CompositeField):
+        if left.role=="test" and left.kind=="gradient":
+            return _CompositeLinearTerm(left.field,"gradient",right.name)
+    if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
+        right,_CompositeField
+    ):
+        if right.role=="test" and right.kind=="gradient":
+            return _CompositeLinearTerm(
+                right.field,"gradient",np.asarray(left)
+            )
+    if isinstance(right,(np.ndarray,_QuadratureValue)) and isinstance(
+        left,_CompositeField
+    ):
+        if left.role=="test" and left.kind=="gradient":
+            return _CompositeLinearTerm(
+                left.field,"gradient",np.asarray(right)
+            )
     if isinstance(left, _Coefficient) and isinstance(right, _TestGradient):
         return _Term("gradient", left)
     if isinstance(right, _Coefficient) and isinstance(left, _TestGradient):
