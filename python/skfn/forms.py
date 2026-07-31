@@ -7,7 +7,10 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from .linear_form import NativeCompositeLinearForm,NativeLinearForm
-from .bilinear_form import NativeBilinearForm,NativeCompositeBilinearForm
+from .bilinear_form import (
+    NativeBilinearForm,NativeCompositeBilinearForm,
+    NativeCrossBilinearForm,
+)
 from ._skfn import integrate_functional
 
 
@@ -84,22 +87,32 @@ class _QuadratureValue:
 
 @dataclass(frozen=True)
 class _TestValue:
-    pass
+    factor: float = 1.
+
+    def __mul__(self,value):
+        return _TestValue(self.factor*value) if np.isscalar(value) else NotImplemented
+
+    __rmul__=__mul__
 
 
 @dataclass(frozen=True)
 class _TestGradient:
-    pass
+    factor: float = 1.
 
 
 @dataclass(frozen=True)
 class _TrialValue:
-    pass
+    factor: float = 1.
+
+    def __mul__(self,value):
+        return _TrialValue(self.factor*value) if np.isscalar(value) else NotImplemented
+
+    __rmul__=__mul__
 
 
 @dataclass(frozen=True)
 class _TrialGradient:
-    pass
+    factor: float = 1.
 
 
 @dataclass(frozen=True)
@@ -609,6 +622,7 @@ class _BilinearForm:
     def __init__(self, function: Callable):
         self.function = function
         self._native_cache = WeakKeyDictionary()
+        self._cross_cache = WeakKeyDictionary()
 
     def assemble(self, *bases, **kwargs):
         return asm(self, *bases, **kwargs)
@@ -732,7 +746,11 @@ def _native_linear_assemble(form, basis, kwargs):
         else:
             raise UnsupportedNativeForm
     result, _ = native.assemble(value=value, gradient=gradient)
-    return result
+    if result.shape[0]==basis.N:
+        return result
+    padded=np.zeros(basis.N,dtype=result.dtype)
+    padded[:result.shape[0]]=result
+    return padded
 
 
 def _native_composite_linear_assemble(form,basis,kwargs):
@@ -879,6 +897,83 @@ def _native_bilinear_assemble(form, basis, kwargs):
         native = NativeBilinearForm(basis)
         form._native_cache[basis] = native
     return native.assemble(value=value,gradient=gradient)
+
+
+def _native_cross_bilinear_assemble(
+    form,trial_basis,test_basis,idx,kwargs
+):
+    geometry={
+        "x":_QuadratureValue(np.moveaxis(
+            test_basis.global_coordinates,-1,0
+        )),
+        "idx":idx,
+    }
+    if test_basis.normals is not None:
+        geometry["n"]=_QuadratureValue(np.moveaxis(
+            test_basis.normals,-1,0
+        ))
+    try:
+        expression=form.function(
+            _TrialValue(),_TestValue(),
+            _Parameters(_parameter_values(geometry,kwargs)),
+        )
+    except UnsupportedNativeForm:
+        raise
+    except Exception as error:
+        raise UnsupportedNativeForm(
+            f"interior facet BilinearForm contains an unsupported "
+            f"operation: {error}"
+        ) from error
+    terms=(
+        expression.terms if isinstance(expression,_BilinearSum)
+        else (expression,) if isinstance(expression,_BilinearTerm)
+        else None
+    )
+    if terms is None:
+        raise UnsupportedNativeForm(
+            "interior facet BilinearForm must reduce to value or "
+            "gradient contractions"
+        )
+    by_trial=form._cross_cache.setdefault(
+        trial_basis,WeakKeyDictionary()
+    )
+    native=by_trial.get(test_basis)
+    if native is None:
+        native=NativeCrossBilinearForm(test_basis,trial_basis)
+        by_trial[test_basis]=native
+    result=None
+    for term in terms:
+        coefficient=term.factor
+        if term.coefficient is not None:
+            raw=(
+                kwargs[term.coefficient]
+                if isinstance(term.coefficient,str)
+                else term.coefficient
+            )
+            coefficient=coefficient*np.asarray(raw,dtype=np.float64)
+            if np.ndim(coefficient)>2:
+                coefficient=np.squeeze(coefficient)
+        matrix=native.assemble(term.kind,coefficient)
+        result=matrix if result is None else result+matrix
+    return result
+
+
+def _native_interior_bilinear_assemble(
+    form,trial_bases,test_bases,kwargs
+):
+    trial_bases=tuple(trial_bases)
+    test_bases=tuple(test_bases)
+    if not trial_bases or not test_bases:
+        raise ValueError("interior facet basis lists cannot be empty")
+    result=None
+    for trial_index,trial_basis in enumerate(trial_bases):
+        for test_index,test_basis in enumerate(test_bases):
+            matrix=_native_cross_bilinear_assemble(
+                form,trial_basis,test_basis,
+                (trial_index,test_index),kwargs,
+            )
+            result=matrix if result is None else result+matrix
+    return result
 
 
 def _native_composite_bilinear_assemble(form,basis,kwargs):
@@ -1130,6 +1225,14 @@ def asm(form, *bases, **kwargs):
                     "interface assembly requires master and slave bases"
                 )
             return _native_interface_assemble(form,integration,kwargs)
+        if (
+            len(bases)==2
+            and isinstance(bases[0],(list,tuple))
+            and isinstance(bases[1],(list,tuple))
+        ):
+            return _native_interior_bilinear_assemble(
+                form,bases[0],bases[1],kwargs
+            )
         if len(bases) != 1:
             raise UnsupportedNativeForm(
                 "native BilinearForm currently requires one shared basis"
@@ -1251,7 +1354,7 @@ def dot(left, right):
         isinstance(right, _TrialValue)
         and isinstance(left, _TestValue)
     ):
-        return _BilinearTerm("value")
+        return _BilinearTerm("value",factor=left.factor*right.factor)
     if isinstance(left,_CompositeField) and isinstance(
         right,_CompositeField
     ):
@@ -1351,7 +1454,7 @@ def ddot(left, right):
         isinstance(right, _TrialGradient)
         and isinstance(left, _TestGradient)
     ):
-        return _BilinearTerm("gradient")
+        return _BilinearTerm("gradient",factor=left.factor*right.factor)
     if isinstance(left,_CompositeField) and isinstance(
         right,_CompositeField
     ):
@@ -1391,9 +1494,9 @@ def ddot(left, right):
 
 def grad(value):
     if isinstance(value, _TestValue):
-        return _TestGradient()
+        return _TestGradient(value.factor)
     if isinstance(value, _TrialValue):
-        return _TrialGradient()
+        return _TrialGradient(value.factor)
     if isinstance(value,_InterfaceTrace):
         return value._interface_transform("kind","gradient")
     if isinstance(value,_CompositeField):

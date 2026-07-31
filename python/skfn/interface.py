@@ -17,8 +17,14 @@ class InterfaceField:
     slave_normal: np.ndarray | None = None
 
 
-def jump(field: InterfaceField):
-    """Return the oriented jump ``master - slave``."""
+def jump(field: InterfaceField, *args):
+    """Return a two-sided jump, including scikit-fem's ``jump(w, u)``."""
+    if hasattr(field,"idx"):
+        values=tuple(
+            ((-1.)**field.idx[index])*value
+            for index,value in enumerate(args)
+        )
+        return values[0] if len(values)==1 else values
     if hasattr(field, "_interface_transform"):
         return field._interface_transform("weights",(1.,-1.))
     if not isinstance(field, InterfaceField):

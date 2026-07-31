@@ -58,6 +58,60 @@ class NativeBilinearForm:
         return np.ascontiguousarray(coefficient)
 
 
+class NativeCrossBilinearForm:
+    """Native assembly between aligned trial and test facet traces."""
+
+    def __init__(self,test_basis,trial_basis):
+        if test_basis.dx.shape!=trial_basis.dx.shape:
+            raise ValueError("trial and test quadrature shapes must match")
+        if not np.allclose(test_basis.dx,trial_basis.dx):
+            raise ValueError("trial and test quadrature weights must match")
+        test_scalar=test_basis.elem.elem
+        trial_scalar=trial_basis.elem.elem
+        test_components=test_basis.elem._dim
+        trial_components=trial_basis.elem._dim
+        if test_components!=trial_components:
+            raise ValueError("trial and test components must match")
+        entities=test_basis.dx.shape[0]
+        test_dofs=test_basis.element_dofs.T.reshape(
+            entities,len(test_scalar.doflocs),test_components
+        )
+        trial_dofs=trial_basis.element_dofs.T.reshape(
+            entities,len(trial_scalar.doflocs),trial_components
+        )
+        self._native=CrossBilinearAssembler(
+            np.ascontiguousarray(test_dofs,dtype=np.int64),
+            np.ascontiguousarray(trial_dofs,dtype=np.int64),
+            np.ascontiguousarray(test_basis.tabulated_shape),
+            np.ascontiguousarray(trial_basis.tabulated_shape),
+            np.ascontiguousarray(test_basis.dx),
+            np.ascontiguousarray(test_basis.tabulated_gradients),
+            np.ascontiguousarray(trial_basis.tabulated_gradients),
+        )
+        self.shape=(test_basis.N,trial_basis.N)
+        self.coefficient_shape=test_basis.dx.shape
+
+    def assemble(self,kind,coefficient):
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        coefficient=np.broadcast_to(
+            coefficient,self.coefficient_shape
+        )
+        field_kind="gradient" if kind=="gradient" else "value"
+        self._native.assemble(
+            np.ascontiguousarray(coefficient),field_kind,field_kind
+        )
+        matrix=csr_matrix(
+            (
+                self._native.values,self._native.indices,
+                self._native.indptr,
+            ),
+            shape=(self._native.rows,self._native.columns),
+            copy=False,
+        )
+        matrix.resize(self.shape)
+        return matrix.copy()
+
+
 class NativeCompositeBilinearForm:
     """Reusable rectangular native blocks for a composite H1 basis."""
 

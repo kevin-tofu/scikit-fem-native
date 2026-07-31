@@ -21,7 +21,7 @@ no runtime fallback to scikit-fem or Python element assembly.
 | Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
 | Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
 | Elements | Tri P1/P2, Quad Q1/Q2, Tet P1/P2, Hex Q1/Q2, `ElementVector`, `ElementComposite` |
-| Bases | `Basis`, `FacetBasis`, `interpolate`, `get_dofs`, composite splitting |
+| Bases | `Basis`, `FacetBasis`, 2D `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
 | Mixed forms | Expanded signatures such as `u, p, v, q, w` |
 | Interfaces | `jump`, `avg`, `normal_grad`, value and gradient contractions |
@@ -99,6 +99,22 @@ element = (
     * skfem.ElementTriP1()
 )
 basis = skfem.Basis(mesh, element, intorder=4)
+```
+
+Interior edge forms use the same two-sided basis-list convention and
+`jump(w, u)` helper as scikit-fem:
+
+```python
+side = [
+    skfem.InteriorFacetBasis(mesh, element, side=i)
+    for i in (0, 1)
+]
+
+@skfem.BilinearForm
+def penalty(u, v, w):
+    return dot(jump(w, u), jump(w, v))
+
+matrix = skfem.asm(penalty, side, side)
 ```
 
 The supported form subset is intentionally source-compatible with scikit-fem:

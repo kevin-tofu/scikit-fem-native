@@ -44,6 +44,7 @@ class MeshTri:
             raise ValueError("p must have shape (2, nodes)")
         if self.t.ndim!=2 or self.t.shape[0]!=3:
             raise ValueError("t must have shape (3, elements)")
+        self.t=np.sort(self.t,axis=0)
         self._boundaries={}
 
     @classmethod
@@ -660,6 +661,32 @@ def _quad_shapes(points,quadratic):
     return shape,grad
 
 
+def _interior_facets_2d(mesh):
+    is_quad=mesh.t.shape[0] in (4,9)
+    if is_quad:
+        edges=((0,1),(1,2),(2,3),(3,0))
+        midpoints=(4,5,6,7) if mesh.t.shape[0]==9 else None
+    else:
+        edges=((1,2),(2,0),(0,1))
+        midpoints=(4,5,3) if mesh.t.shape[0]==6 else None
+    found={}
+    for nodes in mesh.t.T:
+        for index,(a,b) in enumerate(edges):
+            key=tuple(sorted((int(nodes[a]),int(nodes[b]))))
+            value=key
+            if midpoints is not None:
+                value=value+(int(nodes[midpoints[index]]),)
+            found.setdefault(key,[]).append(value)
+    values=[
+        adjacent[0] for adjacent in found.values()
+        if len(adjacent)==2
+    ]
+    width=3 if midpoints is not None else 2
+    if not values:
+        return np.empty((width,0),dtype=np.int64)
+    return np.asarray(values,dtype=np.int64).T
+
+
 class Basis:
     def __init__(self, mesh: MeshTet, element: ElementVector, intorder=2):
         self.intorder=intorder
@@ -1220,10 +1247,19 @@ class Basis:
 
 
 class FacetBasis:
-    def __init__(self, mesh, element, facets=None, intorder=2):
+    def __init__(
+        self,mesh,element,facets=None,intorder=2,*,_side=0,_interior=False
+    ):
         if mesh.dim()==2:
-            self._init_2d(mesh,element,facets,intorder)
+            self._init_2d(
+                mesh,element,facets,intorder,
+                side=_side,interior=_interior,
+            )
             return
+        if _interior:
+            raise NotImplementedError(
+                "three-dimensional InteriorFacetBasis is not implemented"
+            )
         volume = Basis(mesh, element, intorder=intorder)
         facets = mesh.boundary_facets() if facets is None else np.asarray(facets)
         expected_face_nodes = 3 if isinstance(element.elem,ElementTetP1) else (
@@ -1325,9 +1361,23 @@ class FacetBasis:
         self.basis = self._vector_fields()
         self.volume_basis=volume
 
-    def _init_2d(self,mesh,element,facets,intorder):
+    def _init_2d(
+        self,mesh,element,facets,intorder,*,side=0,interior=False
+    ):
         volume=Basis(mesh,element,intorder=intorder)
-        facets=mesh.boundary_facets() if facets is None else np.asarray(facets)
+        if interior:
+            all_facets=_interior_facets_2d(mesh)
+            if facets is None:
+                facets=all_facets
+            else:
+                facets=np.asarray(facets)
+                if facets.ndim==1:
+                    facets=all_facets[:,facets]
+        else:
+            facets=(
+                mesh.boundary_facets()
+                if facets is None else np.asarray(facets)
+            )
         quadratic_geometry=mesh.t.shape[0] in (6,9)
         expected=3 if quadratic_geometry else 2
         if facets.shape[0]!=expected:
@@ -1348,7 +1398,7 @@ class FacetBasis:
                 )
         else:
             edge_mid={(0,1):3,(1,2):4,(0,2):5}
-            local_edges=((1,2),(2,0),(0,1))
+            local_edges=((0,1),(1,2),(0,2))
             if isinstance(element.elem,ElementTriP2):
                 local_edges=tuple(
                     edge+(edge_mid[tuple(sorted(edge))],)
@@ -1356,9 +1406,13 @@ class FacetBasis:
                 )
         lookup={}
         for entity,nodes in enumerate(mesh.t.T):
-            for edge in local_edges:
+            for local_index,edge in enumerate(local_edges):
                 key=tuple(sorted((int(nodes[edge[0]]),int(nodes[edge[1]]))))
-                lookup[key]=(entity,edge)
+                lookup.setdefault(key,[]).append(
+                    (local_index,entity,edge)
+                )
+        for adjacent in lookup.values():
+            adjacent.sort(key=lambda item:(item[0],item[1]))
         entities=facets.shape[1];nq=len(points)
         nodes_per_element=len(element.elem.doflocs)
         components=element._dim
@@ -1379,13 +1433,23 @@ class FacetBasis:
         self.local_faces=[]
         for facet,facet_nodes in enumerate(facets.T):
             key=tuple(sorted(map(int,facet_nodes[:2])))
-            entity,edge=lookup[key]
+            adjacent=lookup[key]
+            if side>=len(adjacent):
+                raise ValueError(
+                    f"facet {key} does not have side {side}"
+                )
+            _,entity,edge=adjacent[side]
             self.parent_elements[facet]=entity
             self.local_faces.append(tuple(edge))
             self.element_dofs[:,facet]=volume.element_dofs[:,entity]
             reference_corners=element.elem.doflocs[
                 np.asarray(edge[:2])
             ]
+            global_edge=mesh.t[np.asarray(edge[:2]),entity]
+            if tuple(map(int,global_edge))!=tuple(
+                map(int,facet_nodes[:2])
+            ):
+                reference_corners=reference_corners[::-1]
             x=mesh.p[:,mesh.t[:,entity]]
             centroid=x.mean(axis=1)
             for q,r in enumerate(points):
@@ -1431,6 +1495,8 @@ class FacetBasis:
                 normal/=length
                 if np.dot(normal,point-centroid)<0.:
                     normal=-normal
+                if interior and side==1:
+                    normal=-normal
                 self.tabulated_shape[facet,q]=shape[0]
                 self.tabulated_gradients[facet,q]=physical
                 self.global_coordinates[facet,q]=point
@@ -1461,3 +1527,25 @@ class FacetBasis:
                 grad[component] = self.tabulated_gradients[:, :, node].transpose(2, 0, 1)
                 fields.append((_Field(value, grad),))
         return fields
+
+
+class InteriorFacetBasis(FacetBasis):
+    """Traces on one side of every selected interior facet."""
+
+    def __init__(
+        self,mesh,element,mapping=None,intorder=2,quadrature=None,
+        facets=None,dofs=None,side=0,disable_doflocs=False,
+    ):
+        if mapping is not None or quadrature is not None or dofs is not None:
+            raise NotImplementedError(
+                "custom mapping, quadrature, and dofs are not implemented"
+            )
+        if side not in (0,1):
+            raise ValueError("side must be 0 or 1")
+        super().__init__(
+            mesh,element,facets=facets,intorder=intorder,
+            _side=side,_interior=True,
+        )
+        self.side=side
+        if disable_doflocs:
+            self.doflocs=None
