@@ -281,7 +281,7 @@ class Basis:
         self._tet = isinstance(element.elem, (ElementTetP1,ElementTetP2))
         self._quadratic_tet=isinstance(element.elem,ElementTetP2)
         self._quadratic_hex=isinstance(element.elem,ElementHex2)
-        if self._quadratic_tet:
+        if self._quadratic_tet or (self._tet and intorder>=4):
             self.X=np.array(
                 [[.25,.7857142857142857,.0714285714285714,.0714285714285714,.0714285714285714,
                   .1005964238332008,.3994035761667992,.3994035761667992,.3994035761667992,
@@ -300,7 +300,7 @@ class Basis:
                  [.1381966011250105,.1381966011250105,.5854101966249685,.1381966011250105]]
             )
             self.W = np.full(4,1./24.)
-        elif self._quadratic_hex:
+        elif self._quadratic_hex or (not self._tet and intorder>=4):
             points=np.array([.5-np.sqrt(3./5.)/2.,.5,.5+np.sqrt(3./5.)/2.])
             one_weights=np.array([5./18.,4./9.,5./18.])
             entries=[(x,y,z,wx*wy*wz) for z,wz in zip(points,one_weights)
@@ -311,21 +311,28 @@ class Basis:
             gauss=(1.+np.array([-1.,1.])/np.sqrt(3.))/2.
             self.X=np.array([[a,b,c] for c in gauss for b in gauss for a in gauss]).T
             self.W=np.full(8,1./8.)
-        nodes = mesh.t.shape[0]
+        connectivity=self._field_connectivity(mesh,element.elem)
+        nodes=connectivity.shape[0]
         components=element._dim
-        self.N = mesh.p.shape[1] * components
+        active_nodes=np.unique(connectivity)
+        node_positions=np.full(mesh.p.shape[1],-1,dtype=np.int64)
+        node_positions[active_nodes]=np.arange(len(active_nodes))
+        self.N = len(active_nodes) * components
         self.nodal_dofs = np.arange(self.N).reshape(-1, components).T
-        self.element_dofs = self.nodal_dofs[:, mesh.t].transpose(2, 1, 0).reshape(
+        local_dofs=node_positions[connectivity]
+        self.element_dofs = self.nodal_dofs[:,local_dofs].transpose(2,1,0).reshape(
             mesh.nelements, nodes*components
         ).T
-        self.doflocs = np.repeat(mesh.p, components, axis=1)
+        self.doflocs = np.repeat(mesh.p[:,active_nodes],components,axis=1)
+        self.active_nodes=active_nodes
+        self.field_connectivity=connectivity
         self.tabulated_shape,self.tabulated_gradients,self.dx=self._geometry()
         element_coordinates=np.stack([
             mesh.p[:,mesh.t[:,element]].T
             for element in range(mesh.nelements)
         ])
         self.global_coordinates=np.einsum(
-            "eqn,end->eqd",self.tabulated_shape,element_coordinates
+            "eqn,end->eqd",self._geometry_shape,element_coordinates
         )
         self.normals=None
         self.basis = self._vector_fields()
@@ -336,45 +343,83 @@ class Basis:
             else ElementVector(field,dim=1)
             for field in element.elems
         )
-        scalar_types=tuple(type(field.elem) for field in vector_elements)
-        if len(set(scalar_types))!=1:
-            raise NotImplementedError(
-                "composite fields currently require the same nodal order"
-            )
         subbases=[Basis(mesh,field,intorder=intorder) for field in vector_elements]
+        quadrature_shapes={(basis.X.shape,basis.dx.shape) for basis in subbases}
+        if len(quadrature_shapes)!=1 or any(
+            not np.array_equal(subbases[0].X,basis.X)
+            for basis in subbases[1:]
+        ):
+            raise ValueError(
+                "composite fields require a common quadrature rule; "
+                "increase intorder for mixed-order elements"
+            )
         components=tuple(field._dim for field in vector_elements)
-        total_components=sum(components)
-        node_count=mesh.p.shape[1]
-        offsets=np.cumsum((0,)+components[:-1])
-        for subbasis,offset,count in zip(subbases,offsets,components):
+        next_dof=0
+        field_node_dofs=[]
+        active_sets=[set(map(int,basis.active_nodes)) for basis in subbases]
+        for field,(active,count) in enumerate(zip(active_sets,components)):
+            field_node_dofs.append({})
+        for node in range(mesh.p.shape[1]):
+            for field,(active,count) in enumerate(zip(active_sets,components)):
+                if node in active:
+                    field_node_dofs[field][node]=np.arange(
+                        next_dof,next_dof+count,dtype=np.int64
+                    )
+                    next_dof+=count
+        for field,(subbasis,count) in enumerate(zip(subbases,components)):
             nodal=np.stack([
-                total_components*np.arange(node_count)+offset+c
-                for c in range(count)
+                [field_node_dofs[field][int(node)][component]
+                 for node in subbasis.active_nodes]
+                for component in range(count)
             ])
             subbasis.nodal_dofs=nodal
-            subbasis.N=node_count*total_components
-            local_nodes=mesh.t.shape[0]
-            subbasis.element_dofs=nodal[:,mesh.t].transpose(
+            subbasis.N=next_dof
+            positions=np.full(mesh.p.shape[1],-1,dtype=np.int64)
+            positions[subbasis.active_nodes]=np.arange(len(subbasis.active_nodes))
+            local=positions[subbasis.field_connectivity]
+            subbasis.element_dofs=nodal[:,local].transpose(
                 2,1,0
-            ).reshape(mesh.nelements,local_nodes*count).T
-            subbasis.doflocs=np.repeat(mesh.p,count,axis=1)
+            ).reshape(mesh.nelements,local.shape[0]*count).T
         first=subbases[0]
         self.mesh,self.elem=mesh,element
         self.subbases=tuple(subbases)
         self.field_components=components
-        self.N=node_count*total_components
-        self.nodal_dofs=np.arange(self.N).reshape(
-            node_count,total_components
-        ).T
+        self.N=next_dof
+        common_nodes=sorted(set.intersection(*active_sets))
+        self.nodal_dofs=np.concatenate([
+            np.stack([
+                field_node_dofs[field][node]
+                for node in common_nodes
+            ],axis=1)
+            for field in range(len(subbases))
+        ],axis=0)
         self.element_dofs=np.concatenate(
             [subbasis.element_dofs for subbasis in subbases],axis=0
         )
-        self.doflocs=np.repeat(mesh.p,total_components,axis=1)
+        doflocs=np.empty((mesh.p.shape[0],self.N))
+        for field,subbasis in enumerate(subbases):
+            for local_node,node in enumerate(subbasis.active_nodes):
+                doflocs[:,subbasis.nodal_dofs[:,local_node]]=mesh.p[:,node,None]
+        self.doflocs=doflocs
         self.X,self.W=first.X,first.W
         self.dx=first.dx
         self.global_coordinates=first.global_coordinates
         self.normals=None
         self.basis=tuple()
+
+    @staticmethod
+    def _field_connectivity(mesh,scalar):
+        if isinstance(scalar,ElementTetP1):
+            return mesh.t[:4]
+        if isinstance(scalar,ElementTetP2):
+            return mesh.t[:10]
+        if isinstance(scalar,ElementHex1):
+            if mesh.t.shape[0]==27:
+                return mesh.t[[0,2,6,18,8,20,24,26]]
+            return mesh.t[:8]
+        if isinstance(scalar,ElementHex2):
+            return mesh.t[:27]
+        raise NotImplementedError("unsupported scalar element")
 
     def _geometry(self):
         if self._quadratic_tet:
@@ -421,16 +466,68 @@ class Basis:
                     factors=np.where(bit,xi,1.-xi);shape[q,n]=np.prod(factors)
                     for j in range(3):
                         refgrad[q,n,j]=(1. if bit[j] else -1.)*np.prod(np.delete(factors,j))
+        geometry_shape=shape
+        geometry_refgrad=refgrad
+        geometry_nodes=self.mesh.t.shape[0]
+        if geometry_nodes!=shape.shape[1]:
+            if self._tet and geometry_nodes==10:
+                bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
+                pairs=((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
+                geometry_shape=np.empty((len(bary),10))
+                geometry_refgrad=np.empty((len(bary),10,3))
+                dl=np.array([
+                    [-1.,-1.,-1.],[1.,0.,0.],
+                    [0.,1.,0.],[0.,0.,1.]
+                ])
+                for q,L in enumerate(bary):
+                    for i in range(4):
+                        geometry_shape[q,i]=L[i]*(2.*L[i]-1.)
+                        geometry_refgrad[q,i]=(4.*L[i]-1.)*dl[i]
+                    for k,(i,j) in enumerate(pairs,start=4):
+                        geometry_shape[q,k]=4.*L[i]*L[j]
+                        geometry_refgrad[q,k]=4.*(
+                            L[j]*dl[i]+L[i]*dl[j]
+                        )
+            elif not self._tet and geometry_nodes==27:
+                grid=(0.,.5,1.)
+                values=lambda x:np.array([
+                    2.*(x-.5)*(x-1.),4.*x*(1.-x),2.*x*(x-.5)
+                ])
+                derivatives=lambda x:np.array([4.*x-3.,4.-8.*x,4.*x-1.])
+                geometry_shape=np.empty((self.X.shape[1],27))
+                geometry_refgrad=np.empty((self.X.shape[1],27,3))
+                for q,(x,y,z) in enumerate(self.X.T):
+                    v=(values(x),values(y),values(z))
+                    d=(derivatives(x),derivatives(y),derivatives(z))
+                    n=0
+                    for k in range(3):
+                        for j in range(3):
+                            for i in range(3):
+                                geometry_shape[q,n]=v[0][i]*v[1][j]*v[2][k]
+                                geometry_refgrad[q,n]=(
+                                    d[0][i]*v[1][j]*v[2][k],
+                                    v[0][i]*d[1][j]*v[2][k],
+                                    v[0][i]*v[1][j]*d[2][k],
+                                )
+                                n+=1
+            else:
+                raise ValueError(
+                    "mesh geometry nodes are incompatible with the element"
+                )
         nq,nodes=shape.shape
         gradients=np.empty((self.mesh.nelements,nq,nodes,3))
         dx=np.empty((self.mesh.nelements,nq))
         for e, nodes in enumerate(self.mesh.t.T):
             x = self.mesh.p[:, nodes]
             for q in range(nq):
-                jacobian=x@refgrad[q]
+                jacobian=x@geometry_refgrad[q]
                 determinant=np.linalg.det(jacobian)
                 gradients[e,q]=refgrad[q]@np.linalg.inv(jacobian)
                 dx[e,q]=abs(determinant)*self.W[q]
+        self._geometry_shape=np.broadcast_to(
+            geometry_shape,
+            (self.mesh.nelements,nq,geometry_shape.shape[1]),
+        ).copy()
         return np.broadcast_to(shape,(self.mesh.nelements,nq,shape.shape[1])).copy(),gradients,dx
 
     def _evaluate_reference(self, points):
@@ -481,7 +578,7 @@ class Basis:
 
     def _vector_fields(self):
         fields = []
-        nodes=self.mesh.t.shape[0];nq=self.X.shape[1]
+        nodes=self.tabulated_shape.shape[2];nq=self.X.shape[1]
         components=self.elem._dim
         for node in range(nodes):
             for component in range(components):

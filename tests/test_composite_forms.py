@@ -150,3 +150,69 @@ def test_vector_scalar_divergence_blocks_are_transposes():
     upper=matrix[np.ix_(vector_dofs,scalar_dofs)]
     lower=matrix[np.ix_(scalar_dofs,vector_dofs)]
     np.testing.assert_allclose(upper,lower.T,rtol=0.,atol=2e-16)
+
+
+def test_taylor_hood_p2_p1_form_matches_skfem():
+    linear=skfn.MeshTet.init_tensor(
+        np.linspace(0.,1.,3),
+        np.linspace(0.,1.,2),
+        np.linspace(0.,1.,2),
+    )
+    mesh=skfn.MeshTet2.from_mesh(linear)
+    element=(
+        skfn.ElementVector(skfn.ElementTetP2())
+        *skfn.ElementTetP1()
+    )
+    basis=skfn.Basis(mesh,element,intorder=4)
+
+    @skfn.BilinearForm
+    def form(u,p,v,q,w):
+        return (
+            w.mu*ddot(grad(u),grad(v))
+            -p*div(v)-q*div(u)
+        )
+
+    actual=skfn.asm(form,basis,mu=.65)
+
+    reference_linear=skfem.MeshTet(linear.p,linear.t)
+    reference_mesh=skfem.MeshTet2.from_mesh(reference_linear)
+    reference_basis=skfem.Basis(
+        reference_mesh,
+        skfem.ElementVector(skfem.ElementTetP2())
+        *skfem.ElementTetP1(),
+        intorder=4,
+    )
+    assert basis.nodal_dofs.shape==reference_basis.nodal_dofs.shape
+
+    @skfem.BilinearForm
+    def reference(u,p,v,q,w):
+        return (
+            w.mu*reference_ddot(reference_grad(u),reference_grad(v))
+            -p*reference_div(v)-q*reference_div(u)
+        )
+
+    expected=skfem.asm(reference,reference_basis,mu=.65)
+    reference_fields=reference_basis.split_indices()
+    native_fields=(
+        basis.subbases[0].nodal_dofs.reshape(-1,order="F"),
+        basis.subbases[1].nodal_dofs.reshape(-1,order="F"),
+    )
+    permutation=np.empty(basis.N,dtype=np.int64)
+    for native_dofs,reference_dofs,components in zip(
+        native_fields,reference_fields,(3,1)
+    ):
+        lookup={}
+        for dof in reference_dofs:
+            coordinate=tuple(np.round(reference_basis.doflocs[:,dof],14))
+            lookup.setdefault(coordinate,[]).append(int(dof))
+        for offset,native_dof in enumerate(native_dofs):
+            node=offset//components
+            component=offset%components
+            coordinate=tuple(np.round(
+                basis.doflocs[:,native_dof],14
+            ))
+            permutation[native_dof]=lookup[coordinate][component]
+    expected=expected[permutation][:,permutation]
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=2e-12,atol=2e-12
+    )

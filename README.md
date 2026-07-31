@@ -313,16 +313,16 @@ def coupled(u1, u2, v1, v2, w):
 ```
 
 `ElementComposite` interleaves its nodal subfield DOFs and caches each native
-rectangular block assembler.  The initial implementation supports fields with
-the same nodal order and component-compatible value or gradient contractions;
-vector-scalar divergence blocks use the usual mixed-form notation:
+rectangular block assembler.  It supports component-compatible value and
+gradient contractions as well as mixed-order vector-scalar divergence blocks
+using the usual mixed-form notation:
 
 ```python
 element = (
-    skfem.ElementVector(skfem.ElementTetP1())
+    skfem.ElementVector(skfem.ElementTetP2())
     * skfem.ElementTetP1()
 )
-basis = skfem.Basis(mesh, element)
+basis = skfem.Basis(mesh, element, intorder=4)
 
 @skfem.BilinearForm
 def mixed(u, p, v, q, w):
@@ -335,7 +335,9 @@ def mixed(u, p, v, q, w):
 
 Both `p * div(v)` and `q * div(u)` are assembled as native rectangular
 gradient-value blocks; no Python element loop or runtime scikit-fem fallback
-is used.
+is used.  Mixed-order nodal fields share one geometry and quadrature context;
+for example, the Taylor–Hood pair above places velocity DOFs on Tet10 vertices
+and edges while pressure DOFs remain on its four vertices.
 
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
