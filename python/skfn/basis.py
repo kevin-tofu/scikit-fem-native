@@ -974,11 +974,69 @@ def _mesh_geometry_shapes(mesh,points):
     return _hex_shapes(points,nodes==27)
 
 
+def _validate_quadrature(quadrature,dimension):
+    points,weights=quadrature
+    points=np.asarray(points,dtype=np.float64)
+    weights=np.asarray(weights,dtype=np.float64)
+    if points.ndim==1 and dimension==1:
+        points=points[None,:]
+    if points.ndim!=2 or points.shape[0]!=dimension:
+        raise ValueError(
+            f"quadrature points must have shape ({dimension}, nq)"
+        )
+    if weights.ndim!=1 or weights.shape[0]!=points.shape[1]:
+        raise ValueError("quadrature weights must have shape (nq,)")
+    if not np.all(np.isfinite(points)) or not np.all(np.isfinite(weights)):
+        raise ValueError("quadrature points and weights must be finite")
+    return np.ascontiguousarray(points),np.ascontiguousarray(weights)
+
+
+def _tensor_quadrature(dimension,intorder):
+    count=max(1,(int(intorder)+2)//2)
+    points,weights=np.polynomial.legendre.leggauss(count)
+    points=(points+1.)/2.;weights=weights/2.
+    entries=[]
+    for index in np.ndindex(*(count,)*dimension):
+        entries.append((
+            tuple(points[i] for i in index[::-1]),
+            np.prod([weights[i] for i in index]),
+        ))
+    return (
+        np.asarray([entry[0] for entry in entries]).T,
+        np.asarray([entry[1] for entry in entries]),
+    )
+
+
+def _simplex_quadrature(dimension,intorder):
+    count=max(1,(int(intorder)+dimension+1)//2)
+    points,weights=np.polynomial.legendre.leggauss(count)
+    points=(points+1.)/2.;weights=weights/2.
+    transformed=[];transformed_weights=[]
+    for index in np.ndindex(*(count,)*dimension):
+        parameters=np.array([points[i] for i in index])
+        coordinate=np.empty(dimension);remaining=1.;jacobian=1.
+        for axis,value in enumerate(parameters):
+            coordinate[axis]=remaining*value
+            if axis<dimension-1:
+                power=dimension-axis-1
+                jacobian*=((1.-value)**power)
+                remaining*=1.-value
+        transformed.append(coordinate)
+        transformed_weights.append(
+            jacobian*np.prod([weights[i] for i in index])
+        )
+    return np.asarray(transformed).T,np.asarray(transformed_weights)
+
+
 class Basis:
-    def __init__(self, mesh: MeshTet, element: ElementVector, intorder=2):
+    def __init__(
+        self,mesh:MeshTet,element:ElementVector,intorder=2,
+        quadrature=None,
+    ):
+        intorder=2 if intorder is None else int(intorder)
         self.intorder=intorder
         if isinstance(element,ElementComposite):
-            self._init_composite(mesh,element,intorder)
+            self._init_composite(mesh,element,intorder,quadrature)
             return
         scalar=element.elem if isinstance(element,ElementVector) else None
         base=scalar.elem if isinstance(scalar,ElementDG) else scalar
@@ -1007,7 +1065,17 @@ class Basis:
         self._tet=isinstance(base,(ElementTetP0,ElementTetP1,ElementTetP2))
         self._quadratic_tet=isinstance(base,ElementTetP2)
         self._quadratic_hex=isinstance(base,ElementHex2)
-        if self._quadratic_tri or (self._tri and intorder>=4):
+        if quadrature is not None:
+            self.X,self.W=_validate_quadrature(
+                quadrature,mesh.dim()
+            )
+        elif intorder>4:
+            self.X,self.W=(
+                _simplex_quadrature(mesh.dim(),intorder)
+                if self._tri or self._tet else
+                _tensor_quadrature(mesh.dim(),intorder)
+            )
+        elif self._quadratic_tri or (self._tri and intorder>=4):
             a=.445948490915965;b=.091576213509771
             bary=np.array([
                 [a,a,1-2*a],[a,1-2*a,a],[1-2*a,a,a],
@@ -1075,6 +1143,7 @@ class Basis:
             gauss=(1.+np.array([-1.,1.])/np.sqrt(3.))/2.
             self.X=np.array([[a,b,c] for c in gauss for b in gauss for a in gauss]).T
             self.W=np.full(8,1./8.)
+        self.quadrature=(self.X.copy(),self.W.copy())
         base_connectivity=self._field_connectivity(mesh,base)
         if self._discontinuous:
             nodes=base_connectivity.shape[0]
@@ -1158,7 +1227,10 @@ class Basis:
         if not hasattr(self,"subbases"):
             raise ValueError("split_bases() requires ElementComposite")
         return tuple(
-            Basis(self.mesh,element,intorder=self.intorder)
+            Basis(
+                self.mesh,element,intorder=self.intorder,
+                quadrature=self.quadrature,
+            )
             for element in (
                 field if isinstance(field,ElementVector)
                 else ElementVector(field,dim=1)
@@ -1252,13 +1324,18 @@ class Basis:
                     dofs.extend(self.nodal_dofs[:,local])
         return DofsView(dofs,self.doflocs)
 
-    def _init_composite(self,mesh,element,intorder):
+    def _init_composite(self,mesh,element,intorder,quadrature=None):
         vector_elements=tuple(
             field if isinstance(field,ElementVector)
             else ElementVector(field,dim=1)
             for field in element.elems
         )
-        subbases=[Basis(mesh,field,intorder=intorder) for field in vector_elements]
+        subbases=[
+            Basis(
+                mesh,field,intorder=intorder,quadrature=quadrature
+            )
+            for field in vector_elements
+        ]
         if any(basis._discontinuous for basis in subbases):
             raise NotImplementedError(
                 "ElementComposite with discontinuous fields is not implemented"
@@ -1321,6 +1398,7 @@ class Basis:
                 doflocs[:,subbasis.nodal_dofs[:,local_node]]=mesh.p[:,node,None]
         self.doflocs=doflocs
         self.X,self.W=first.X,first.W
+        self.quadrature=(self.X.copy(),self.W.copy())
         self.dx=first.dx
         self.global_coordinates=first.global_coordinates
         self.normals=None
@@ -1427,73 +1505,13 @@ class Basis:
         geometry_refgrad=refgrad
         geometry_nodes=self.mesh.t.shape[0]
         if geometry_nodes!=shape.shape[1]:
-            if self._constant:
-                geometry_shape,geometry_refgrad=_mesh_geometry_shapes(
-                    self.mesh,self.X
-                )
-            elif self._tri and geometry_nodes==6:
-                bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
-                pairs=((0,1),(1,2),(0,2))
-                dl=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
-                geometry_shape=np.empty((len(bary),6))
-                geometry_refgrad=np.empty((len(bary),6,2))
-                for q,L in enumerate(bary):
-                    for i in range(3):
-                        geometry_shape[q,i]=L[i]*(2.*L[i]-1.)
-                        geometry_refgrad[q,i]=(4.*L[i]-1.)*dl[i]
-                    for k,(i,j) in enumerate(pairs,start=3):
-                        geometry_shape[q,k]=4.*L[i]*L[j]
-                        geometry_refgrad[q,k]=4.*(
-                            L[j]*dl[i]+L[i]*dl[j]
-                        )
-            elif self._quad and geometry_nodes==9:
-                geometry_shape,geometry_refgrad=_quad_shapes(
-                    self.X,True
-                )
-            elif self._tet and geometry_nodes==10:
-                bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
-                pairs=((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
-                geometry_shape=np.empty((len(bary),10))
-                geometry_refgrad=np.empty((len(bary),10,3))
-                dl=np.array([
-                    [-1.,-1.,-1.],[1.,0.,0.],
-                    [0.,1.,0.],[0.,0.,1.]
-                ])
-                for q,L in enumerate(bary):
-                    for i in range(4):
-                        geometry_shape[q,i]=L[i]*(2.*L[i]-1.)
-                        geometry_refgrad[q,i]=(4.*L[i]-1.)*dl[i]
-                    for k,(i,j) in enumerate(pairs,start=4):
-                        geometry_shape[q,k]=4.*L[i]*L[j]
-                        geometry_refgrad[q,k]=4.*(
-                            L[j]*dl[i]+L[i]*dl[j]
-                        )
-            elif not self._tri and not self._tet and geometry_nodes==27:
-                grid=(0.,.5,1.)
-                values=lambda x:np.array([
-                    2.*(x-.5)*(x-1.),4.*x*(1.-x),2.*x*(x-.5)
-                ])
-                derivatives=lambda x:np.array([4.*x-3.,4.-8.*x,4.*x-1.])
-                geometry_shape=np.empty((self.X.shape[1],27))
-                geometry_refgrad=np.empty((self.X.shape[1],27,3))
-                for q,(x,y,z) in enumerate(self.X.T):
-                    v=(values(x),values(y),values(z))
-                    d=(derivatives(x),derivatives(y),derivatives(z))
-                    n=0
-                    for k in range(3):
-                        for j in range(3):
-                            for i in range(3):
-                                geometry_shape[q,n]=v[0][i]*v[1][j]*v[2][k]
-                                geometry_refgrad[q,n]=(
-                                    d[0][i]*v[1][j]*v[2][k],
-                                    v[0][i]*d[1][j]*v[2][k],
-                                    v[0][i]*v[1][j]*d[2][k],
-                                )
-                                n+=1
-            else:
+            if not self._constant and geometry_nodes<shape.shape[1]:
                 raise ValueError(
                     "mesh geometry nodes are incompatible with the element"
                 )
+            geometry_shape,geometry_refgrad=_mesh_geometry_shapes(
+                self.mesh,self.X
+            )
         nq,nodes=shape.shape
         gradients=np.empty((
             self.mesh.nelements,nq,nodes,self.mesh.dim()
@@ -1604,12 +1622,15 @@ class Basis:
 
 class FacetBasis:
     def __init__(
-        self,mesh,element,facets=None,intorder=2,*,_side=0,_interior=False
+        self,mesh,element,facets=None,intorder=2,quadrature=None,
+        *,_side=0,_interior=False
     ):
+        intorder=2 if intorder is None else int(intorder)
         if mesh.dim()==2:
             self._init_2d(
                 mesh,element,facets,intorder,
                 side=_side,interior=_interior,
+                quadrature=quadrature,
             )
             return
         volume = Basis(mesh, element, intorder=intorder)
@@ -1682,6 +1703,17 @@ class FacetBasis:
             points=(points+1.)/2.;weights=weights/2.
             face_points=np.array([[r,s] for s in points for r in points])
             face_weights=np.array([wr*ws for ws in weights for wr in weights])
+        if quadrature is not None:
+            facet_points,face_weights=_validate_quadrature(
+                quadrature,2
+            )
+            face_points=facet_points.T
+        elif intorder>4:
+            facet_points,face_weights=(
+                _simplex_quadrature(2,intorder) if is_tet else
+                _tensor_quadrature(2,intorder)
+            )
+            face_points=facet_points.T
         lookup={}
         for e,nodes in enumerate(mesh.t.T):
             for local_index,(local,corner) in enumerate(
@@ -1696,6 +1728,7 @@ class FacetBasis:
         nq=len(face_weights);nodes_per_element=len(element.elem.doflocs)
         self.mesh, self.elem = mesh, element
         self.X=face_points.T;self.W=face_weights
+        self.quadrature=(self.X.copy(),self.W.copy())
         self.N = volume.N
         self.doflocs = volume.doflocs
         components=element._dim
@@ -1780,7 +1813,8 @@ class FacetBasis:
         self.volume_basis=volume
 
     def _init_2d(
-        self,mesh,element,facets,intorder,*,side=0,interior=False
+        self,mesh,element,facets,intorder,*,side=0,interior=False,
+        quadrature=None,
     ):
         volume=Basis(mesh,element,intorder=intorder)
         if interior:
@@ -1806,6 +1840,12 @@ class FacetBasis:
         else:
             points,weights=np.polynomial.legendre.leggauss(2)
         points=(points+1.)/2.;weights=weights/2.
+        if quadrature is not None:
+            facet_points,weights=_validate_quadrature(quadrature,1)
+            points=facet_points[0]
+        elif intorder>4:
+            facet_points,weights=_tensor_quadrature(1,intorder)
+            points=facet_points[0]
         facet_scalar=(
             element.elem.elem
             if isinstance(element.elem,ElementDG) else element.elem
@@ -1843,6 +1883,7 @@ class FacetBasis:
         components=element._dim
         self.mesh,self.elem=mesh,element
         self.X=points[None,:];self.W=weights
+        self.quadrature=(self.X.copy(),self.W.copy())
         self.N=volume.N;self.doflocs=volume.doflocs
         self.element_dofs=np.empty(
             (nodes_per_element*components,entities),dtype=np.int64
@@ -1948,14 +1989,15 @@ class InteriorFacetBasis(FacetBasis):
         self,mesh,element,mapping=None,intorder=2,quadrature=None,
         facets=None,dofs=None,side=0,disable_doflocs=False,
     ):
-        if mapping is not None or quadrature is not None or dofs is not None:
+        if mapping is not None or dofs is not None:
             raise NotImplementedError(
-                "custom mapping, quadrature, and dofs are not implemented"
+                "custom mapping and dofs are not implemented"
             )
         if side not in (0,1):
             raise ValueError("side must be 0 or 1")
         super().__init__(
             mesh,element,facets=facets,intorder=intorder,
+            quadrature=quadrature,
             _side=side,_interior=True,
         )
         self.side=side

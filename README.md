@@ -103,6 +103,28 @@ element = (
 basis = skfem.Basis(mesh, element, intorder=4)
 ```
 
+Volume and facet bases accept arbitrary integration orders.  Orders above the
+built-in low-order rules use tensor-product Gauss rules for Quad/Hex cells and
+Duffy-transformed Gauss rules for Tri/Tet cells.  A scikit-fem-style custom
+reference quadrature `(points, weights)` can also be supplied directly:
+
+```python
+basis = skfem.Basis(mesh, element, intorder=8)
+
+points, weights = basis.quadrature
+fbasis = skfem.FacetBasis(
+    mesh, element, quadrature=(facet_points, facet_weights)
+)
+ibasis = skfem.InteriorFacetBasis(
+    mesh, element, side=0,
+    quadrature=(facet_points, facet_weights),
+)
+```
+
+Custom points use reference-cell coordinates and have shape `(dim, nq)`;
+weights have shape `(nq,)`.  Both sides of an interior facet retain the same
+quadrature-point ordering.
+
 Interior edge forms use the same two-sided basis-list convention and
 `jump(w, u)` helper as scikit-fem:
 
