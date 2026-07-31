@@ -253,6 +253,32 @@ def gap_weighted_penalty(u, v, w):
 normal.  Curved Tet10 and Hex27 normals are evaluated from the original
 isoparametric facets rather than copied from the tessellated search triangles.
 
+User parameters, callables, and geometry values share one numerical
+quadrature-expression context:
+
+```python
+def pressure_law(x, gap, scale):
+    return scale * (1.0 + x[0] + gap ** 2)
+
+@skfem.LinearForm
+def nonlinear_pressure(v, w):
+    pressure = w.pressure_law(w.x, w.gap, w.scale)
+    return dot(pressure * w.n_master, jump(v))
+
+rhs = skfem.asm(
+    nonlinear_pressure,
+    master_basis,
+    slave_basis,
+    integration=supermesh,
+    pressure_law=pressure_law,
+    scale=1.7,
+)
+```
+
+NumPy ufuncs are supported as coefficient expressions, so scalar, vector, and
+tensor parameters can be combined with coordinates, normals, and gap before
+the resulting contiguous coefficient is passed to native integration.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

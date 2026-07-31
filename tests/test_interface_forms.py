@@ -237,3 +237,54 @@ def test_interface_gap_can_weight_bilinear_form():
     np.testing.assert_allclose(
         actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
     )
+
+
+def test_user_callable_composes_parameters_coordinates_gap_and_normal():
+    master,slave,integration=interface()
+
+    def pressure_law(x,gap,scale):
+        return scale*(1.+x[0]+gap**2)
+
+    @skfn.LinearForm
+    def form(v,w):
+        traction=(
+            w.pressure_law(w.x,w.gap,w.scale)*w.n_master
+        )
+        return dot(traction,jump(v))
+
+    actual=skfn.asm(
+        form,master,slave,integration=integration,
+        pressure_law=pressure_law,scale=1.7,
+    )
+    pressure=pressure_law(
+        np.moveaxis(integration.global_coordinates,-1,0),
+        integration.gap,1.7,
+    )
+    expected=integration.assemble_linear_trace(
+        (1.,-1.),
+        coefficient=np.moveaxis(
+            pressure[...,None]*integration.master_normals,-1,0
+        ),
+    )
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
+
+
+def test_user_parameters_compose_with_numpy_gap_expression():
+    master,slave,integration=interface()
+
+    @skfn.BilinearForm
+    def form(u,v,w):
+        coefficient=w.alpha*np.exp(-w.gap/w.length)
+        return coefficient*dot(jump(u),jump(v))
+
+    actual=skfn.asm(
+        form,master,slave,integration=integration,
+        alpha=2.5,length=.3,
+    )
+    expected=integration.assemble_traces(
+        (1.,-1.),(1.,-1.),
+        coefficient=2.5*np.exp(-integration.gap/.3),
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
+    )

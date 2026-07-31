@@ -39,12 +39,12 @@ class _QuadratureValue:
     def __mul__(self,other):
         if isinstance(other,(_BilinearTerm,_InterfaceBilinearTerm)):
             return other*np.asarray(self.value)
-        return _QuadratureValue(self.value*other)
+        return _QuadratureValue(self.value*np.asarray(other))
 
     def __rmul__(self,other):
         if isinstance(other,(_BilinearTerm,_InterfaceBilinearTerm)):
             return other*np.asarray(self.value)
-        return _QuadratureValue(other*self.value)
+        return _QuadratureValue(np.asarray(other)*self.value)
 
     def __add__(self,other):
         return _QuadratureValue(self.value+np.asarray(other))
@@ -194,7 +194,7 @@ class _InterfaceTrace:
 @dataclass(frozen=True)
 class _InterfaceCoefficientTrace:
     trace: _InterfaceTrace
-    coefficient: str
+    coefficient: Any
 
 
 @dataclass(frozen=True)
@@ -298,6 +298,15 @@ class _Parameters:
         return _Coefficient(name)
 
 
+def _parameter_values(geometry,kwargs):
+    values=dict(geometry)
+    for name,value in kwargs.items():
+        values[name]=(
+            value if callable(value) else _QuadratureValue(value)
+        )
+    return values
+
+
 class _LinearForm:
     def __init__(self, function: Callable):
         self.function = function
@@ -329,14 +338,17 @@ def BilinearForm(function=None, **kwargs):
     return _BilinearForm(function) if function is not None else _BilinearForm
 
 
-def _compile_linear(form: _LinearForm,basis):
+def _compile_linear(form: _LinearForm,basis,kwargs):
     geometry={"x":_QuadratureValue(
         np.moveaxis(basis.global_coordinates,-1,0)
     )}
     if basis.normals is not None:
         geometry["n"]=_QuadratureValue(np.moveaxis(basis.normals,-1,0))
     try:
-        expression = form.function(_TestValue(), _Parameters(geometry))
+        expression = form.function(
+            _TestValue(),
+            _Parameters(_parameter_values(geometry,kwargs)),
+        )
     except UnsupportedNativeForm:
         raise
     except Exception as error:
@@ -354,7 +366,7 @@ def _compile_linear(form: _LinearForm,basis):
 
 
 def _native_linear_assemble(form, basis, kwargs):
-    terms = _compile_linear(form,basis)
+    terms = _compile_linear(form,basis,kwargs)
     native = form._native_cache.get(basis)
     if native is None:
         native = NativeLinearForm(basis)
@@ -400,7 +412,8 @@ def _native_bilinear_assemble(form, basis, kwargs):
         geometry["n"]=_QuadratureValue(np.moveaxis(basis.normals,-1,0))
     try:
         expression = form.function(
-            _TrialValue(), _TestValue(), _Parameters(geometry)
+            _TrialValue(), _TestValue(),
+            _Parameters(_parameter_values(geometry,kwargs))
         )
     except UnsupportedNativeForm:
         raise
@@ -437,8 +450,8 @@ def _native_bilinear_assemble(form, basis, kwargs):
     return native.assemble(gradient=coefficient)
 
 
-def _interface_geometry(integration):
-    return {
+def _interface_geometry(integration,kwargs):
+    geometry={
         "x":_QuadratureValue(np.moveaxis(
             integration.global_coordinates,-1,0
         )),
@@ -450,13 +463,14 @@ def _interface_geometry(integration):
         )),
         "gap":_QuadratureValue(integration.gap),
     }
+    return _parameter_values(geometry,kwargs)
 
 
 def _native_interface_assemble(form,integration,kwargs):
     try:
         expression=form.function(
             _InterfaceTrace("trial"),_InterfaceTrace("test"),
-            _Parameters(_interface_geometry(integration))
+            _Parameters(_interface_geometry(integration,kwargs))
         )
     except Exception as error:
         if isinstance(error,UnsupportedNativeForm):
@@ -505,7 +519,7 @@ def _native_interface_linear_assemble(form,integration,kwargs):
     try:
         expression=form.function(
             _InterfaceTrace("test"),
-            _Parameters(_interface_geometry(integration))
+            _Parameters(_interface_geometry(integration,kwargs))
         )
     except Exception as error:
         if isinstance(error,UnsupportedNativeForm):
@@ -610,6 +624,20 @@ def dot(left, right):
     ):
         if left.role=="test" and left.kind!="gradient":
             return _InterfaceLinearTerm(left,np.asarray(right))
+    if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
+        right,_InterfaceTrace
+    ):
+        if right.kind=="gradient":
+            return _InterfaceCoefficientTrace(
+                right,np.asarray(left)
+            )
+    if isinstance(right,(np.ndarray,_QuadratureValue)) and isinstance(
+        left,_InterfaceTrace
+    ):
+        if left.kind=="gradient":
+            return _InterfaceCoefficientTrace(
+                left,np.asarray(right)
+            )
     if (
         isinstance(left, _TrialValue)
         and isinstance(right, _TestValue)
@@ -672,6 +700,14 @@ def ddot(left, right):
         return _Term("gradient", left)
     if isinstance(right, _Coefficient) and isinstance(left, _TestGradient):
         return _Term("gradient", right)
+    if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
+        right,_TestGradient
+    ):
+        return _Term("gradient",np.asarray(left))
+    if isinstance(right,(np.ndarray,_QuadratureValue)) and isinstance(
+        left,_TestGradient
+    ):
+        return _Term("gradient",np.asarray(right))
     if (
         isinstance(left, _TrialGradient)
         and isinstance(right, _TestGradient)

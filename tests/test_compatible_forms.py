@@ -176,6 +176,26 @@ def test_coordinate_dependent_bilinear_coefficient():
     )
 
 
+def test_user_parameter_composes_with_volume_geometry():
+    basis=vector_basis()
+
+    @skfn.BilinearForm
+    def weighted_mass(u,v,w):
+        return w.scale*(1.+w.x[0])*dot(u,v)
+
+    @skfem.BilinearForm
+    def reference(u,v,w):
+        return w.scale*(1.+w.x[0])*skfem_dot(u,v)
+
+    actual=skfn.asm(weighted_mass,basis,scale=1.8)
+    expected=skfem.asm(
+        reference,reference_basis(basis),scale=1.8
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=3e-13,atol=3e-13
+    )
+
+
 def test_upstream_form_is_rejected_by_native_asm():
     basis = vector_basis()
 
