@@ -616,7 +616,8 @@ class _BilinearForm:
 
 def LinearForm(function=None, **kwargs):
     if kwargs:
-        # Preserve less common scikit-fem decorator options through fallback.
+        # Accept decorator syntax from the compatible subset.  Assembly
+        # remains native; these options never trigger a fallback.
         return lambda fn: _LinearForm(fn)
     return _LinearForm(function) if function is not None else _LinearForm
 

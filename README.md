@@ -1,9 +1,55 @@
 # skfem-native
 
 `skfem-native` (`import skfn`) is a compact C++ finite-element assembly engine
-with a Python API.  Its shared H1 assembly core supports Tet4 and Hex8,
-including multiple quadrature points and non-affine Hex8 geometry, and exposes
-a reusable SciPy CSR matrix.
+with a scikit-fem-compatible Python API.
+
+> `skfn` is an independent project.  It is not part of, maintained by, or
+> affiliated with the scikit-fem project.  scikit-fem is used only by the test
+> suite as a numerical and API reference; it is never a runtime dependency.
+
+Compatibility applies to the documented subset, not to every scikit-fem API.
+Unsupported forms and operations raise `skfn.UnsupportedNativeForm`; there is
+no runtime fallback to scikit-fem or Python element assembly.
+
+## API contract
+
+### scikit-fem-compatible subset
+
+| Area | Supported API |
+|---|---|
+| Forms | `BilinearForm`, `LinearForm`, `Functional`, `asm` |
+| Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
+| Meshes | `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
+| Elements | Tet P1/P2, Hex Q1/Q2, `ElementVector`, `ElementComposite` |
+| Bases | `Basis`, `FacetBasis`, `interpolate`, `get_dofs`, composite splitting |
+| Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
+| Mixed forms | Expanded signatures such as `u, p, v, q, w` |
+| Interfaces | `jump`, `avg`, `normal_grad`, value and gradient contractions |
+
+### skfn extensions
+
+These APIs are useful native-assembly features but are not expected to run
+unchanged with upstream scikit-fem.
+
+| API | Purpose |
+|---|---|
+| `TriangleSupermesh` | Nonmatching surface quadrature and rectangular coupling |
+| `SupermeshSearch` | Retained planar topology across geometry updates |
+| `TriangleSupermesh.update()` | Refit/rebuild overlap data after motion |
+| Interface `Functional` | Integrate gap, normals, and two-sided traces |
+| `NativeAssembler` and native kernels | Direct residual/tangent evaluation |
+
+### Intentionally out of scope
+
+- linear and nonlinear solvers;
+- condensation and pressure-pinning policy;
+- contact, mortar, or Nitsche formulation selection;
+- automatic fallback for unsupported scikit-fem forms;
+- importing scikit-fem at runtime.
+
+The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
+Tet4/Tet10, Hex8/Hex27, volume and facet integration, mixed fields, and
+nonmatching surface coupling.
 
 ```python
 from skfn import LinearElasticity, NativeAssembler
@@ -38,10 +84,10 @@ out = assembler.assemble(u, state=None, loads=external_force)
 
 See `examples/neo_hookean_tet4.py` for a complete Newton solve.
 
-Quadratic nodal H1 elements remain available through the tabulated-basis
-assembly core while their independent mesh and mapping API is being completed.
+Quadratic Tet10 and Hex27 nodal H1 elements are available through the
+independent mesh, mapping, basis, facet, interpolation, and form APIs.
 
-The public form API is intentionally source-compatible with scikit-fem:
+The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python
 import numpy as np
@@ -84,8 +130,8 @@ def weighted_mass(u, v, w):
 
 Supported value and gradient contractions are dispatched to native assembly.
 Unsupported forms raise `skfn.UnsupportedNativeForm`; `skfn.asm` never silently
-falls back to Python assembly.  Use the upstream `skfem.asm` explicitly when a
-reference fallback is desired.  The same native API works with `FacetBasis`
+falls back to Python assembly.  Use upstream `skfem.asm` explicitly for an
+independent reference assembly.  The same native API works with `FacetBasis`
 for surface tractions.
 
 Nonmatching coplanar P1 triangle surfaces can be coupled through a reusable
