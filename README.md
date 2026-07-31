@@ -21,7 +21,7 @@ no runtime fallback to scikit-fem or Python element assembly.
 | Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
 | Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
 | Elements | Tri/Quad/Tet/Hex P0, nodal P1/P2 or Q1/Q2, `ElementDG`, `ElementVector`, `ElementComposite` |
-| Bases | `Basis`, `FacetBasis`, 2D `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
+| Bases | `Basis`, `FacetBasis`, `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
 | Mixed forms | Expanded signatures such as `u, p, v, q, w` |
 | Interfaces | `jump`, `avg`, `normal_grad`, value and gradient contractions |
@@ -126,8 +126,9 @@ dg = skfem.Basis(mesh, skfem.ElementDG(skfem.ElementTriP1()))
 ```
 
 P0 volume assembly is available on Tri, Quad, Tet, and Hex meshes.
-`ElementDG` supports the nodal elements above; two-dimensional DG jump
-assembly is available through `InteriorFacetBasis`.
+`ElementDG` supports the nodal elements above.  Interior jump assembly is
+available on Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, and Hex8/Hex27 through
+`InteriorFacetBasis`.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 

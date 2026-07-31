@@ -717,6 +717,54 @@ def _interior_facets_2d(mesh):
     return np.asarray(values,dtype=np.int64).T
 
 
+def _interior_facets_3d(mesh):
+    is_tet=mesh.t.shape[0] in (4,10)
+    if is_tet:
+        corner_faces=((0,1,2),(0,1,3),(0,2,3),(1,2,3))
+        edge_map={(0,1):4,(1,2):5,(0,2):6,
+                  (0,3):7,(1,3):8,(2,3):9}
+        full_faces=tuple(
+            tuple(face)+tuple(
+                edge_map[tuple(sorted((face[i],face[(i+1)%3])))]
+                for i in range(3)
+            )
+            for face in corner_faces
+        ) if mesh.t.shape[0]==10 else corner_faces
+    else:
+        if mesh.t.shape[0]==8:
+            corner_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
+                          (2,4,7,6),(1,5,7,4),(3,6,7,5))
+            full_faces=corner_faces
+        else:
+            index=lambda i,j,k:i+3*j+9*k
+            full_faces=(
+                tuple(index(i,j,0) for j in range(3) for i in range(3)),
+                tuple(index(0,j,k) for k in range(3) for j in range(3)),
+                tuple(index(i,0,k) for k in range(3) for i in range(3)),
+                tuple(index(i,2,k) for k in range(3) for i in range(3)),
+                tuple(index(2,j,k) for k in range(3) for j in range(3)),
+                tuple(index(i,j,2) for j in range(3) for i in range(3)),
+            )
+            corner_faces=tuple(
+                (face[0],face[2],face[8],face[6])
+                for face in full_faces
+            )
+    found={}
+    for nodes in mesh.t.T:
+        for corner,full in zip(corner_faces,full_faces):
+            key=tuple(sorted(int(nodes[i]) for i in corner))
+            value=tuple(int(nodes[i]) for i in full)
+            found.setdefault(key,[]).append(value)
+    values=[
+        adjacent[0] for adjacent in found.values()
+        if len(adjacent)==2
+    ]
+    width=len(full_faces[0])
+    if not values:
+        return np.empty((width,0),dtype=np.int64)
+    return np.asarray(values,dtype=np.int64).T
+
+
 def _corner_count(mesh):
     if mesh.dim()==2:
         return 3 if mesh.t.shape[0] in (3,6) else 4
@@ -1433,23 +1481,40 @@ class FacetBasis:
                 side=_side,interior=_interior,
             )
             return
-        if _interior:
-            raise NotImplementedError(
-                "three-dimensional InteriorFacetBasis is not implemented"
-            )
         volume = Basis(mesh, element, intorder=intorder)
-        facets = mesh.boundary_facets() if facets is None else np.asarray(facets)
-        expected_face_nodes = 3 if isinstance(element.elem,ElementTetP1) else (
-            6 if isinstance(element.elem,ElementTetP2) else (
-                4 if isinstance(element.elem,ElementHex1) else 9
+        scalar=(
+            element.elem.elem
+            if isinstance(element.elem,ElementDG) else element.elem
+        )
+        is_tet=isinstance(
+            scalar,(ElementTetP0,ElementTetP1,ElementTetP2)
+        )
+        quadratic_field=isinstance(
+            scalar,(ElementTetP2,ElementHex2)
+        )
+        if _interior:
+            all_facets=_interior_facets_3d(mesh)
+            if facets is None:
+                facets=all_facets
+            else:
+                facets=np.asarray(facets)
+                if facets.ndim==1:
+                    facets=all_facets[:,facets]
+        else:
+            facets=(
+                mesh.boundary_facets()
+                if facets is None else np.asarray(facets)
             )
+        expected_face_nodes=(
+            6 if is_tet and quadratic_field else
+            3 if is_tet else
+            9 if quadratic_field else 4
         )
         if facets.shape[0] != expected_face_nodes:
             facets = facets.T
-        is_tet=isinstance(element.elem,(ElementTetP1,ElementTetP2))
         if is_tet:
-            local_faces=((1,2,3),(0,3,2),(0,1,3),(0,2,1))
-            if isinstance(element.elem,ElementTetP2):
+            local_faces=((0,1,2),(0,1,3),(0,2,3),(1,2,3))
+            if isinstance(scalar,ElementTetP2):
                 edge_map={(0,1):4,(1,2):5,(0,2):6,(0,3):7,(1,3):8,(2,3):9}
                 local_faces=tuple(tuple(face)+tuple(
                     edge_map[tuple(sorted((face[i],face[(i+1)%3])))] for i in range(3)
@@ -1465,19 +1530,19 @@ class FacetBasis:
                 face_weights=np.full(3,1/6)
             face_points=bary[:,1:]
         else:
-            if isinstance(element.elem,ElementHex1):
-                local_faces=((0,1,4,2),(3,6,7,5),(0,3,5,1),
-                             (2,4,7,6),(0,2,6,3),(1,5,7,4))
+            if not isinstance(scalar,ElementHex2):
+                local_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
+                             (2,4,7,6),(1,5,7,4),(3,6,7,5))
                 corners=local_faces
             else:
                 index=lambda i,j,k:i+3*j+9*k
                 local_faces=(
                     tuple(index(i,j,0) for j in range(3) for i in range(3)),
-                    tuple(index(i,j,2) for j in range(3) for i in range(3)),
+                    tuple(index(0,j,k) for k in range(3) for j in range(3)),
                     tuple(index(i,0,k) for k in range(3) for i in range(3)),
                     tuple(index(i,2,k) for k in range(3) for i in range(3)),
-                    tuple(index(0,j,k) for k in range(3) for j in range(3)),
-                    tuple(index(2,j,k) for k in range(3) for j in range(3)))
+                    tuple(index(2,j,k) for k in range(3) for j in range(3)),
+                    tuple(index(i,j,2) for j in range(3) for i in range(3)))
                 corners=tuple((face[0],face[2],face[8],face[6]) for face in local_faces)
             order=3 if intorder>=4 else 2
             points,weights=np.polynomial.legendre.leggauss(order)
@@ -1486,9 +1551,16 @@ class FacetBasis:
             face_weights=np.array([wr*ws for ws in weights for wr in weights])
         lookup={}
         for e,nodes in enumerate(mesh.t.T):
-            for local,corner in zip(local_faces,corners):
-                lookup[tuple(sorted(int(nodes[i]) for i in corner))]=(e,local,corner)
-        nq=len(face_weights);nodes_per_element=mesh.t.shape[0]
+            for local_index,(local,corner) in enumerate(
+                zip(local_faces,corners)
+            ):
+                key=tuple(sorted(int(nodes[i]) for i in corner))
+                lookup.setdefault(key,[]).append(
+                    (local_index,e,local,corner)
+                )
+        for adjacent in lookup.values():
+            adjacent.sort(key=lambda item:(item[0],item[1]))
+        nq=len(face_weights);nodes_per_element=len(element.elem.doflocs)
         self.mesh, self.elem = mesh, element
         self.X=face_points.T;self.W=face_weights
         self.N = volume.N
@@ -1505,11 +1577,36 @@ class FacetBasis:
         for f, face in enumerate(facets.T):
             face_corners=face[:3] if is_tet else (face[0],face[2] if len(face)==9 else face[1],
                 face[8] if len(face)==9 else face[2],face[6] if len(face)==9 else face[3])
-            e,local,corner=lookup[tuple(sorted(map(int,face_corners)))]
+            adjacent=lookup[tuple(sorted(map(int,face_corners)))]
+            if _side>=len(adjacent):
+                raise ValueError(
+                    f"facet {tuple(face_corners)} does not have side {_side}"
+                )
+            _,e,local,corner=adjacent[_side]
             self.parent_elements[f]=e
             self.local_faces.append(tuple(local))
             self.element_dofs[:, f] = volume.element_dofs[:, e]
-            reference_corners=element.elem.doflocs[np.asarray(corner)]
+            reference_vertices=(
+                ElementTetP2().doflocs
+                if mesh.t.shape[0]==10 else
+                ElementHex2().doflocs
+                if mesh.t.shape[0]==27 else
+                np.array([[0.,0.,0.],[1.,0.,0.],
+                          [0.,1.,0.],[0.,0.,1.]])
+                if is_tet else
+                np.array([[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],
+                          [0.,0.,1.],[1.,1.,0.],[1.,0.,1.],
+                          [0.,1.,1.],[1.,1.,1.]])
+            )
+            local_corner_ids=np.asarray(corner)
+            global_corners=mesh.t[local_corner_ids,e]
+            order=[
+                int(np.flatnonzero(global_corners==node)[0])
+                for node in face_corners
+            ]
+            reference_corners=reference_vertices[
+                local_corner_ids[np.asarray(order)]
+            ]
             for q,(r,s) in enumerate(face_points):
                 if is_tet:
                     reference=(1-r-s)*reference_corners[0]+r*reference_corners[1]+s*reference_corners[2]
@@ -1522,13 +1619,24 @@ class FacetBasis:
                         (1-s)*(reference_corners[1]-reference_corners[0])+s*(reference_corners[2]-reference_corners[3]),
                         (1-r)*(reference_corners[3]-reference_corners[0])+r*(reference_corners[2]-reference_corners[1])),axis=1)
                 shape,refgrad=volume._evaluate_reference(reference[None,:].T)
-                x=mesh.p[:,mesh.t[:,e]];jacobian=x@refgrad[0]
+                if mesh.t.shape[0]==shape.shape[1]:
+                    geometry_shape,geometry_refgrad=shape,refgrad
+                else:
+                    geometry_shape,geometry_refgrad=(
+                        _mesh_geometry_shapes(
+                            mesh,reference[None,:].T
+                        )
+                    )
+                x=mesh.p[:,mesh.t[:,e]]
+                jacobian=x@geometry_refgrad[0]
                 physical=refgrad[0]@np.linalg.inv(jacobian)
                 tangents=jacobian@derivatives
-                point=shape[0]@x.T
+                point=geometry_shape[0]@x.T
                 normal=np.cross(tangents[:,0],tangents[:,1])
                 normal/=np.linalg.norm(normal)
                 if np.dot(normal,point-x.mean(axis=1))<0.:
+                    normal=-normal
+                if _interior and _side==1:
                     normal=-normal
                 self.tabulated_shape[f,q]=shape[0]
                 self.tabulated_gradients[f,q]=physical
