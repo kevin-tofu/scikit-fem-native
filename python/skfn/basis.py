@@ -45,6 +45,11 @@ class _TopologyMesh:
                 "wedge facet topology with mixed triangle and quadrilateral "
                 "faces is not implemented yet"
             )
+        if rows==5:
+            raise NotImplementedError(
+                "pyramid facet topology with mixed triangle and quadrilateral "
+                "faces is not implemented yet"
+            )
         if rows==8:
             return ((0,1,4,2),(0,2,6,3),(0,3,5,1),
                     (2,4,7,6),(1,5,7,4),(3,6,7,5))
@@ -522,6 +527,38 @@ class MeshWedge1(_TopologyMesh):
         return dict(self._boundaries)
 
 
+class MeshPyramid1(_TopologyMesh):
+    """Five-node pyramid mesh; an skfn extension not present in scikit-fem."""
+
+    def __init__(self,p=None,t=None):
+        self.p=np.asarray(
+            p if p is not None else
+            [[0.,1.,1.,0.,.5],
+             [0.,0.,1.,1.,.5],
+             [0.,0.,0.,0.,1.]],
+            dtype=np.float64,
+        )
+        self.t=np.asarray(
+            t if t is not None else np.arange(5)[:,None],dtype=np.int64
+        )
+        if self.p.ndim!=2 or self.p.shape[0]!=3:
+            raise ValueError("p must have shape (3, nodes)")
+        if self.t.ndim!=2 or self.t.shape[0]!=5:
+            raise ValueError("t must have shape (5, elements)")
+        self._boundaries={}
+
+    @property
+    def nelements(self):
+        return self.t.shape[1]
+
+    def dim(self):
+        return 3
+
+    @property
+    def boundaries(self):
+        return dict(self._boundaries)
+
+
 class MeshHex(_TopologyMesh):
     def __init__(self, p: np.ndarray | None = None, t: np.ndarray | None = None):
         self.p = np.asarray(
@@ -720,6 +757,15 @@ class ElementWedge1(_ComposableElement):
         )
 
 
+class ElementPyramid1(_ComposableElement):
+    """Rational nodal Pyramid5 element on a collapsed unit cube."""
+
+    def __init__(self):
+        self.doflocs=np.array(
+            [[0.,0.,0.],[1.,0.,0.],[1.,1.,0.],[0.,1.,0.],[0.,0.,1.]]
+        )
+
+
 class ElementHex1(_ComposableElement):
     def __init__(self):
         self.doflocs = np.array(
@@ -907,9 +953,9 @@ def _interior_facets_2d(mesh):
 
 
 def _interior_facets_3d(mesh):
-    if mesh.t.shape[0]==6:
+    if mesh.t.shape[0] in (5,6):
         raise NotImplementedError(
-            "wedge interior facets are not implemented yet"
+            "mixed-face interior facets are not implemented yet"
         )
     is_tet=mesh.t.shape[0] in (4,10)
     if is_tet:
@@ -963,7 +1009,9 @@ def _corner_count(mesh):
         return 3 if mesh.t.shape[0] in (3,6) else 4
     if mesh.t.shape[0] in (4,10):
         return 4
-    return 6 if mesh.t.shape[0]==6 else 8
+    if mesh.t.shape[0] in (5,6):
+        return mesh.t.shape[0]
+    return 8
 
 
 def _simplex_shapes(points,dimension,quadratic):
@@ -1053,6 +1101,33 @@ def _wedge_shapes(points):
     return shape,grad
 
 
+def _pyramid_shapes(points):
+    points=np.asarray(points)
+    x,y,z=points
+    scale=1.-z
+    if np.any(scale<=np.finfo(float).eps):
+        raise ValueError("pyramid reference gradients are singular at the apex")
+    a=scale-x;b=scale-y
+    shape=np.column_stack((
+        a*b/scale,x*b/scale,x*y/scale,a*y/scale,z
+    ))
+    grad=np.empty((points.shape[1],5,3))
+    grad[:,0,0]=-b/scale
+    grad[:,0,1]=-a/scale
+    grad[:,0,2]=-1.+x*y/scale**2
+    grad[:,1,0]=b/scale
+    grad[:,1,1]=-x/scale
+    grad[:,1,2]=-x*y/scale**2
+    grad[:,2,0]=y/scale
+    grad[:,2,1]=x/scale
+    grad[:,2,2]=x*y/scale**2
+    grad[:,3,0]=-y/scale
+    grad[:,3,1]=a/scale
+    grad[:,3,2]=-x*y/scale**2
+    grad[:,4]=(0.,0.,1.)
+    return shape,grad
+
+
 def _mesh_geometry_shapes(mesh,points):
     nodes=mesh.t.shape[0]
     if mesh.dim()==2 and nodes in (3,6):
@@ -1063,6 +1138,8 @@ def _mesh_geometry_shapes(mesh,points):
         return _simplex_shapes(points,3,nodes==10)
     if nodes==6:
         return _wedge_shapes(points)
+    if nodes==5:
+        return _pyramid_shapes(points)
     return _hex_shapes(points,nodes==27)
 
 
@@ -1131,6 +1208,14 @@ def _wedge_quadrature(intorder):
     return np.asarray(points).T,np.asarray(weights)
 
 
+def _pyramid_quadrature(intorder):
+    cube,cube_weights=_tensor_quadrature(3,intorder)
+    xi,eta,z=cube
+    scale=1.-z
+    points=np.vstack((scale*xi,scale*eta,z))
+    return points,cube_weights*scale**2
+
+
 class Basis:
     def __init__(
         self,mesh:MeshTet,element:ElementVector,intorder=2,
@@ -1151,6 +1236,7 @@ class Basis:
             ElementQuad0,ElementQuad1,ElementQuad2,
             ElementTetP0,ElementTetP1,ElementTetP2,
             ElementWedge1,
+            ElementPyramid1,
             ElementHex0,ElementHex1,ElementHex2,
         )
         if not isinstance(element,ElementVector) or not isinstance(base,supported):
@@ -1172,6 +1258,7 @@ class Basis:
         self._tet=isinstance(base,(ElementTetP0,ElementTetP1,ElementTetP2))
         self._quadratic_tet=isinstance(base,ElementTetP2)
         self._wedge=isinstance(base,ElementWedge1)
+        self._pyramid=isinstance(base,ElementPyramid1)
         self._quadratic_hex=isinstance(base,ElementHex2)
         if quadrature is not None:
             self.X,self.W=_validate_quadrature(
@@ -1179,6 +1266,8 @@ class Basis:
             )
         elif self._wedge:
             self.X,self.W=_wedge_quadrature(intorder)
+        elif self._pyramid:
+            self.X,self.W=_pyramid_quadrature(intorder)
         elif intorder>4:
             self.X,self.W=(
                 _simplex_quadrature(mesh.dim(),intorder)
@@ -1588,6 +1677,8 @@ class Basis:
             return mesh.t[:10]
         if isinstance(scalar,ElementWedge1):
             return mesh.t[:6]
+        if isinstance(scalar,ElementPyramid1):
+            return mesh.t[:5]
         if isinstance(scalar,ElementHex1):
             if mesh.t.shape[0]==27:
                 return mesh.t[[0,2,6,18,8,20,24,26]]
@@ -1641,6 +1732,8 @@ class Basis:
             refgrad=np.broadcast_to(reference,(self.X.shape[1],4,3))
         elif self._wedge:
             shape,refgrad=_wedge_shapes(self.X)
+        elif self._pyramid:
+            shape,refgrad=_pyramid_shapes(self.X)
         elif self._quadratic_hex:
             grid=(0.,.5,1.)
             def values(x):
@@ -1735,6 +1828,8 @@ class Basis:
                 return shape,grad
             if self._wedge:
                 return _wedge_shapes(self.X)
+            if self._pyramid:
+                return _pyramid_shapes(self.X)
             if self._quadratic_hex:
                 values=lambda x:np.array([2*(x-.5)*(x-1),4*x*(1-x),2*x*(x-.5)])
                 deriv=lambda x:np.array([4*x-3,4-8*x,4*x-1])

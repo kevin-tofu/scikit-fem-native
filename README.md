@@ -40,6 +40,7 @@ unchanged with upstream scikit-fem.
 | `TriangleSupermesh.update()` | Refit/rebuild overlap data after motion |
 | Interface `Functional` | Integrate gap, normals, and two-sided traces |
 | `NativeAssembler` and native kernels | Direct residual/tangent evaluation |
+| `MeshPyramid1` / `ElementPyramid1` | Pyramid5 volume assembly (not provided by scikit-fem) |
 
 ### Intentionally out of scope
 
@@ -50,7 +51,7 @@ unchanged with upstream scikit-fem.
 - importing scikit-fem at runtime.
 
 The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
-Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Wedge6, Hex8/Hex27 volume integration,
+Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Wedge6, Pyramid5, and Hex8/Hex27 volume integration,
 facet integration for the non-wedge elements,
 mixed fields, and nonmatching surface coupling.
 
@@ -116,13 +117,18 @@ H1 `Basis` whose tabulated gradients fit the native element-size limit,
 including the Tet and Hex orders implemented by skfn.
 
 Stateful material assembly is regression-tested on Tet4, Tet10, Wedge6,
-Hex8, and Hex27.  Tet10, Wedge6, and Hex27 coverage includes distorted geometry,
+Pyramid5, Hex8, and Hex27.  Tet10, Wedge6, Pyramid5, and Hex27 coverage includes distorted geometry,
 integration orders 2, 4, and 6, serial/parallel agreement, finite-difference
 consistent tangents, and J2 comparison with scikit-fem forms.
 
 Wedge6 currently supports volume `Basis` and assembly.  Its mixed triangular
 and quadrilateral facet topology is intentionally rejected until `FacetBasis`
 can represent both face types without ambiguity.
+
+Pyramid5 follows the same volume-only rule for mixed-face topology.  It is an
+explicit skfn extension rather than part of the scikit-fem-compatible subset;
+its rational shape functions are tested by volume, partition-of-unity,
+constant-strain, material-tangent, and serial/parallel checks.
 
 Native element loops use one thread by default.  Geometry tabulation can use
 the shared native thread pool explicitly:

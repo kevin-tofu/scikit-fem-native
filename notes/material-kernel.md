@@ -71,9 +71,10 @@ Implementation ownership is separated as follows:
 The currently instantiated state sizes are zero (linear elasticity), six
 (Standard Linear Solid viscous strain), and seven (J2 plasticity).
 
-The generic assembler is exercised with 12, 30, 18, 24, and 81 local vector
-degrees of freedom corresponding to Tet4, Tet10, Wedge6, Hex8, and Hex27.  High-order
-tests include curved geometry and integration-order sweeps, so material
+The generic assembler is exercised with 12, 30, 18, 15, 24, and 81 local vector
+degrees of freedom corresponding to Tet4, Tet10, Wedge6, Pyramid5, Hex8, and
+Hex27.  High-order and non-tensor-product tests include curved geometry and
+integration-order sweeps, so material
 kernels do not need topology- or order-specific branches.
 
 Evaluation context such as a time-step override is passed through the generic
