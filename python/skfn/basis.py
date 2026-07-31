@@ -130,6 +130,113 @@ class MeshTri2(MeshTri):
         ).T
 
 
+class MeshQuad:
+    """Two-dimensional quadrilateral mesh."""
+
+    def __init__(self,p=None,t=None):
+        self.p=np.asarray(
+            p if p is not None else
+            [[0.,1.,1.,0.],[0.,0.,1.,1.]],dtype=np.float64
+        )
+        self.t=np.asarray(
+            t if t is not None else [[0],[1],[2],[3]],dtype=np.int64
+        )
+        if self.p.ndim!=2 or self.p.shape[0]!=2:
+            raise ValueError("p must have shape (2, nodes)")
+        if self.t.ndim!=2 or self.t.shape[0]!=4:
+            raise ValueError("t must have shape (4, elements)")
+        self._boundaries={}
+
+    @classmethod
+    def init_tensor(cls,x,y):
+        x,y=map(np.asarray,(x,y))
+        points=np.array([[a,b] for b in y for a in x],dtype=float).T
+        nx=len(x);node=lambda i,j:i+nx*j
+        cells=[]
+        for j in range(len(y)-1):
+            for i in range(len(x)-1):
+                cells.append((
+                    node(i,j),node(i+1,j),
+                    node(i+1,j+1),node(i,j+1),
+                ))
+        return cls(points,np.asarray(cells,dtype=np.int64).T)
+
+    @property
+    def nelements(self):
+        return self.t.shape[1]
+
+    def dim(self):
+        return 2
+
+    def boundary_facets(self):
+        found={}
+        for nodes in self.t.T:
+            for a,b in ((0,1),(1,2),(2,3),(3,0)):
+                value=(int(nodes[a]),int(nodes[b]))
+                key=tuple(sorted(value))
+                found[key]=None if key in found else value
+        return np.asarray(
+            [value for value in found.values() if value is not None],
+            dtype=np.int64,
+        ).T
+
+    @property
+    def boundaries(self):
+        return dict(self._boundaries)
+
+    def with_boundaries(self,boundaries):
+        return _with_boundaries(self,boundaries)
+
+
+class MeshQuad2(MeshQuad):
+    """Nine-node isoparametric quadrilateral mesh."""
+
+    @classmethod
+    def from_mesh(cls,mesh):
+        points=[mesh.p[:,i].copy() for i in range(mesh.p.shape[1])]
+        edge_nodes={};cells=[]
+        for vertices in mesh.t.T:
+            cell=list(map(int,vertices))
+            for a,b in ((0,1),(1,2),(2,3),(3,0)):
+                edge=tuple(sorted((int(vertices[a]),int(vertices[b]))))
+                if edge not in edge_nodes:
+                    edge_nodes[edge]=len(points)
+                    points.append(.5*(mesh.p[:,edge[0]]+mesh.p[:,edge[1]]))
+                cell.append(edge_nodes[edge])
+            cell.append(len(points))
+            points.append(mesh.p[:,vertices].mean(axis=1))
+            cells.append(cell)
+        return cls(np.asarray(points).T,np.asarray(cells,dtype=np.int64).T)
+
+    def __init__(self,p=None,t=None):
+        if p is None or t is None:
+            generated=type(self).from_mesh(MeshQuad())
+            self.p,self.t=generated.p,generated.t
+            self._boundaries={}
+            return
+        self.p=np.asarray(p,dtype=np.float64)
+        self.t=np.asarray(t,dtype=np.int64)
+        if self.p.ndim!=2 or self.p.shape[0]!=2 or self.t.shape[0]!=9:
+            raise ValueError(
+                "quadratic quadrilateral mesh requires p (2,n), t (9,e)"
+            )
+        self._boundaries={}
+
+    def boundary_facets(self):
+        found={}
+        for nodes in self.t.T:
+            for (a,b),midpoint in zip(
+                ((0,1),(1,2),(2,3),(3,0)),(4,5,6,7)
+            ):
+                key=tuple(sorted((int(nodes[a]),int(nodes[b]))))
+                value=(int(nodes[a]),int(nodes[b]),int(nodes[midpoint]))
+                found[key]=None if key in found else value
+        return np.asarray(
+            [value for value in found.values() if value is not None],
+            dtype=np.int64,
+        ).T
+
+
 class MeshTet:
     """Minimal tetrahedral mesh container compatible with skfn.Basis."""
 
@@ -369,6 +476,21 @@ class ElementTriP2(_ComposableElement):
         ])
 
 
+class ElementQuad1(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array([
+            [0.,0.],[1.,0.],[1.,1.],[0.,1.],
+        ])
+
+
+class ElementQuad2(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array([
+            [0.,0.],[1.,0.],[1.,1.],[0.,1.],
+            [.5,0.],[1.,.5],[.5,1.],[0.,.5],[.5,.5],
+        ])
+
+
 class ElementTetP2(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array(
@@ -506,6 +628,38 @@ class DofsView:
         return len(self._dofs)
 
 
+def _quad_shapes(points,quadratic):
+    points=np.asarray(points)
+    nq=points.shape[1]
+    if quadratic:
+        shape=np.empty((nq,9))
+        grad=np.empty((nq,9,2))
+        order=((0,0),(2,0),(2,2),(0,2),
+               (1,0),(2,1),(1,2),(0,1),(1,1))
+        for q,(x,y) in enumerate(points.T):
+            vx=np.array([2.*(x-.5)*(x-1.),4.*x*(1.-x),
+                         2.*x*(x-.5)])
+            vy=np.array([2.*(y-.5)*(y-1.),4.*y*(1.-y),
+                         2.*y*(y-.5)])
+            dx=np.array([4.*x-3.,4.-8.*x,4.*x-1.])
+            dy=np.array([4.*y-3.,4.-8.*y,4.*y-1.])
+            for node,(i,j) in enumerate(order):
+                shape[q,node]=vx[i]*vy[j]
+                grad[q,node]=(dx[i]*vy[j],vx[i]*dy[j])
+        return shape,grad
+    bits=((0,0),(1,0),(1,1),(0,1))
+    shape=np.empty((nq,4))
+    grad=np.empty((nq,4,2))
+    for q,(x,y) in enumerate(points.T):
+        for node,(i,j) in enumerate(bits):
+            shape[q,node]=(x if i else 1.-x)*(y if j else 1.-y)
+            grad[q,node]=(
+                (1. if i else -1.)*(y if j else 1.-y),
+                (x if i else 1.-x)*(1. if j else -1.),
+            )
+    return shape,grad
+
+
 class Basis:
     def __init__(self, mesh: MeshTet, element: ElementVector, intorder=2):
         self.intorder=intorder
@@ -515,15 +669,18 @@ class Basis:
         if not isinstance(element, ElementVector) or not isinstance(
             element.elem, (
                 ElementTriP1,ElementTriP2,
+                ElementQuad1,ElementQuad2,
                 ElementTetP1,ElementTetP2,ElementHex1,ElementHex2,
             )
         ):
             raise NotImplementedError(
-                "independent Basis supports Tri/Tet P1/P2 and Hex1/2"
+                "independent Basis supports Tri/Quad/Tet P1/P2 and Hex1/2"
             )
         self.mesh, self.elem = mesh, element
         self._tri=isinstance(element.elem,(ElementTriP1,ElementTriP2))
         self._quadratic_tri=isinstance(element.elem,ElementTriP2)
+        self._quad=isinstance(element.elem,(ElementQuad1,ElementQuad2))
+        self._quadratic_quad=isinstance(element.elem,ElementQuad2)
         self._tet = isinstance(element.elem, (ElementTetP1,ElementTetP2))
         self._quadratic_tet=isinstance(element.elem,ElementTetP2)
         self._quadratic_hex=isinstance(element.elem,ElementHex2)
@@ -543,6 +700,26 @@ class Basis:
                 [1./6.,1./6.,2./3.],
             ])
             self.W=np.full(3,1./6.)
+        elif self._quadratic_quad or (self._quad and intorder>=4):
+            points,weights=np.polynomial.legendre.leggauss(3)
+            points=(points+1.)/2.;weights=weights/2.
+            entries=[
+                (x,y,wx*wy)
+                for y,wy in zip(points,weights)
+                for x,wx in zip(points,weights)
+            ]
+            self.X=np.array([entry[:2] for entry in entries]).T
+            self.W=np.array([entry[2] for entry in entries])
+        elif self._quad:
+            points,weights=np.polynomial.legendre.leggauss(2)
+            points=(points+1.)/2.;weights=weights/2.
+            entries=[
+                (x,y,wx*wy)
+                for y,wy in zip(points,weights)
+                for x,wx in zip(points,weights)
+            ]
+            self.X=np.array([entry[:2] for entry in entries]).T
+            self.W=np.array([entry[2] for entry in entries])
         elif self._quadratic_tet or (self._tet and intorder>=4):
             self.X=np.array(
                 [[.25,.7857142857142857,.0714285714285714,.0714285714285714,.0714285714285714,
@@ -790,6 +967,10 @@ class Basis:
             return mesh.t[:3]
         if isinstance(scalar,ElementTriP2):
             return mesh.t[:6]
+        if isinstance(scalar,ElementQuad1):
+            return mesh.t[:4]
+        if isinstance(scalar,ElementQuad2):
+            return mesh.t[:9]
         if isinstance(scalar,ElementTetP1):
             return mesh.t[:4]
         if isinstance(scalar,ElementTetP2):
@@ -822,6 +1003,8 @@ class Basis:
             refgrad=np.broadcast_to(
                 reference,(self.X.shape[1],3,2)
             )
+        elif self._quad:
+            shape,refgrad=_quad_shapes(self.X,self._quadratic_quad)
         elif self._quadratic_tet:
             bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
             pairs=((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
@@ -885,6 +1068,10 @@ class Basis:
                         geometry_refgrad[q,k]=4.*(
                             L[j]*dl[i]+L[i]*dl[j]
                         )
+            elif self._quad and geometry_nodes==9:
+                geometry_shape,geometry_refgrad=_quad_shapes(
+                    self.X,True
+                )
             elif self._tet and geometry_nodes==10:
                 bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
                 pairs=((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
@@ -972,6 +1159,8 @@ class Basis:
                     (shape.shape[0],3,2),
                 )
                 return shape,grad
+            if self._quad:
+                return _quad_shapes(self.X,self._quadratic_quad)
             if self._quadratic_tet:
                 bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
                 pairs=((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
@@ -1139,7 +1328,8 @@ class FacetBasis:
     def _init_2d(self,mesh,element,facets,intorder):
         volume=Basis(mesh,element,intorder=intorder)
         facets=mesh.boundary_facets() if facets is None else np.asarray(facets)
-        expected=3 if mesh.t.shape[0]==6 else 2
+        quadratic_geometry=mesh.t.shape[0] in (6,9)
+        expected=3 if quadratic_geometry else 2
         if facets.shape[0]!=expected:
             facets=facets.T
         if intorder>=4:
@@ -1147,13 +1337,23 @@ class FacetBasis:
         else:
             points,weights=np.polynomial.legendre.leggauss(2)
         points=(points+1.)/2.;weights=weights/2.
-        edge_mid={(0,1):3,(1,2):4,(0,2):5}
-        local_edges=((1,2),(2,0),(0,1))
-        if isinstance(element.elem,ElementTriP2):
-            local_edges=tuple(
-                edge+(edge_mid[tuple(sorted(edge))],)
-                for edge in local_edges
-            )
+        is_quad=isinstance(element.elem,(ElementQuad1,ElementQuad2))
+        if is_quad:
+            local_edges=((0,1),(1,2),(2,3),(3,0))
+            if isinstance(element.elem,ElementQuad2):
+                local_edges=tuple(
+                    edge+(midpoint,) for edge,midpoint in zip(
+                        local_edges,(4,5,6,7)
+                    )
+                )
+        else:
+            edge_mid={(0,1):3,(1,2):4,(0,2):5}
+            local_edges=((1,2),(2,0),(0,1))
+            if isinstance(element.elem,ElementTriP2):
+                local_edges=tuple(
+                    edge+(edge_mid[tuple(sorted(edge))],)
+                    for edge in local_edges
+                )
         lookup={}
         for entity,nodes in enumerate(mesh.t.T):
             for edge in local_edges:
@@ -1199,22 +1399,27 @@ class FacetBasis:
                 geometry_shape=shape
                 geometry_refgrad=refgrad
                 if x.shape[1]!=shape.shape[1]:
-                    L=np.array([
-                        1.-reference.sum(),reference[0],reference[1]
-                    ])
-                    dl=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
-                    geometry_shape=np.empty((1,6))
-                    geometry_refgrad=np.empty((1,6,2))
-                    for i in range(3):
-                        geometry_shape[0,i]=L[i]*(2.*L[i]-1.)
-                        geometry_refgrad[0,i]=(4.*L[i]-1.)*dl[i]
-                    for k,(i,j) in enumerate(
-                        ((0,1),(1,2),(0,2)),start=3
-                    ):
-                        geometry_shape[0,k]=4.*L[i]*L[j]
-                        geometry_refgrad[0,k]=4.*(
-                            L[j]*dl[i]+L[i]*dl[j]
+                    if is_quad:
+                        geometry_shape,geometry_refgrad=_quad_shapes(
+                            reference[:,None],True
                         )
+                    else:
+                        L=np.array([
+                            1.-reference.sum(),reference[0],reference[1]
+                        ])
+                        dl=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
+                        geometry_shape=np.empty((1,6))
+                        geometry_refgrad=np.empty((1,6,2))
+                        for i in range(3):
+                            geometry_shape[0,i]=L[i]*(2.*L[i]-1.)
+                            geometry_refgrad[0,i]=(4.*L[i]-1.)*dl[i]
+                        for k,(i,j) in enumerate(
+                            ((0,1),(1,2),(0,2)),start=3
+                        ):
+                            geometry_shape[0,k]=4.*L[i]*L[j]
+                            geometry_refgrad[0,k]=4.*(
+                                L[j]*dl[i]+L[i]*dl[j]
+                            )
                 jacobian=x@geometry_refgrad[0]
                 physical=refgrad[0]@np.linalg.inv(jacobian)
                 tangent=jacobian@(
