@@ -5,7 +5,11 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import bmat, csr_matrix
 
-from ._skfn import CrossBilinearAssembler,LinearFormAssembler
+from ._skfn import (
+    CrossBilinearAssembler,
+    LinearFormAssembler,
+    build_triangle_supermesh,
+)
 
 
 class BoundarySurface:
@@ -264,6 +268,15 @@ class TriangleSupermesh:
             tolerance if projection_tolerance is None
             else float(projection_tolerance)
         )
+        if master_surface is None and slave_surface is None:
+            return self._initialize_planar_native(
+                master_points,master_triangles,
+                slave_points,slave_triangles,
+                row_components=row_components,
+                column_components=column_components,
+                tolerance=tolerance,
+                projection_tolerance=projection_tolerance,
+            )
         a=.445948490915965;b=.091576213509771
         quadrature_bary=np.array([
             [a,a,1-2*a],[a,1-2*a,a],[1-2*a,a,a],
@@ -415,6 +428,72 @@ class TriangleSupermesh:
             master_triangles.shape[1]*slave_triangles.shape[1],
             candidates,overlaps,len(weights),area_total,
             noncoplanar,maximum_gap,
+        )
+
+    def _initialize_planar_native(
+        self,master_points,master_triangles,
+        slave_points,slave_triangles,*,row_components,
+        column_components,tolerance,projection_tolerance,
+    ):
+        built=build_triangle_supermesh(
+            np.ascontiguousarray(master_points,dtype=np.float64),
+            np.ascontiguousarray(master_triangles,dtype=np.int64),
+            np.ascontiguousarray(slave_points,dtype=np.float64),
+            np.ascontiguousarray(slave_triangles,dtype=np.int64),
+            tolerance,projection_tolerance,
+        )
+        master_indices=np.asarray(built["master_indices"])
+        slave_indices=np.asarray(built["slave_indices"])
+        master_nodes=master_triangles[:,master_indices].T
+        slave_nodes=slave_triangles[:,slave_indices].T
+        self._row_dofs=np.ascontiguousarray(
+            row_components*master_nodes[...,None]
+            +np.arange(row_components)
+        )
+        self._column_dofs=np.ascontiguousarray(
+            column_components*slave_nodes[...,None]
+            +np.arange(column_components)
+        )
+        self._row_shape=np.asarray(
+            built["row_shape"],dtype=np.float64
+        )
+        self._column_shape=np.asarray(
+            built["column_shape"],dtype=np.float64
+        )
+        self._weights=np.asarray(built["weights"],dtype=np.float64)
+        self._row_gradients=None
+        self._column_gradients=None
+        self._row_normal_gradient=None
+        self._column_normal_gradient=None
+        self.global_coordinates=np.asarray(
+            built["coordinates"],dtype=np.float64
+        )
+        self.master_normals=np.asarray(
+            built["master_normals"],dtype=np.float64
+        )
+        self.slave_normals=np.asarray(
+            built["slave_normals"],dtype=np.float64
+        )
+        self.gap=np.asarray(built["gaps"],dtype=np.float64)
+        self._native=CrossBilinearAssembler(
+            self._row_dofs,self._column_dofs,
+            self._row_shape,self._column_shape,self._weights,
+        )
+        self._matrix=csr_matrix(
+            (self._native.values,self._native.indices,self._native.indptr),
+            shape=(self._native.rows,self._native.columns),copy=False,
+        )
+        self._coefficient_shape=self._weights.shape
+        self.master_size=self._native.rows
+        self.slave_size=self._native.columns
+        self.diagnostics=SupermeshDiagnostics(
+            master_triangles.shape[1]*slave_triangles.shape[1],
+            int(built["candidate_count"]),
+            int(built["overlap_count"]),
+            int(built["integration_triangle_count"]),
+            float(built["overlap_area"]),
+            int(built["noncoplanar_rejection_count"]),
+            float(built["maximum_plane_gap"]),
         )
 
     @classmethod

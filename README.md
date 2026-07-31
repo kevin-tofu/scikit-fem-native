@@ -166,6 +166,17 @@ The dependency-free contraction loop is isolated behind C++ basis and
 coefficient views in `cross_contraction.hpp`.  This keeps the public and
 assembly APIs stable if a specialized tensor/SIMD backend is selected later.
 
+For direct planar triangle surfaces, AABB sweep, polygon clipping, fan
+triangulation, and quadrature generation run in C++ with the GIL released.
+Typed vectors use amortized append with pre-reserved capacity and are converted
+to NumPy arrays once after construction; no per-intersection `hstack` or
+full-array reallocation is performed.  The structured-grid scaling benchmark
+is available as:
+
+```sh
+python benchmarks/supermesh_builder.py 16 32 64 128
+```
+
 For curved Tet10/Hex27 facets, search geometry is refined adaptively:
 
 ```python
