@@ -178,6 +178,41 @@ class _BilinearTerm:
 
     __rmul__ = __mul__
 
+    def __neg__(self):
+        return _BilinearTerm(
+            self.kind,self.coefficient,-self.factor
+        )
+
+    def __add__(self,other):
+        if isinstance(other,_BilinearTerm):
+            return _BilinearSum((self,other))
+        if isinstance(other,_BilinearSum):
+            return _BilinearSum((self,)+other.terms)
+        return NotImplemented
+
+    def __sub__(self,other):
+        return self+(-other)
+
+
+@dataclass(frozen=True)
+class _BilinearSum:
+    terms: tuple[_BilinearTerm,...]
+
+    def __add__(self,other):
+        if isinstance(other,_BilinearTerm):
+            return _BilinearSum(self.terms+(other,))
+        if isinstance(other,_BilinearSum):
+            return _BilinearSum(self.terms+other.terms)
+        return NotImplemented
+
+    __radd__=__add__
+
+    def __neg__(self):
+        return _BilinearSum(tuple(-term for term in self.terms))
+
+    def __sub__(self,other):
+        return self+(-other)
+
 
 @dataclass(frozen=True)
 class _InterfaceTrace:
@@ -421,33 +456,49 @@ def _native_bilinear_assemble(form, basis, kwargs):
         raise UnsupportedNativeForm(
             f"BilinearForm contains an unsupported operation: {error}"
         ) from error
-    if not isinstance(expression, _BilinearTerm):
+    terms=(
+        expression.terms if isinstance(expression,_BilinearSum)
+        else (expression,) if isinstance(expression,_BilinearTerm)
+        else None
+    )
+    if terms is None:
         raise UnsupportedNativeForm(
-            "native BilinearForm currently supports dot(u, v) and "
-            "ddot(grad(u), grad(v))"
+            "native BilinearForm must reduce to dot(u, v), "
+            "ddot(grad(u), grad(v)), or a sum of those terms"
         )
-    coefficient = expression.factor
-    if expression.coefficient is not None:
-        if isinstance(expression.coefficient,str):
-            if expression.coefficient not in kwargs:
-                raise ValueError(
-                    f"missing form parameter {expression.coefficient!r}"
-                )
-            raw_coefficient=kwargs[expression.coefficient]
+    value=None
+    gradient=None
+    for term in terms:
+        coefficient=term.factor
+        if term.coefficient is not None:
+            if isinstance(term.coefficient,str):
+                if term.coefficient not in kwargs:
+                    raise ValueError(
+                        f"missing form parameter {term.coefficient!r}"
+                    )
+                raw_coefficient=kwargs[term.coefficient]
+            else:
+                raw_coefficient=term.coefficient
+            coefficient=coefficient*np.asarray(
+                raw_coefficient,dtype=np.float64
+            )
+            if coefficient.ndim>2:
+                coefficient=np.squeeze(coefficient)
+        if term.kind=="value":
+            value=coefficient if value is None else value+coefficient
+        elif term.kind=="gradient":
+            gradient=(
+                coefficient if gradient is None else gradient+coefficient
+            )
         else:
-            raw_coefficient=expression.coefficient
-        coefficient = coefficient * np.asarray(
-            raw_coefficient, dtype=np.float64
-        )
-        if coefficient.ndim > 2:
-            coefficient = np.squeeze(coefficient)
+            raise UnsupportedNativeForm(
+                f"unsupported bilinear term kind {term.kind!r}"
+            )
     native = form._native_cache.get(basis)
     if native is None:
         native = NativeBilinearForm(basis)
         form._native_cache[basis] = native
-    if expression.kind == "value":
-        return native.assemble(value=coefficient)
-    return native.assemble(gradient=coefficient)
+    return native.assemble(value=value,gradient=gradient)
 
 
 def _interface_geometry(integration,kwargs):

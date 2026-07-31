@@ -196,6 +196,57 @@ def test_user_parameter_composes_with_volume_geometry():
     )
 
 
+def test_multiterm_volume_bilinear_form_matches_reference():
+    basis=vector_basis()
+
+    @skfn.BilinearForm
+    def reaction_diffusion(u,v,w):
+        return (
+            w.reaction*(1.+w.x[0]**2)*dot(u,v)
+            +w.diffusivity*np.exp(-w.x[1])
+                *ddot(grad(u),grad(v))
+        )
+
+    @skfem.BilinearForm
+    def reference(u,v,w):
+        return (
+            w.reaction*(1.+w.x[0]**2)*skfem_dot(u,v)
+            +w.diffusivity*np.exp(-w.x[1])
+                *skfem_ddot(skfem_grad(u),skfem_grad(v))
+        )
+
+    actual=skfn.asm(
+        reaction_diffusion,basis,reaction=1.3,diffusivity=.4
+    )
+    expected=skfem.asm(
+        reference,reference_basis(basis),
+        reaction=1.3,diffusivity=.4,
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=4e-13,atol=4e-13
+    )
+
+
+def test_multiterm_bilinear_subtraction_is_supported():
+    basis=vector_basis()
+
+    @skfn.BilinearForm
+    def form(u,v,w):
+        return (
+            2.*dot(u,v)+3.*ddot(grad(u),grad(v))
+            -.5*dot(u,v)-ddot(grad(u),grad(v))
+        )
+
+    actual=skfn.asm(form,basis)
+
+    @skfn.BilinearForm
+    def reduced(u,v,w):
+        return 1.5*dot(u,v)+2.*ddot(grad(u),grad(v))
+
+    expected=skfn.asm(reduced,basis)
+    np.testing.assert_allclose(actual.toarray(),expected.toarray())
+
+
 def test_upstream_form_is_rejected_by_native_asm():
     basis = vector_basis()
 

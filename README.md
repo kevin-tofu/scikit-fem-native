@@ -279,6 +279,22 @@ NumPy ufuncs are supported as coefficient expressions, so scalar, vector, and
 tensor parameters can be combined with coordinates, normals, and gap before
 the resulting contiguous coefficient is passed to native integration.
 
+Volume and facet bilinear forms may contain multiple value and gradient terms:
+
+```python
+@skfem.BilinearForm
+def reaction_diffusion(u, v, w):
+    return (
+        w.reaction * (1.0 + w.x[0] ** 2) * dot(u, v)
+        + w.diffusivity * np.exp(-w.x[1])
+          * ddot(grad(u), grad(v))
+    )
+```
+
+Terms of the same kind are added as quadrature coefficients.  The combined
+value and gradient coefficients are then assembled in one native traversal,
+with one CSR zeroing and scatter pass.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

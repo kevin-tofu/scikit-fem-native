@@ -72,3 +72,31 @@ def test_repeated_facet_assembly_reuses_csr_structure():
     second = penalty.assemble(native, alpha=2.)
     assert id(second.data) == data_id
     np.testing.assert_allclose(second.toarray(), 2 * first_values)
+
+
+def test_native_facet_multiterm_form_uses_one_matrix():
+    native,reference=bases()
+
+    @skfn.BilinearForm
+    def form(u,v,w):
+        return (
+            w.mass*dot(u,v)
+            +w.diffusion*ddot(grad(u),grad(v))
+        )
+
+    @skfem.BilinearForm
+    def expected_form(u,v,w):
+        return (
+            w.mass*reference_dot(u,v)
+            +w.diffusion*reference_ddot(
+                reference_grad(u),reference_grad(v)
+            )
+        )
+
+    actual=skfn.asm(form,native,mass=.7,diffusion=1.9)
+    expected=skfem.asm(
+        expected_form,reference,mass=.7,diffusion=1.9
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=8e-13,atol=8e-13
+    )
