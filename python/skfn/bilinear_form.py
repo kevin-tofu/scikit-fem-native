@@ -72,12 +72,21 @@ class NativeCompositeBilinearForm:
         column=self.basis.subbases[column_field]
         row_components=row.elem._dim
         column_components=column.elem._dim
-        if row_components!=column_components:
+        divergence=kind in {"row_divergence","column_divergence"}
+        if row_components!=column_components and not divergence:
             raise ValueError(
                 "component-mismatched composite coupling requires "
                 "an explicit tensor contraction"
             )
-        key=(row_field,column_field,kind)
+        row_kind=(
+            "gradient" if kind in {"gradient","row_divergence"}
+            else "value"
+        )
+        column_kind=(
+            "gradient" if kind in {"gradient","column_divergence"}
+            else "value"
+        )
+        key=(row_field,column_field,row_kind,column_kind)
         native=self._assemblers.get(key)
         if native is None:
             row_nodes=len(row.elem.elem.doflocs)
@@ -99,11 +108,36 @@ class NativeCompositeBilinearForm:
                 np.ascontiguousarray(column.tabulated_gradients),
             )
             self._assemblers[key]=native
-        target=self.basis.dx.shape
-        coefficient=np.ascontiguousarray(np.broadcast_to(
-            np.asarray(coefficient,dtype=np.float64),target
-        ))
-        native.assemble(coefficient,kind,kind)
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        if divergence:
+            dimension=row.tabulated_gradients.shape[3]
+            if kind=="row_divergence":
+                if row_components!=dimension or column_components!=1:
+                    raise ValueError(
+                        "row divergence requires vector test and scalar trial"
+                    )
+                tensor=np.zeros(
+                    (row_components,dimension,column_components)
+                )
+                for component in range(row_components):
+                    tensor[component,component,0]=1.
+            else:
+                dimension=column.tabulated_gradients.shape[3]
+                if column_components!=dimension or row_components!=1:
+                    raise ValueError(
+                        "column divergence requires scalar test and vector trial"
+                    )
+                tensor=np.zeros(
+                    (row_components,column_components,dimension)
+                )
+                for component in range(column_components):
+                    tensor[0,component,component]=1.
+            scalar=np.broadcast_to(coefficient,self.basis.dx.shape)
+            coefficient=scalar[(...,)+(None,)*tensor.ndim]*tensor
+        else:
+            coefficient=np.broadcast_to(coefficient,self.basis.dx.shape)
+        coefficient=np.ascontiguousarray(coefficient)
+        native.assemble(coefficient,row_kind,column_kind)
         matrix=csr_matrix(
             (native.values,native.indices,native.indptr),
             shape=(native.rows,native.columns),copy=False,

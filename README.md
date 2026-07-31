@@ -315,8 +315,27 @@ def coupled(u1, u2, v1, v2, w):
 `ElementComposite` interleaves its nodal subfield DOFs and caches each native
 rectangular block assembler.  The initial implementation supports fields with
 the same nodal order and component-compatible value or gradient contractions;
-explicit vector-scalar divergence coupling is handled separately rather than
-being inferred from an ambiguous contraction.
+vector-scalar divergence blocks use the usual mixed-form notation:
+
+```python
+element = (
+    skfem.ElementVector(skfem.ElementTetP1())
+    * skfem.ElementTetP1()
+)
+basis = skfem.Basis(mesh, element)
+
+@skfem.BilinearForm
+def mixed(u, p, v, q, w):
+    return (
+        w.mu * ddot(grad(u), grad(v))
+        - p * div(v)
+        - q * div(u)
+    )
+```
+
+Both `p * div(v)` and `q * div(u)` are assembled as native rectangular
+gradient-value blocks; no Python element loop or runtime scikit-fem fallback
+is used.
 
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,

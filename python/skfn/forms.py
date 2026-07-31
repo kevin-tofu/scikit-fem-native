@@ -108,6 +108,8 @@ class _CompositeField:
     kind: str = "value"
 
     def __mul__(self,other):
+        if isinstance(other,_CompositeDivergence):
+            return _composite_divergence_contraction(self,other)
         if isinstance(other,_CompositeField):
             if self.kind!="value" or other.kind!="value":
                 return NotImplemented
@@ -120,6 +122,9 @@ class _CompositeField:
 
     __rmul__=__mul__
 
+    def __neg__(self):
+        return _CompositeWeightedField(self,-1.)
+
 
 @dataclass(frozen=True)
 class _CompositeWeightedField:
@@ -127,6 +132,12 @@ class _CompositeWeightedField:
     coefficient: Any
 
     def __mul__(self,other):
+        if isinstance(other,_CompositeDivergence):
+            term=_composite_divergence_contraction(self.field,other)
+            return _CompositeBilinearTerm(
+                term.row_field,term.column_field,term.kind,
+                np.asarray(self.coefficient),term.factor,
+            )
         if not isinstance(other,_CompositeField):
             return NotImplemented
         term=_composite_contraction(self.field,other,"value")
@@ -134,6 +145,18 @@ class _CompositeWeightedField:
             term.row_field,term.column_field,term.kind,
             np.asarray(self.coefficient),term.factor,
         )
+
+    __rmul__=__mul__
+
+
+@dataclass(frozen=True)
+class _CompositeDivergence:
+    field: _CompositeField
+
+    def __mul__(self,other):
+        if isinstance(other,(_CompositeField,_CompositeWeightedField)):
+            return other*self
+        return NotImplemented
 
     __rmul__=__mul__
 
@@ -861,6 +884,21 @@ def _composite_contraction(left,right,kind):
     )
 
 
+def _composite_divergence_contraction(value,divergence):
+    gradient=divergence.field
+    if value.role==gradient.role:
+        raise UnsupportedNativeForm(
+            "divergence coupling requires trial and test subfields"
+        )
+    if gradient.role=="test":
+        return _CompositeBilinearTerm(
+            gradient.field,value.field,"row_divergence"
+        )
+    return _CompositeBilinearTerm(
+        value.field,gradient.field,"column_divergence"
+    )
+
+
 def dot(left, right):
     if isinstance(left, _Coefficient) and isinstance(right, _TestValue):
         return _Term("value", left)
@@ -1036,3 +1074,14 @@ def grad(value):
         return value.grad
     except AttributeError as error:
         raise UnsupportedNativeForm("grad() requires a form field") from error
+
+
+def div(value):
+    if isinstance(value,_CompositeField):
+        if value.kind!="value":
+            raise UnsupportedNativeForm("div() expects a composite value")
+        return _CompositeDivergence(value)
+    try:
+        return np.einsum("ii...->...",value.grad)
+    except AttributeError as error:
+        raise UnsupportedNativeForm("div() requires a vector field") from error

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from .forms import ddot, dot, grad
+from .forms import ddot, div, dot, grad
 from .interface import avg, jump, normal_grad
 
 

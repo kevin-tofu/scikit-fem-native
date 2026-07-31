@@ -1,10 +1,12 @@
 import numpy as np
 import skfem
+from skfem.helpers import div as reference_div
+from skfem.helpers import ddot as reference_ddot
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
 import skfn
-from skfn.helpers import dot,grad
+from skfn.helpers import ddot,div,dot,grad
 
 
 def test_element_multiplication_creates_composite_basis():
@@ -84,3 +86,67 @@ def test_repeated_composite_assembly_reuses_native_blocks():
         key:id(value) for key,value in native._assemblers.items()
     }
     assert first.shape==second.shape==(basis.N,basis.N)
+
+
+def test_vector_scalar_divergence_blocks_match_skfem():
+    mesh=skfn.MeshTet.init_tensor(
+        np.linspace(0.,1.,3),
+        np.linspace(0.,1.,3),
+        np.linspace(0.,1.,3),
+    )
+    element=skfn.ElementVector(skfn.ElementTetP1())*skfn.ElementTetP1()
+    basis=skfn.Basis(mesh,element,intorder=2)
+
+    @skfn.BilinearForm
+    def form(u,p,v,q,w):
+        return (
+            w.mu*ddot(grad(u),grad(v))
+            -p*div(v)
+            -q*div(u)
+            +w.stabilization*p*q
+        )
+
+    actual=skfn.asm(form,basis,mu=.7,stabilization=.05)
+
+    reference_mesh=skfem.MeshTet(mesh.p,mesh.t)
+    reference_element=(
+        skfem.ElementVector(skfem.ElementTetP1())*skfem.ElementTetP1()
+    )
+    reference_basis=skfem.Basis(
+        reference_mesh,reference_element,intorder=2
+    )
+
+    @skfem.BilinearForm
+    def reference(u,p,v,q,w):
+        return (
+            w.mu*reference_ddot(reference_grad(u),reference_grad(v))
+            -p*reference_div(v)
+            -q*reference_div(u)
+            +w.stabilization*p*q
+        )
+
+    expected=skfem.asm(
+        reference,reference_basis,mu=.7,stabilization=.05
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=5e-13,atol=5e-13
+    )
+
+
+def test_vector_scalar_divergence_blocks_are_transposes():
+    basis=skfn.Basis(
+        skfn.MeshTet(),
+        skfn.ElementVector(skfn.ElementTetP1())*skfn.ElementTetP1(),
+        intorder=2,
+    )
+
+    @skfn.BilinearForm
+    def form(u,p,v,q,w):
+        return p*div(v)+q*div(u)
+
+    matrix=skfn.asm(form,basis).toarray()
+    vector_dofs=basis.subbases[0].nodal_dofs.reshape(-1,order="F")
+    scalar_dofs=basis.subbases[1].nodal_dofs.reshape(-1,order="F")
+    upper=matrix[np.ix_(vector_dofs,scalar_dofs)]
+    lower=matrix[np.ix_(scalar_dofs,vector_dofs)]
+    np.testing.assert_allclose(upper,lower.T,rtol=0.,atol=2e-16)
