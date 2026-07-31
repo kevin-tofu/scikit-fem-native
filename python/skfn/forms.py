@@ -129,6 +129,12 @@ class _InterfaceTrace:
 
 
 @dataclass(frozen=True)
+class _InterfaceCoefficientTrace:
+    trace: _InterfaceTrace
+    coefficient: str
+
+
+@dataclass(frozen=True)
 class _InterfaceBilinearTerm:
     row: _InterfaceTrace
     column: _InterfaceTrace
@@ -381,6 +387,34 @@ def dot(left, right):
         and isinstance(left, _TestValue)
     ):
         return _BilinearTerm("value")
+    if isinstance(left,_Coefficient) and isinstance(right,_InterfaceTrace):
+        if right.kind!="gradient":
+            raise UnsupportedNativeForm(
+                "an interface coefficient contraction requires grad(field)"
+            )
+        return _InterfaceCoefficientTrace(right,left.name)
+    if isinstance(right,_Coefficient) and isinstance(left,_InterfaceTrace):
+        if left.kind!="gradient":
+            raise UnsupportedNativeForm(
+                "an interface coefficient contraction requires grad(field)"
+            )
+        return _InterfaceCoefficientTrace(left,right.name)
+    if isinstance(left,_InterfaceTrace) and isinstance(
+        right,_InterfaceCoefficientTrace
+    ):
+        if left.role!="test":
+            raise UnsupportedNativeForm("interface dot requires a test field")
+        return _InterfaceBilinearTerm(
+            left,right.trace,right.coefficient
+        )
+    if isinstance(right,_InterfaceTrace) and isinstance(
+        left,_InterfaceCoefficientTrace
+    ):
+        if right.role!="test":
+            raise UnsupportedNativeForm("interface dot requires a test field")
+        return _InterfaceBilinearTerm(
+            right,left.trace,left.coefficient
+        )
     if isinstance(left,_InterfaceTrace) and isinstance(right,_InterfaceTrace):
         if left.role=="test":
             return _InterfaceBilinearTerm(left,right)
@@ -403,6 +437,16 @@ def ddot(left, right):
         and isinstance(left, _TestGradient)
     ):
         return _BilinearTerm("gradient")
+    if isinstance(left,_InterfaceTrace) and isinstance(right,_InterfaceTrace):
+        if left.kind!="gradient" or right.kind!="gradient":
+            raise UnsupportedNativeForm(
+                "interface ddot requires two full gradients"
+            )
+        if left.role=="test":
+            return _InterfaceBilinearTerm(left,right)
+        if right.role=="test":
+            return _InterfaceBilinearTerm(right,left)
+        raise UnsupportedNativeForm("interface ddot requires trial and test")
     return np.einsum("ij...,ij...->...", left, right)
 
 
@@ -411,6 +455,8 @@ def grad(value):
         return _TestGradient()
     if isinstance(value, _TrialValue):
         return _TrialGradient()
+    if isinstance(value,_InterfaceTrace):
+        return value._interface_transform("kind","gradient")
     try:
         return value.grad
     except AttributeError as error:

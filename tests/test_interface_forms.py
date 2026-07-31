@@ -1,7 +1,7 @@
 import numpy as np
 
 import skfn
-from skfn.helpers import avg, dot, jump, normal_grad
+from skfn.helpers import avg, ddot, dot, grad, jump, normal_grad
 
 
 def interface():
@@ -76,3 +76,47 @@ def test_interface_form_sum_builds_no_prescribed_formulation():
         )
     )
     np.testing.assert_allclose(actual.toarray(),expected.toarray())
+
+
+def test_full_gradient_jump_form_dispatches_to_cross_kernel():
+    master,slave,integration=interface()
+
+    @skfn.BilinearForm
+    def form(u,v,w):
+        return w.kappa*ddot(jump(grad(u)),jump(grad(v)))
+
+    actual=skfn.asm(
+        form,master,slave,integration=integration,kappa=1.7
+    )
+    expected=integration.assemble_traces(
+        (1.,-1.),(1.,-1.),
+        row_kind="gradient",column_kind="gradient",
+        coefficient=1.7,
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
+    )
+
+
+def test_direction_tensor_mixed_form_dispatches_to_cross_kernel():
+    master,slave,integration=interface()
+    beta=np.zeros((3,3,3))
+    beta[0,0,0]=1.
+    beta[1,1,0]=-2.
+    beta[2,2,0]=.5
+
+    @skfn.BilinearForm
+    def form(u,v,w):
+        return dot(jump(v),dot(w.beta,avg(grad(u))))
+
+    actual=skfn.asm(
+        form,master,slave,integration=integration,beta=beta
+    )
+    expected=integration.assemble_traces(
+        (1.,-1.),(.5,.5),
+        row_kind="value",column_kind="gradient",
+        coefficient=beta,
+    )
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
+    )

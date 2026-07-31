@@ -236,6 +236,7 @@ class TriangleSupermesh:
         if master_triangles.shape[0]!=3: master_triangles=master_triangles.T
         if slave_triangles.shape[0]!=3: slave_triangles=slave_triangles.T
         row_dofs=[];column_dofs=[];row_shape=[];column_shape=[];weights=[]
+        row_gradients=[];column_gradients=[]
         row_normal_gradient=[];column_normal_gradient=[]
         candidates=0;overlaps=0;area_total=0.;noncoplanar=0;maximum_gap=0.
         projection_tolerance=(
@@ -305,6 +306,8 @@ class TriangleSupermesh:
                     slave_element_nodes=slave_nodes
                 row_shape.append(master_values);column_shape.append(slave_values)
                 if master_surface is not None:
+                    row_gradients.append(master_gradients)
+                    column_gradients.append(slave_gradients)
                     slave_search_normal=np.cross(
                         slave_xyz[1]-slave_xyz[0],slave_xyz[2]-slave_xyz[0]
                     )
@@ -325,12 +328,22 @@ class TriangleSupermesh:
             overlaps+=int(pair_has_area)
         if not row_dofs:
             raise ValueError("triangle surfaces have no positive-area overlap")
+        self._row_gradients=(
+            np.asarray(row_gradients,dtype=np.float64)
+            if row_gradients else None
+        )
+        self._column_gradients=(
+            np.asarray(column_gradients,dtype=np.float64)
+            if column_gradients else None
+        )
         self._native=CrossBilinearAssembler(
             np.asarray(row_dofs,dtype=np.int64),
             np.asarray(column_dofs,dtype=np.int64),
             np.asarray(row_shape,dtype=np.float64),
             np.asarray(column_shape,dtype=np.float64),
             np.asarray(weights,dtype=np.float64),
+            self._row_gradients,
+            self._column_gradients,
         )
         self._matrix=csr_matrix(
             (self._native.values,self._native.indices,self._native.indptr),
@@ -415,7 +428,50 @@ class TriangleSupermesh:
             self._row_dofs.shape[2],self._column_dofs.shape[2]
         )
         coefficient=np.ascontiguousarray(np.broadcast_to(coefficient,target))
-        self._native.assemble(coefficient)
+        self._native.assemble(coefficient,"value","value")
+        self._matrix.resize((self.master_size,self.slave_size))
+        return self._matrix
+
+    def assemble_cross(
+        self, coefficient=1., *, row_kind="value", column_kind="value",
+    ):
+        """Assemble a value/gradient master-by-slave contraction.
+
+        Tensor axes after the reusable entity/quadrature axes are
+        ``(row component, [row direction], column component,
+        [column direction])``.
+        """
+        valid={"value","gradient"}
+        if row_kind not in valid or column_kind not in valid:
+            raise ValueError("cross basis kind must be value or gradient")
+        row_gradient=row_kind=="gradient"
+        column_gradient=column_kind=="gradient"
+        if row_gradient and self._row_gradients is None:
+            raise ValueError(
+                "gradient coupling requires a supermesh created from FacetBasis"
+            )
+        if column_gradient and self._column_gradients is None:
+            raise ValueError(
+                "gradient coupling requires a supermesh created from FacetBasis"
+            )
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        tensor_axes=[
+            self._row_dofs.shape[2],
+            *((self._row_gradients.shape[3],) if row_gradient else ()),
+            self._column_dofs.shape[2],
+            *((self._column_gradients.shape[3],) if column_gradient else ()),
+        ]
+        scalar=(
+            row_gradient==column_gradient
+            and self._row_dofs.shape[2]==self._column_dofs.shape[2]
+            and coefficient.ndim<=2
+        )
+        if scalar:
+            target=self._coefficient_shape
+        else:
+            target=self._coefficient_shape+tuple(tensor_axes)
+        coefficient=np.ascontiguousarray(np.broadcast_to(coefficient,target))
+        self._native.assemble(coefficient,row_kind,column_kind)
         self._matrix.resize((self.master_size,self.slave_size))
         return self._matrix
 
@@ -424,22 +480,22 @@ class TriangleSupermesh:
         row_kind="value", column_kind="value", coefficient=1.,
     ):
         """Assemble a 2-by-2 interface block from arbitrary trace weights."""
-        if row_kind not in ("value","normal_gradient") or column_kind not in (
-            "value","normal_gradient"
+        valid={"value","gradient","normal_gradient"}
+        if row_kind not in valid or column_kind not in valid:
+            raise ValueError(
+                "trace kind must be value, gradient, or normal_gradient"
+            )
+        if "gradient" in (row_kind,column_kind) and (
+            self._row_gradients is None or self._column_gradients is None
         ):
-            raise ValueError("trace kind must be value or normal_gradient")
-        row_master=self._trace("master",row_kind)
-        row_slave=self._trace("slave",row_kind)
-        column_master=self._trace("master",column_kind)
-        column_slave=self._trace("slave",column_kind)
-        coefficient=np.ascontiguousarray(np.broadcast_to(
-            np.asarray(coefficient,dtype=np.float64),self._coefficient_shape
-        ))
+            raise ValueError(
+                "full gradients require a supermesh created from FacetBasis"
+            )
         blocks=[
-            [self._cross("mm",row_master,column_master,coefficient,self.master_size,self.master_size),
-             self._cross("ms",row_master,column_slave,coefficient,self.master_size,self.slave_size)],
-            [self._cross("sm",row_slave,column_master,coefficient,self.slave_size,self.master_size),
-             self._cross("ss",row_slave,column_slave,coefficient,self.slave_size,self.slave_size)],
+            [self._cross("mm",row_kind,column_kind,coefficient,self.master_size,self.master_size),
+             self._cross("ms",row_kind,column_kind,coefficient,self.master_size,self.slave_size)],
+            [self._cross("sm",row_kind,column_kind,coefficient,self.slave_size,self.master_size),
+             self._cross("ss",row_kind,column_kind,coefficient,self.slave_size,self.slave_size)],
         ]
         rw=np.asarray(row_weights,dtype=float);cw=np.asarray(column_weights,dtype=float)
         return bmat([
@@ -450,6 +506,11 @@ class TriangleSupermesh:
     def _trace(self,side,kind):
         if kind=="value":
             return self._row_shape if side=="master" else self._column_shape
+        if kind=="gradient":
+            return (
+                self._row_gradients
+                if side=="master" else self._column_gradients
+            )
         trace=(
             self._row_normal_gradient
             if side=="master" else self._column_normal_gradient
@@ -460,26 +521,68 @@ class TriangleSupermesh:
             )
         return trace
 
-    def _cross(self,key,row_shape,column_shape,coefficient,rows,columns):
+    def _cross(self,key,row_kind,column_kind,coefficient,rows,columns):
         cache=getattr(self,"_trace_assemblers",None)
         if cache is None:
             cache={};self._trace_assemblers=cache
-        signature=(key,id(row_shape),id(column_shape))
+        row_side="master" if key[0]=="m" else "slave"
+        column_side="master" if key[1]=="m" else "slave"
+        row_dofs=(
+            self._row_dofs if row_side=="master" else self._column_dofs
+        )
+        column_dofs=(
+            self._row_dofs if column_side=="master" else self._column_dofs
+        )
+        row_shape=self._trace(row_side,row_kind)
+        column_shape=self._trace(column_side,column_kind)
+        native_row_kind=(
+            "value" if row_kind=="normal_gradient" else row_kind
+        )
+        native_column_kind=(
+            "value" if column_kind=="normal_gradient" else column_kind
+        )
+        row_base_shape=self._trace(row_side,"value")
+        column_base_shape=self._trace(column_side,"value")
+        row_gradients=(
+            self._trace(row_side,"gradient")
+            if native_row_kind=="gradient" else None
+        )
+        column_gradients=(
+            self._trace(column_side,"gradient")
+            if native_column_kind=="gradient" else None
+        )
+        if row_kind=="normal_gradient":
+            row_base_shape=row_shape
+        if column_kind=="normal_gradient":
+            column_base_shape=column_shape
+        signature=(key,row_kind,column_kind)
         native=cache.get(signature)
         if native is None:
-            if key=="mm":
-                row_dofs,column_dofs=self._row_dofs,self._row_dofs
-            elif key=="ms":
-                row_dofs,column_dofs=self._row_dofs,self._column_dofs
-            elif key=="sm":
-                row_dofs,column_dofs=self._column_dofs,self._row_dofs
-            else:
-                row_dofs,column_dofs=self._column_dofs,self._column_dofs
             native=CrossBilinearAssembler(
-                row_dofs,column_dofs,row_shape,column_shape,self._weights
+                row_dofs,column_dofs,row_base_shape,column_base_shape,
+                self._weights,row_gradients,column_gradients,
             )
             cache[signature]=native
-        native.assemble(coefficient)
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        scalar=(
+            native_row_kind==native_column_kind
+            and row_dofs.shape[2]==column_dofs.shape[2]
+            and coefficient.ndim<=2
+        )
+        if scalar:
+            target=self._coefficient_shape
+        else:
+            axes=[row_dofs.shape[2]]
+            if native_row_kind=="gradient":
+                axes.append(row_gradients.shape[3])
+            axes.append(column_dofs.shape[2])
+            if native_column_kind=="gradient":
+                axes.append(column_gradients.shape[3])
+            target=self._coefficient_shape+tuple(axes)
+        coefficient=np.ascontiguousarray(np.broadcast_to(coefficient,target))
+        native.assemble(
+            coefficient,native_row_kind,native_column_kind
+        )
         matrix=csr_matrix(
             (native.values,native.indices,native.indptr),
             shape=(native.rows,native.columns),copy=False,

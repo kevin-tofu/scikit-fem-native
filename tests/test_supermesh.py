@@ -236,3 +236,47 @@ def test_nonsymmetric_tensor_reverses_by_transpose():
     np.testing.assert_allclose(
         forward.toarray(),reverse.toarray().T,rtol=4e-12,atol=4e-12
     )
+
+
+def test_value_gradient_cross_coupling_reproduces_linear_field():
+    mesh=skfn.MeshTet()
+    scalar=skfn.FacetBasis(
+        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=1),intorder=4
+    )
+    supermesh=skfn.TriangleSupermesh.from_facets(scalar,scalar)
+    direction=np.array([[[2.,-3.,.5]]])
+    coupling=supermesh.assemble_cross(
+        direction,row_kind="value",column_kind="gradient"
+    ).copy()
+    reverse=supermesh.assemble_cross(
+        np.transpose(direction,(1,2,0)),
+        row_kind="gradient",column_kind="value",
+    ).copy()
+    linear_x=mesh.p[0]
+    expected,_=skfn.NativeLinearForm(scalar).assemble(value=np.array([2.]))
+    np.testing.assert_allclose(
+        coupling@linear_x,expected,rtol=4e-12,atol=4e-12
+    )
+    np.testing.assert_allclose(
+        coupling.toarray(),reverse.toarray().T,rtol=4e-12,atol=4e-12
+    )
+
+
+def test_scalar_gradient_gradient_cross_coupling_reproduces_flux():
+    mesh=skfn.MeshTet()
+    scalar=skfn.FacetBasis(
+        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=1),intorder=4
+    )
+    supermesh=skfn.TriangleSupermesh.from_facets(scalar,scalar)
+    coupling=supermesh.assemble_cross(
+        1.,row_kind="gradient",column_kind="gradient"
+    )
+    expected,_=skfn.NativeLinearForm(scalar).assemble(
+        gradient=np.array([[1.,0.,0.]])
+    )
+    np.testing.assert_allclose(
+        coupling@mesh.p[0],expected,rtol=4e-12,atol=4e-12
+    )
+    np.testing.assert_allclose(
+        coupling.toarray(),coupling.toarray().T,rtol=4e-12,atol=4e-12
+    )

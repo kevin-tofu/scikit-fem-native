@@ -104,6 +104,47 @@ Tensor coefficients need not be symmetric.  Reversing the master and slave
 spaces and transposing the component axes produces the transpose coupling
 matrix.
 
+Cross-basis value and full physical-gradient contractions share the same
+native fixed-CSR assembler:
+
+```python
+# coefficient axes:
+# (row component, column component, column spatial direction)
+value_gradient = supermesh.assemble_cross(
+    coefficient,
+    row_kind="value",
+    column_kind="gradient",
+)
+
+gradient_gradient = supermesh.assemble_cross(
+    diffusivity,
+    row_kind="gradient",
+    column_kind="gradient",
+)
+```
+
+All four value/value, value/gradient, gradient/value, and gradient/gradient
+combinations are supported.  Mixed value-gradient contractions require a
+tensor coefficient because the spatial direction must be explicit.  A scalar
+gradient-gradient coefficient contracts matching component and spatial axes.
+The same contractions are available through interface forms:
+
+```python
+from skfn.helpers import avg, ddot, dot, grad, jump
+
+@skfem.BilinearForm
+def gradient_jump(u, v, w):
+    return w.kappa * ddot(jump(grad(u)), jump(grad(v)))
+
+@skfem.BilinearForm
+def directional_flux(u, v, w):
+    return dot(jump(v), dot(w.beta, avg(grad(u))))
+```
+
+The dependency-free contraction loop is isolated behind C++ basis and
+coefficient views in `cross_contraction.hpp`.  This keeps the public and
+assembly APIs stable if a specialized tensor/SIMD backend is selected later.
+
 For curved Tet10/Hex27 facets, search geometry is refined adaptively:
 
 ```python
