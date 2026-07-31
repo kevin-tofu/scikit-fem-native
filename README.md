@@ -382,6 +382,25 @@ matrix and vector.  `get_dofs()` selects boundary DOFs by default and also
 accepts explicit facet connectivity, element indices, or node indices.
 Condensation, pressure pinning, and linear solution remain user-side choices.
 
+Coordinate predicates and named boundaries follow the same workflow:
+
+```python
+mesh = mesh.with_boundaries({
+    "inlet": lambda x: np.isclose(x[0], 0.0),
+    "outlet": lambda x: np.isclose(x[0], 1.0),
+})
+basis = skfem.Basis(mesh, element, intorder=4)
+
+inlet = basis.get_dofs("inlet").all()
+outlet = basis.get_dofs(
+    lambda x: np.isclose(x[0], 1.0)
+).all()
+```
+
+Boundary predicates are evaluated at boundary-facet centers.  The same named
+selection is preserved by `split_bases()` and maps correctly back through
+`split_indices()`.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

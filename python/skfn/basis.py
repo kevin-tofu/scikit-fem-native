@@ -1,9 +1,32 @@
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass
 from itertools import combinations
 
 import numpy as np
+
+
+def _with_boundaries(mesh,boundaries):
+    result=copy(mesh)
+    facets=mesh.boundary_facets()
+    centers=mesh.p[:,facets].mean(axis=1)
+    result._boundaries={}
+    for name,selector in boundaries.items():
+        if callable(selector):
+            mask=np.asarray(selector(centers),dtype=bool)
+            if mask.shape!=(facets.shape[1],):
+                raise ValueError(
+                    f"boundary selector {name!r} must return one "
+                    "boolean per boundary facet"
+                )
+            result._boundaries[name]=facets[:,mask]
+        else:
+            selected=np.asarray(selector,dtype=np.int64)
+            if selected.ndim==1:
+                selected=facets[:,selected]
+            result._boundaries[name]=selected
+    return result
 
 
 class MeshTet:
@@ -22,6 +45,7 @@ class MeshTet:
             raise ValueError("p must have shape (3, nodes)")
         if self.t.ndim != 2 or self.t.shape[0] != 4:
             raise ValueError("t must have shape (4, elements)")
+        self._boundaries={}
 
     @classmethod
     def init_tensor(cls, x, y, z):
@@ -57,6 +81,13 @@ class MeshTet:
                 faces[key]=None if key in faces else (element,local,face)
         return np.array([v[2] for v in faces.values() if v is not None],dtype=np.int64).T
 
+    @property
+    def boundaries(self):
+        return dict(getattr(self,"_boundaries",{}))
+
+    def with_boundaries(self,boundaries):
+        return _with_boundaries(self,boundaries)
+
 
 class MeshTet2(MeshTet):
     """Quadratic tetrahedral mesh with six shared edge nodes per element."""
@@ -81,10 +112,12 @@ class MeshTet2(MeshTet):
         if p is None or t is None:
             generated=type(self).from_mesh(MeshTet())
             self.p,self.t=generated.p,generated.t
+            self._boundaries={}
             return
         self.p=np.asarray(p,dtype=np.float64);self.t=np.asarray(t,dtype=np.int64)
         if self.p.ndim!=2 or self.p.shape[0]!=3 or self.t.ndim!=2 or self.t.shape[0]!=10:
             raise ValueError("quadratic tetra mesh requires p (3,n) and t (10,e)")
+        self._boundaries={}
 
     def boundary_facets(self):
         edge={(0,1):4,(1,2):5,(0,2):6,(0,3):7,(1,3):8,(2,3):9}
@@ -114,6 +147,7 @@ class MeshHex:
             raise ValueError("p must have shape (3, nodes)")
         if self.t.ndim != 2 or self.t.shape[0] != 8:
             raise ValueError("t must have shape (8, elements)")
+        self._boundaries={}
 
     @classmethod
     def init_tensor(cls, x, y, z):
@@ -164,6 +198,13 @@ class MeshHex:
                 found[key]=None if key in found else tuple(int(nodes[i]) for i in face)
         return np.array([v for v in found.values() if v is not None],dtype=np.int64).T
 
+    @property
+    def boundaries(self):
+        return dict(getattr(self,"_boundaries",{}))
+
+    def with_boundaries(self,boundaries):
+        return _with_boundaries(self,boundaries)
+
 
 class MeshHex2(MeshHex):
     @classmethod
@@ -191,10 +232,13 @@ class MeshHex2(MeshHex):
     def __init__(self,p=None,t=None):
         if p is None or t is None:
             generated=type(self).from_mesh(MeshHex())
-            self.p,self.t=generated.p,generated.t;return
+            self.p,self.t=generated.p,generated.t
+            self._boundaries={}
+            return
         self.p=np.asarray(p,dtype=np.float64);self.t=np.asarray(t,dtype=np.int64)
         if self.p.ndim!=2 or self.p.shape[0]!=3 or self.t.ndim!=2 or self.t.shape[0]!=27:
             raise ValueError("quadratic hex mesh requires p (3,n) and t (27,e)")
+        self._boundaries={}
 
 
 class _ComposableElement:
@@ -386,18 +430,46 @@ class Basis:
         if sum(value is not None for value in (facets,elements,nodes))>1:
             raise ValueError("select only one of facets, elements, or nodes")
         if nodes is not None:
-            selected=np.asarray(nodes)
+            selected=(
+                np.asarray(nodes(self.mesh.p))
+                if callable(nodes) else np.asarray(nodes)
+            )
             if selected.dtype==bool:
                 selected=np.flatnonzero(selected)
             selected=np.asarray(selected,dtype=np.int64).reshape(-1)
         elif elements is not None:
-            element_ids=np.asarray(elements,dtype=np.int64).reshape(-1)
+            if callable(elements):
+                centers=self.mesh.p[:,self.mesh.t].mean(axis=1)
+                element_ids=np.flatnonzero(elements(centers))
+            else:
+                element_ids=np.asarray(
+                    elements,dtype=np.int64
+                ).reshape(-1)
             selected=np.unique(self.mesh.t[:,element_ids])
         else:
-            selected_facets=(
-                self.mesh.boundary_facets()
-                if facets is None else np.asarray(facets,dtype=np.int64)
-            )
+            boundary_facets=self.mesh.boundary_facets()
+            if facets is None:
+                selected_facets=boundary_facets
+            elif isinstance(facets,str):
+                try:
+                    selected_facets=self.mesh.boundaries[facets]
+                except KeyError as error:
+                    raise KeyError(
+                        f"unknown boundary {facets!r}"
+                    ) from error
+            elif callable(facets):
+                centers=self.mesh.p[:,boundary_facets].mean(axis=1)
+                mask=np.asarray(facets(centers),dtype=bool)
+                if mask.shape!=(boundary_facets.shape[1],):
+                    raise ValueError(
+                        "facet predicate must return one boolean per "
+                        "boundary facet"
+                    )
+                selected_facets=boundary_facets[:,mask]
+            else:
+                selected_facets=np.asarray(facets,dtype=np.int64)
+                if selected_facets.ndim==1:
+                    selected_facets=boundary_facets[:,selected_facets]
             selected=np.unique(selected_facets)
         selected_set=set(map(int,selected))
         if hasattr(self,"subbases"):
