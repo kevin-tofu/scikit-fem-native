@@ -444,6 +444,12 @@ Interpolated scalar fields can also be passed as quadrature coefficients to a
 `BilinearForm`, enabling solution-dependent native assembly without adding a
 nonlinear solver policy to `skfn`.
 
+The mixed APIs are tested together on a P2/P1 Taylor--Hood Stokes system:
+native bilinear and linear assembly, named velocity-boundary extraction,
+pressure pinning, user-side SciPy solution, composite interpolation, and
+dissipation evaluation are compared end-to-end against scikit-fem.  Linear
+solution and condensation remain outside the package.
+
 Scalar volume and surface quantities use `Functional`:
 
 ```python
