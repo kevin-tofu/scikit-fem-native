@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import dataclass
+from datetime import datetime,timezone
 import platform
 from pathlib import Path
 import statistics
@@ -60,6 +61,26 @@ class Result:
     @property
     def rhs_speedup(self) -> float:
         return self.skfem_rhs_ms/self.skfn_rhs_ms
+
+    @property
+    def skfn_total_ms(self) -> float:
+        return self.skfn_matrix_ms+self.skfn_rhs_ms
+
+    @property
+    def skfem_total_ms(self) -> float:
+        return self.skfem_matrix_ms+self.skfem_rhs_ms
+
+    @property
+    def total_speedup(self) -> float:
+        return self.skfem_total_ms/self.skfn_total_ms
+
+
+def environment() -> str:
+    return (
+        f"Python {platform.python_version()}, NumPy {np.__version__}, "
+        f"SciPy {scipy.__version__}, skfn {skfn.__version__}, "
+        f"scikit-fem {skfem.__version__}, {platform.platform()}"
+    )
 
 
 def elapsed(function):
@@ -134,12 +155,25 @@ def benchmark(resolution: int,repeat: int,warmup: int) -> Result:
     )
 
 
-def markdown(results: list[Result]) -> str:
+def markdown(results: list[Result],include_metadata: bool=False) -> str:
     lines=[
+        "# skfn vs. scikit-fem: Poisson assembly",
+        "",
+    ] if include_metadata else []
+    if include_metadata:
+        lines.extend([
+            f"Generated: {datetime.now(timezone.utc).isoformat()}",
+            "",
+            f"Environment: `{environment()}`",
+            "",
+            "Warm-cache median timings; solve time is excluded.",
+            "",
+        ])
+    lines.extend([
         "| DoFs | Elements | skfn K [ms] | skfem K [ms] | K speedup | "
-        "skfn f [ms] | skfem f [ms] | f speedup |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
+        "skfn f [ms] | skfem f [ms] | f speedup | total speedup |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
     for result in results:
         lines.append(
             f"| {result.dofs} | {result.elements} | "
@@ -148,7 +182,8 @@ def markdown(results: list[Result]) -> str:
             f"{result.matrix_speedup:.2f}x | "
             f"{result.skfn_rhs_ms:.3f} | "
             f"{result.skfem_rhs_ms:.3f} | "
-            f"{result.rhs_speedup:.2f}x |"
+            f"{result.rhs_speedup:.2f}x | "
+            f"{result.total_speedup:.2f}x |"
         )
     lines.extend([
         "",
@@ -169,7 +204,8 @@ def markdown(results: list[Result]) -> str:
 def write_csv(path: Path,results: list[Result]) -> None:
     path.parent.mkdir(parents=True,exist_ok=True)
     fields=tuple(Result.__dataclass_fields__)+(
-        "matrix_speedup","rhs_speedup"
+        "matrix_speedup","rhs_speedup","skfn_total_ms",
+        "skfem_total_ms","total_speedup",
     )
     with path.open("w",newline="",encoding="utf-8") as stream:
         writer=csv.DictWriter(stream,fieldnames=fields)
@@ -187,15 +223,12 @@ def main() -> None:
     parser.add_argument("--repeat",type=int,default=5)
     parser.add_argument("--warmup",type=int,default=2)
     parser.add_argument("--output",type=Path)
+    parser.add_argument("--markdown-output",type=Path)
     arguments=parser.parse_args()
     if arguments.repeat<1 or any(size<1 for size in arguments.sizes):
         parser.error("sizes and repeat must be positive")
 
-    print(
-        f"Python {platform.python_version()}, NumPy {np.__version__}, "
-        f"SciPy {scipy.__version__}, skfn {skfn.__version__}, "
-        f"scikit-fem {skfem.__version__}",file=sys.stderr,
-    )
+    print(environment(),file=sys.stderr)
     results=[]
     for size in arguments.sizes:
         print(f"benchmarking {size} x {size} cells...",file=sys.stderr)
@@ -204,6 +237,12 @@ def main() -> None:
     if arguments.output is not None:
         write_csv(arguments.output,results)
         print(f"wrote {arguments.output}",file=sys.stderr)
+    if arguments.markdown_output is not None:
+        arguments.markdown_output.parent.mkdir(parents=True,exist_ok=True)
+        arguments.markdown_output.write_text(
+            markdown(results,include_metadata=True)+"\n",encoding="utf-8"
+        )
+        print(f"wrote {arguments.markdown_output}",file=sys.stderr)
 
 
 if __name__=="__main__":
