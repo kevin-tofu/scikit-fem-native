@@ -36,6 +36,7 @@ Issues = "https://github.com/kevin-tofu/skfem-native/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8", "scikit-fem>=10"]
+benchmark = ["scikit-fem>=10", "matplotlib>=3.8"]
 
 [tool.scikit-build]
 wheel.packages = ["python/skfn"]

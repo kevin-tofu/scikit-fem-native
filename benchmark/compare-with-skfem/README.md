@@ -24,7 +24,14 @@ python benchmark/compare-with-skfem/poisson_assembly.py \
   --sizes 32 64 128 256 512 \
   --repeat 7 \
   --output benchmark-results/poisson.csv \
-  --markdown-output benchmark-results/poisson.md
+  --markdown-output benchmark-results/poisson.md \
+  --plot-output benchmark-results/poisson.png
+```
+
+PNG generation requires the optional benchmark dependencies:
+
+```bash
+python -m pip install ".[benchmark]"
 ```
 
 Each form is assembled before timing to populate both libraries' caches.  The
@@ -41,9 +48,11 @@ not hidden inside the repeated-assembly result.
 
 ## Reference run
 
+![Poisson assembly scaling](results/poisson-linux-x86_64.png)
+
 The checked-in [Linux x86-64 report](results/poisson-linux-x86_64.md) is one
-example run, not a universal performance claim.  At 66,049 DoFs it measured a
-2.96x stiffness-assembly speedup and a 2.42x combined matrix-plus-vector
+example run, not a universal performance claim.  At 263,169 DoFs it measured a
+3.08x stiffness-assembly speedup and a 2.55x combined matrix-plus-vector
 speedup.  It also exposes an important current weakness: `skfn` Basis
 construction is much slower because geometry tabulation still contains Python
 element loops.  That setup path is the next performance target.

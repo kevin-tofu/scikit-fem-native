@@ -6,10 +6,12 @@ import argparse
 import csv
 from dataclasses import dataclass
 from datetime import datetime,timezone
+import os
 import platform
 from pathlib import Path
 import statistics
 import sys
+import tempfile
 import time
 
 import numpy as np
@@ -208,10 +210,71 @@ def write_csv(path: Path,results: list[Result]) -> None:
         "skfem_total_ms","total_speedup",
     )
     with path.open("w",newline="",encoding="utf-8") as stream:
-        writer=csv.DictWriter(stream,fieldnames=fields)
+        writer=csv.DictWriter(
+            stream,fieldnames=fields,lineterminator="\n"
+        )
         writer.writeheader()
         for result in results:
             writer.writerow({field:getattr(result,field) for field in fields})
+
+
+def write_plot(path: Path,results: list[Result]) -> None:
+    if "MPLCONFIGDIR" not in os.environ:
+        cache=Path(tempfile.gettempdir())/"skfn-matplotlib"
+        cache.mkdir(exist_ok=True)
+        os.environ["MPLCONFIGDIR"]=str(cache)
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as error:
+        raise SystemExit(
+            "plotting requires: python -m pip install '.[benchmark]'"
+        ) from error
+    dofs=np.array([result.dofs for result in results])
+    figure,axes=plt.subplots(2,2,figsize=(11,8),constrained_layout=True)
+    comparisons=(
+        (axes[0,0],"Poisson stiffness assembly","skfn_matrix_ms",
+         "skfem_matrix_ms"),
+        (axes[0,1],"Right-hand-side assembly","skfn_rhs_ms",
+         "skfem_rhs_ms"),
+        (axes[1,0],"Basis construction","skfn_basis_ms",
+         "skfem_basis_ms"),
+    )
+    for axis,title,native,reference in comparisons:
+        axis.loglog(
+            dofs,[getattr(result,native) for result in results],
+            "o-",label="skfn",linewidth=2,
+        )
+        axis.loglog(
+            dofs,[getattr(result,reference) for result in results],
+            "s-",label="scikit-fem",linewidth=2,
+        )
+        axis.set(title=title,xlabel="Degrees of freedom",ylabel="Time [ms]")
+        axis.grid(True,which="both",alpha=.3)
+        axis.legend()
+    speedup=axes[1,1]
+    speedup.semilogx(
+        dofs,[result.matrix_speedup for result in results],
+        "o-",label="stiffness K",linewidth=2,
+    )
+    speedup.semilogx(
+        dofs,[result.rhs_speedup for result in results],
+        "s-",label="right-hand side f",linewidth=2,
+    )
+    speedup.semilogx(
+        dofs,[result.total_speedup for result in results],
+        "^-",label="K + f",linewidth=2,
+    )
+    speedup.axhline(1.,color="black",linewidth=1,linestyle="--")
+    speedup.set(
+        title="scikit-fem time / skfn time",
+        xlabel="Degrees of freedom",ylabel="Speedup [x]",
+    )
+    speedup.grid(True,which="both",alpha=.3)
+    speedup.legend()
+    figure.suptitle("Poisson P1 assembly scaling (warm-cache median)")
+    path.parent.mkdir(parents=True,exist_ok=True)
+    figure.savefig(path,dpi=180)
+    plt.close(figure)
 
 
 def main() -> None:
@@ -224,6 +287,7 @@ def main() -> None:
     parser.add_argument("--warmup",type=int,default=2)
     parser.add_argument("--output",type=Path)
     parser.add_argument("--markdown-output",type=Path)
+    parser.add_argument("--plot-output",type=Path)
     arguments=parser.parse_args()
     if arguments.repeat<1 or any(size<1 for size in arguments.sizes):
         parser.error("sizes and repeat must be positive")
@@ -243,6 +307,9 @@ def main() -> None:
             markdown(results,include_metadata=True)+"\n",encoding="utf-8"
         )
         print(f"wrote {arguments.markdown_output}",file=sys.stderr)
+    if arguments.plot_output is not None:
+        write_plot(arguments.plot_output,results)
+        print(f"wrote {arguments.plot_output}",file=sys.stderr)
 
 
 if __name__=="__main__":
