@@ -8,7 +8,31 @@ version = "0.1.0"
 description = "A small native assembly engine for nonlinear finite elements"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 dependencies = ["numpy>=1.24", "scipy>=1.10"]
+keywords = ["finite-element", "assembly", "scientific-computing"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.urls]
+Repository = "https://github.com/kevin-tofu/skfem-native"
+Issues = "https://github.com/kevin-tofu/skfem-native/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8", "scikit-fem>=10"]
@@ -16,6 +40,21 @@ test = ["pytest>=8", "scikit-fem>=10"]
 [tool.scikit-build]
 wheel.packages = ["python/skfn"]
 cmake.build-type = "Release"
+sdist.include = [
+  "CMakeLists.txt",
+  "cpp/include/**/*.hpp",
+  "cpp/src/**/*.cpp",
+  "benchmark/**/*.md",
+  "benchmark/**/*.py",
+  "python/skfn/**/*.py",
+  "tests/**/*.py",
+]
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "*-musllinux_*"
+test-requires = ["pytest>=8", "scikit-fem>=10"]
+test-command = "pytest {project}/tests -q"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

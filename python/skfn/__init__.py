@@ -1,3 +1,8 @@
+from importlib.metadata import (
+    PackageNotFoundError as _PackageNotFoundError,
+    version as _distribution_version,
+)
+
 from .assembler import NativeAssembler
 from .basis import (
     Basis,
@@ -54,7 +59,13 @@ from .kernels import (
     NeoHookeanTet4,
 )
 
+try:
+    __version__=_distribution_version("skfem-native")
+except _PackageNotFoundError:
+    __version__="0+unknown"
+
 __all__ = [
+    "__version__",
     "EvaluationDiagnostics",
     "LinearElasticTet4",
     "LinearElasticHex8",

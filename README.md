@@ -53,6 +53,38 @@ The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
 Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Hex8/Hex27, volume and facet integration,
 mixed fields, and nonmatching surface coupling.
 
+### Package and release checks
+
+The same distribution check used by GitHub Actions can be run locally.  It
+builds an sdist and a native wheel, validates their metadata, installs the
+wheel into a clean temporary environment, and runs the full test suite against
+the installed package:
+
+```bash
+python -m pip install --upgrade build twine
+python tools/package_check.py
+```
+
+To build the complete Linux wheel matrix locally, install Docker and
+`cibuildwheel`, then run:
+
+```bash
+python -m pip install --upgrade cibuildwheel
+python -m cibuildwheel --platform linux
+```
+
+GitHub Releases whose tag is `v<version>` trigger `.github/workflows/workflow.yml`.
+The workflow verifies the tag against `pyproject.toml`, builds CPython 3.10--3.14
+wheels for Linux, macOS, and Windows, and publishes through PyPI Trusted
+Publishing.  Configure a protected GitHub environment named `pypi` before the
+first release.
+
+### License
+
+`skfem-native` is distributed under the permissive BSD-3-Clause license, the
+same license family used by scikit-fem.  Commercial use, modification, and
+redistribution are permitted subject to the conditions in `LICENSE`.
+
 ```python
 from skfn import LinearElasticity, NativeAssembler
 
