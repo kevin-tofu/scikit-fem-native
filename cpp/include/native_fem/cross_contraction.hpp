@@ -83,4 +83,18 @@ inline double contract_cross_basis(
     return result;
 }
 
+inline double contract_scalar_cross_basis(
+    const CrossBasisView& row, const CrossBasisView& column,
+    int entity_quadrature, int row_node, int column_node
+) {
+    if (row.kind == CrossBasisKind::value)
+        return row.at(entity_quadrature, row_node, 0)
+            * column.at(entity_quadrature, column_node, 0);
+    double result = 0.;
+    for (int direction = 0; direction < row.dimension; ++direction)
+        result += row.at(entity_quadrature, row_node, direction)
+            * column.at(entity_quadrature, column_node, direction);
+    return result;
+}
+
 }  // namespace native_fem

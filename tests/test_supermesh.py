@@ -69,6 +69,20 @@ def test_repeated_supermesh_assembly_reuses_csr():
     np.testing.assert_allclose(second.toarray(),2*values)
 
 
+def test_contraction_profiler_matches_assembled_matrix_sum():
+    master_points,master_triangles=master_surface()
+    slave_points,slave_triangles=split_slave_surface()
+    supermesh=skfn.TriangleSupermesh(
+        master_points,master_triangles,slave_points,slave_triangles
+    )
+    matrix=supermesh.assemble(1.)
+    coefficient=np.ones(supermesh._coefficient_shape)
+    checksum,_=supermesh._native.contract_only(coefficient)
+    np.testing.assert_allclose(
+        checksum,matrix.sum(),rtol=2e-14,atol=2e-14
+    )
+
+
 def test_aabb_broad_phase_rejects_distant_pairs():
     master_points,master_triangles=master_surface()
     slave_points,slave_triangles=split_slave_surface()

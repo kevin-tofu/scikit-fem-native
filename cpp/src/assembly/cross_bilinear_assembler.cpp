@@ -58,29 +58,15 @@ public:
         const std::string&column_kind="value"){
         const bool row_gradient=kind_is_gradient(row_kind);
         const bool column_gradient=kind_is_gradient(column_kind);
-        if(row_gradient&&row_gradients_.empty())
-            throw std::invalid_argument("row gradients are unavailable");
-        if(column_gradient&&column_gradients_.empty())
-            throw std::invalid_argument("column gradients are unavailable");
         const double*coefficient=nullptr;bool tensor_coefficient=false;
         py::array_t<double,py::array::c_style>holder;
         if(!coefficient_object.is_none()){holder=py::cast<py::array_t<double,py::array::c_style>>(coefficient_object);
             auto b=holder.request();
-            tensor_coefficient=valid_tensor(
+            tensor_coefficient=validate_coefficient(
                 b,row_gradient,column_gradient
             );
-            if(!tensor_coefficient&&
-               (b.ndim!=2||b.shape[0]!=entities_||b.shape[1]!=quadrature_))
-                throw std::invalid_argument("cross coefficient has an invalid shape");
             coefficient=(double*)b.ptr;}
-        if(!tensor_coefficient){
-            if(row_components_!=column_components_)
-                throw std::invalid_argument("scalar cross coefficient requires equal component counts");
-            if(row_gradient!=column_gradient)
-                throw std::invalid_argument("value-gradient coupling requires a tensor coefficient");
-            if(row_gradient&&row_dimension_!=column_dimension_)
-                throw std::invalid_argument("scalar gradient coupling requires equal spatial dimensions");
-        }
+        validate_kinds(row_gradient,column_gradient,tensor_coefficient);
         const auto row_basis=basis_view(
             row_shape_,row_gradients_,row_nodes_,row_dimension_,row_gradient
         );
@@ -99,17 +85,95 @@ public:
         for(int e=0;e<entities_;++e)for(int q=0;q<quadrature_;++q){
             int eq=e*quadrature_+q;double scale=weights_[eq];
             for(int a=0;a<row_nodes_;++a)for(int b=0;b<column_nodes_;++b){
-                for(int r=0;r<row_components_;++r)for(int c=0;c<column_components_;++c){
-                    const double entry=native_fem::contract_cross_basis(
-                        row_basis,column_basis,coefficient_view,eq,a,b,r,c
-                    );
-                    int i=a*row_components_+r,j=b*column_components_+c;
-                    values_[scatter_[(e*row_local_+i)*column_local_+j]]+=scale*entry;
+                if(!tensor_coefficient){
+                    const double material=coefficient?coefficient[eq]:1.;
+                    const double entry=scale*material*
+                        native_fem::contract_scalar_cross_basis(
+                            row_basis,column_basis,eq,a,b
+                        );
+                    for(int r=0;r<row_components_;++r){
+                        const int i=a*row_components_+r;
+                        const int j=b*column_components_+r;
+                        values_[scatter_[(e*row_local_+i)*column_local_+j]]+=entry;
+                    }
+                }else{
+                    for(int r=0;r<row_components_;++r)
+                        for(int c=0;c<column_components_;++c){
+                            const double entry=native_fem::contract_cross_basis(
+                                row_basis,column_basis,coefficient_view,
+                                eq,a,b,r,c
+                            );
+                            const int i=a*row_components_+r;
+                            const int j=b*column_components_+c;
+                            values_[scatter_[(e*row_local_+i)*column_local_+j]]
+                                +=scale*entry;
+                        }
                 }
             }}
         }
         double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
         return py::make_tuple(view(values_),seconds);
+    }
+    py::tuple contract_only(
+        py::object coefficient_object,
+        const std::string&row_kind="value",
+        const std::string&column_kind="value"){
+        const bool row_gradient=kind_is_gradient(row_kind);
+        const bool column_gradient=kind_is_gradient(column_kind);
+        const double*coefficient=nullptr;bool tensor_coefficient=false;
+        py::array_t<double,py::array::c_style>holder;
+        if(!coefficient_object.is_none()){
+            holder=py::cast<py::array_t<double,py::array::c_style>>(
+                coefficient_object
+            );
+            auto b=holder.request();
+            tensor_coefficient=validate_coefficient(
+                b,row_gradient,column_gradient
+            );
+            coefficient=(double*)b.ptr;
+        }
+        validate_kinds(row_gradient,column_gradient,tensor_coefficient);
+        const auto row_basis=basis_view(
+            row_shape_,row_gradients_,row_nodes_,row_dimension_,row_gradient
+        );
+        const auto column_basis=basis_view(
+            column_shape_,column_gradients_,column_nodes_,column_dimension_,
+            column_gradient
+        );
+        const native_fem::CrossCoefficientView coefficient_view{
+            coefficient,tensor_coefficient,row_components_,row_dimension_,
+            column_components_,column_dimension_,
+            row_gradient?native_fem::CrossBasisKind::gradient:native_fem::CrossBasisKind::value,
+            column_gradient?native_fem::CrossBasisKind::gradient:native_fem::CrossBasisKind::value,
+        };
+        double checksum=0.;
+        auto start=std::chrono::steady_clock::now();
+        {py::gil_scoped_release release;
+        for(int e=0;e<entities_;++e)for(int q=0;q<quadrature_;++q){
+            const int eq=e*quadrature_+q;
+            for(int a=0;a<row_nodes_;++a)
+                for(int b=0;b<column_nodes_;++b){
+                    if(!tensor_coefficient){
+                        const double material=coefficient?coefficient[eq]:1.;
+                        checksum+=row_components_*weights_[eq]*material*
+                            native_fem::contract_scalar_cross_basis(
+                                row_basis,column_basis,eq,a,b
+                            );
+                    }else{
+                        for(int r=0;r<row_components_;++r)
+                            for(int c=0;c<column_components_;++c)
+                            checksum+=weights_[eq]*
+                                native_fem::contract_cross_basis(
+                                    row_basis,column_basis,coefficient_view,
+                                    eq,a,b,r,c
+                                );
+                    }
+                }
+        }}
+        const double seconds=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-start
+        ).count();
+        return py::make_tuple(checksum,seconds);
     }
     py::array indptr(){return view(indptr_);}py::array indices(){return view(indices_);}
     py::array values(){return view(values_);}std::size_t rows()const{return rows_;}
@@ -152,6 +216,30 @@ private:
         if(b.shape[axis++]!=column_components_)return false;
         return !column_gradient||b.shape[axis]==column_dimension_;
     }
+    bool validate_coefficient(
+        const py::buffer_info&b,bool row_gradient,bool column_gradient)const{
+        const bool tensor=valid_tensor(
+            b,row_gradient,column_gradient
+        );
+        if(!tensor&&
+           (b.ndim!=2||b.shape[0]!=entities_||b.shape[1]!=quadrature_))
+            throw std::invalid_argument("cross coefficient has an invalid shape");
+        return tensor;
+    }
+    void validate_kinds(
+        bool row_gradient,bool column_gradient,bool tensor_coefficient)const{
+        if(row_gradient&&row_gradients_.empty())
+            throw std::invalid_argument("row gradients are unavailable");
+        if(column_gradient&&column_gradients_.empty())
+            throw std::invalid_argument("column gradients are unavailable");
+        if(tensor_coefficient)return;
+        if(row_components_!=column_components_)
+            throw std::invalid_argument("scalar cross coefficient requires equal component counts");
+        if(row_gradient!=column_gradient)
+            throw std::invalid_argument("value-gradient coupling requires a tensor coefficient");
+        if(row_gradient&&row_dimension_!=column_dimension_)
+            throw std::invalid_argument("scalar gradient coupling requires equal spatial dimensions");
+    }
     template<class T>py::array view(std::vector<T>&v){return py::array_t<T>(
         {py::ssize_t(v.size())},{py::ssize_t(sizeof(T))},v.data(),py::cast(this));}
     void build_pattern(){
@@ -183,6 +271,9 @@ void native_fem::bind_cross_bilinear_assembler(py::module_&m){py::class_<CrossBi
         py::arg("row_gradients")=py::none(),
         py::arg("column_gradients")=py::none())
     .def("assemble",&CrossBilinearAssembler::assemble,
+        py::arg("coefficient")=py::none(),py::arg("row_kind")="value",
+        py::arg("column_kind")="value")
+    .def("contract_only",&CrossBilinearAssembler::contract_only,
         py::arg("coefficient")=py::none(),py::arg("row_kind")="value",
         py::arg("column_kind")="value")
     .def_property_readonly("indptr",&CrossBilinearAssembler::indptr)
