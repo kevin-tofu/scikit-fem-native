@@ -61,6 +61,27 @@ force = np.array([0.0, 0.0, -1.0])[:, None, None]
 rhs = skfem.asm(body_force, basis, force=force)
 ```
 
+Physical quadrature coordinates are available as `w.x`.  `FacetBasis` also
+provides its outward unit normal as `w.n`; both may participate in NumPy
+expressions evaluated before native assembly:
+
+```python
+def load(x):
+    return np.stack((1.0 + x[0], x[1] ** 2, -0.5 * x[2]))
+
+@skfem.LinearForm
+def varying_load(v, w):
+    return dot(load(w.x), v)
+
+@skfem.LinearForm
+def pressure_normal(v, w):
+    return dot(w.n, v)
+
+@skfem.BilinearForm
+def weighted_mass(u, v, w):
+    return (1.0 + w.x[0] ** 2) * dot(u, v)
+```
+
 Supported value and gradient contractions are dispatched to native assembly.
 Unsupported forms raise `skfn.UnsupportedNativeForm`; `skfn.asm` never silently
 falls back to Python assembly.  Use the upstream `skfem.asm` explicitly when a

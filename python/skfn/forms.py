@@ -14,6 +14,63 @@ class UnsupportedNativeForm(Exception):
     """Raised when a form cannot be assembled by the native backend."""
 
 
+class _QuadratureValue:
+    """Numerical geometry value that preserves form multiplication."""
+
+    __array_priority__=1000
+
+    def __init__(self,value):
+        self.value=np.asarray(value)
+
+    def __array__(self,dtype=None):
+        return np.asarray(self.value,dtype=dtype)
+
+    def __getitem__(self,key):
+        return _QuadratureValue(self.value[key])
+
+    def __array_ufunc__(self,ufunc,method,*inputs,**kwargs):
+        values=[
+            item.value if isinstance(item,_QuadratureValue) else item
+            for item in inputs
+        ]
+        result=getattr(ufunc,method)(*values,**kwargs)
+        return _QuadratureValue(result)
+
+    def __mul__(self,other):
+        if isinstance(other,_BilinearTerm):
+            return other*np.asarray(self.value)
+        return _QuadratureValue(self.value*other)
+
+    def __rmul__(self,other):
+        if isinstance(other,_BilinearTerm):
+            return other*np.asarray(self.value)
+        return _QuadratureValue(other*self.value)
+
+    def __add__(self,other):
+        return _QuadratureValue(self.value+np.asarray(other))
+
+    def __radd__(self,other):
+        return _QuadratureValue(np.asarray(other)+self.value)
+
+    def __sub__(self,other):
+        return _QuadratureValue(self.value-np.asarray(other))
+
+    def __rsub__(self,other):
+        return _QuadratureValue(np.asarray(other)-self.value)
+
+    def __truediv__(self,other):
+        return _QuadratureValue(self.value/np.asarray(other))
+
+    def __rtruediv__(self,other):
+        return _QuadratureValue(np.asarray(other)/self.value)
+
+    def __pow__(self,other):
+        return _QuadratureValue(self.value**other)
+
+    def __neg__(self):
+        return _QuadratureValue(-self.value)
+
+
 @dataclass(frozen=True)
 class _TestValue:
     pass
@@ -58,7 +115,7 @@ class _Coefficient:
 @dataclass(frozen=True)
 class _Term:
     kind: str
-    coefficient: _Coefficient
+    coefficient: Any
     factor: float = 1.0
 
     def __neg__(self):
@@ -101,7 +158,7 @@ class _Sum:
 @dataclass(frozen=True)
 class _BilinearTerm:
     kind: str
-    coefficient: str | None = None
+    coefficient: Any = None
     factor: float = 1.0
 
     def __mul__(self, other):
@@ -111,6 +168,12 @@ class _BilinearTerm:
             )
         if isinstance(other, _Coefficient):
             return _BilinearTerm(self.kind, other.name, self.factor)
+        if isinstance(other,np.ndarray):
+            if self.coefficient is not None:
+                raise UnsupportedNativeForm(
+                    "multiple bilinear coefficients are not supported"
+                )
+            return _BilinearTerm(self.kind,other,self.factor)
         return NotImplemented
 
     __rmul__ = __mul__
@@ -173,10 +236,17 @@ class _InterfaceSum:
 
 
 class _Parameters:
+    def __init__(self, geometry=None):
+        self._geometry={} if geometry is None else geometry
+
     def __getattr__(self, name):
+        if name in self._geometry:
+            return self._geometry[name]
         return _Coefficient(name)
 
     def __getitem__(self, name):
+        if name in self._geometry:
+            return self._geometry[name]
         return _Coefficient(name)
 
 
@@ -211,9 +281,14 @@ def BilinearForm(function=None, **kwargs):
     return _BilinearForm(function) if function is not None else _BilinearForm
 
 
-def _compile_linear(form: _LinearForm):
+def _compile_linear(form: _LinearForm,basis):
+    geometry={"x":_QuadratureValue(
+        np.moveaxis(basis.global_coordinates,-1,0)
+    )}
+    if basis.normals is not None:
+        geometry["n"]=_QuadratureValue(np.moveaxis(basis.normals,-1,0))
     try:
-        expression = form.function(_TestValue(), _Parameters())
+        expression = form.function(_TestValue(), _Parameters(geometry))
     except UnsupportedNativeForm:
         raise
     except Exception as error:
@@ -231,7 +306,7 @@ def _compile_linear(form: _LinearForm):
 
 
 def _native_linear_assemble(form, basis, kwargs):
-    terms = _compile_linear(form)
+    terms = _compile_linear(form,basis)
     native = form._native_cache.get(basis)
     if native is None:
         native = NativeLinearForm(basis)
@@ -239,12 +314,16 @@ def _native_linear_assemble(form, basis, kwargs):
     value = None
     gradient = None
     for term in terms:
-        if term.coefficient.name not in kwargs:
-            raise ValueError(
-                f"missing form parameter {term.coefficient.name!r}"
-            )
+        if isinstance(term.coefficient,_Coefficient):
+            if term.coefficient.name not in kwargs:
+                raise ValueError(
+                    f"missing form parameter {term.coefficient.name!r}"
+                )
+            raw_coefficient=kwargs[term.coefficient.name]
+        else:
+            raw_coefficient=term.coefficient
         coefficient = term.factor * np.asarray(
-            kwargs[term.coefficient.name], dtype=np.float64
+            raw_coefficient, dtype=np.float64
         )
         if term.kind == "value":
             if coefficient.ndim and coefficient.shape[0] == native._shape[-1]:
@@ -266,9 +345,14 @@ def _native_linear_assemble(form, basis, kwargs):
 
 
 def _native_bilinear_assemble(form, basis, kwargs):
+    geometry={"x":_QuadratureValue(
+        np.moveaxis(basis.global_coordinates,-1,0)
+    )}
+    if basis.normals is not None:
+        geometry["n"]=_QuadratureValue(np.moveaxis(basis.normals,-1,0))
     try:
         expression = form.function(
-            _TrialValue(), _TestValue(), _Parameters()
+            _TrialValue(), _TestValue(), _Parameters(geometry)
         )
     except UnsupportedNativeForm:
         raise
@@ -283,12 +367,16 @@ def _native_bilinear_assemble(form, basis, kwargs):
         )
     coefficient = expression.factor
     if expression.coefficient is not None:
-        if expression.coefficient not in kwargs:
-            raise ValueError(
-                f"missing form parameter {expression.coefficient!r}"
-            )
+        if isinstance(expression.coefficient,str):
+            if expression.coefficient not in kwargs:
+                raise ValueError(
+                    f"missing form parameter {expression.coefficient!r}"
+                )
+            raw_coefficient=kwargs[expression.coefficient]
+        else:
+            raw_coefficient=expression.coefficient
         coefficient = coefficient * np.asarray(
-            kwargs[expression.coefficient], dtype=np.float64
+            raw_coefficient, dtype=np.float64
         )
         if coefficient.ndim > 2:
             coefficient = np.squeeze(coefficient)
@@ -379,6 +467,14 @@ def dot(left, right):
         return _Term("value", left)
     if isinstance(right, _Coefficient) and isinstance(left, _TestValue):
         return _Term("value", right)
+    if isinstance(right,_TestValue) and isinstance(
+        left,(np.ndarray,_QuadratureValue)
+    ):
+        return _Term("value",np.asarray(left))
+    if isinstance(left,_TestValue) and isinstance(
+        right,(np.ndarray,_QuadratureValue)
+    ):
+        return _Term("value",np.asarray(right))
     if (
         isinstance(left, _TrialValue)
         and isinstance(right, _TestValue)

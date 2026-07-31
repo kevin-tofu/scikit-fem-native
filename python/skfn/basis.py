@@ -295,6 +295,14 @@ class Basis:
         ).T
         self.doflocs = np.repeat(mesh.p, components, axis=1)
         self.tabulated_shape,self.tabulated_gradients,self.dx=self._geometry()
+        element_coordinates=np.stack([
+            mesh.p[:,mesh.t[:,element]].T
+            for element in range(mesh.nelements)
+        ])
+        self.global_coordinates=np.einsum(
+            "eqn,end->eqd",self.tabulated_shape,element_coordinates
+        )
+        self.normals=None
         self.basis = self._vector_fields()
 
     def _geometry(self):
@@ -477,6 +485,8 @@ class FacetBasis:
         self.tabulated_shape=np.zeros((facets.shape[1],nq,nodes_per_element))
         self.tabulated_gradients=np.empty((facets.shape[1],nq,nodes_per_element,3))
         self.dx = np.empty((facets.shape[1], nq))
+        self.global_coordinates=np.empty((facets.shape[1],nq,3))
+        self.normals=np.empty((facets.shape[1],nq,3))
         self.parent_elements=np.empty(facets.shape[1],dtype=np.int64)
         self.local_faces=[]
         for f, face in enumerate(facets.T):
@@ -502,8 +512,15 @@ class FacetBasis:
                 x=mesh.p[:,mesh.t[:,e]];jacobian=x@refgrad[0]
                 physical=refgrad[0]@np.linalg.inv(jacobian)
                 tangents=jacobian@derivatives
+                point=shape[0]@x.T
+                normal=np.cross(tangents[:,0],tangents[:,1])
+                normal/=np.linalg.norm(normal)
+                if np.dot(normal,point-x.mean(axis=1))<0.:
+                    normal=-normal
                 self.tabulated_shape[f,q]=shape[0]
                 self.tabulated_gradients[f,q]=physical
+                self.global_coordinates[f,q]=point
+                self.normals[f,q]=normal
                 self.dx[f,q]=np.linalg.norm(np.cross(tangents[:,0],tangents[:,1]))*face_weights[q]
         self.basis = self._vector_fields()
         self.volume_basis=volume

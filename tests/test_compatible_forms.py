@@ -99,17 +99,44 @@ def test_gradient_linear_form_uses_native_path():
     np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=2e-14)
 
 
-def test_unsupported_form_fails_instead_of_falling_back():
+def test_coordinate_linear_form_uses_quadrature_context():
     basis = vector_basis()
+
+    def load(x):
+        return np.stack((1.+x[0],x[1]**2,-.5*x[2]),axis=0)
 
     @skfn.LinearForm
     def coordinate_load(v, w):
-        return w.x[0] * v[0]
+        return dot(load(w.x), v)
 
-    with pytest.raises(
-        skfn.UnsupportedNativeForm, match="cannot be traced|indexing"
-    ):
-        skfn.asm(coordinate_load, basis)
+    @skfem.LinearForm
+    def reference_load(v,w):
+        return skfem_dot(load(w.x),v)
+
+    actual=skfn.asm(coordinate_load,basis)
+    expected=skfem.asm(reference_load,reference_basis(basis))
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
+
+
+def test_facet_normal_linear_form_uses_outward_normal():
+    basis=vector_basis()
+    native=skfn.FacetBasis(
+        basis.mesh,basis.elem,facets=basis.mesh.boundary_facets(),intorder=2
+    )
+
+    @skfn.LinearForm
+    def normal_load(v,w):
+        return dot(w.n,v)
+
+    @skfem.LinearForm
+    def reference_load(v,w):
+        return skfem_dot(w.n,v)
+
+    actual=skfn.asm(normal_load,native)
+    expected=skfem.asm(
+        reference_load,reference_basis(basis,facets=True)
+    )
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
 
 
 def test_native_bilinear_mass_form():
@@ -128,6 +155,24 @@ def test_native_bilinear_mass_form():
     expected = skfem.asm(reference, reference_basis(basis))
     np.testing.assert_allclose(
         actual.toarray(), expected.toarray(), rtol=3e-13, atol=3e-13
+    )
+
+
+def test_coordinate_dependent_bilinear_coefficient():
+    basis=vector_basis()
+
+    @skfn.BilinearForm
+    def weighted_mass(u,v,w):
+        return (1.+w.x[0]**2)*dot(u,v)
+
+    @skfem.BilinearForm
+    def reference(u,v,w):
+        return (1.+w.x[0]**2)*skfem_dot(u,v)
+
+    actual=skfn.asm(weighted_mass,basis)
+    expected=skfem.asm(reference,reference_basis(basis))
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=3e-13,atol=3e-13
     )
 
 
