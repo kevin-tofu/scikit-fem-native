@@ -118,6 +118,8 @@ class _CompositeField:
             return _CompositeWeightedField(self,other.name)
         if np.isscalar(other) or isinstance(
             other,(np.ndarray,_QuadratureValue)
+        ) or (
+            hasattr(other,"value") and hasattr(other,"grad")
         ):
             return _CompositeWeightedField(self,np.asarray(other))
         return NotImplemented
@@ -332,12 +334,16 @@ class _BilinearTerm:
             )
         if isinstance(other, _Coefficient):
             return _BilinearTerm(self.kind, other.name, self.factor)
-        if isinstance(other,np.ndarray):
+        if isinstance(other,np.ndarray) or (
+            hasattr(other,"value") and hasattr(other,"grad")
+        ):
             if self.coefficient is not None:
                 raise UnsupportedNativeForm(
                     "multiple bilinear coefficients are not supported"
                 )
-            return _BilinearTerm(self.kind,other,self.factor)
+            return _BilinearTerm(
+                self.kind,np.asarray(other),self.factor
+            )
         return NotImplemented
 
     __rmul__ = __mul__
@@ -397,14 +403,16 @@ class _CompositeBilinearTerm:
                 self.row_field,self.column_field,self.kind,
                 other.name,self.factor,
             )
-        if isinstance(other,np.ndarray):
+        if isinstance(other,np.ndarray) or (
+            hasattr(other,"value") and hasattr(other,"grad")
+        ):
             if self.coefficient is not None:
                 raise UnsupportedNativeForm(
                     "multiple composite coefficients are not supported"
                 )
             return _CompositeBilinearTerm(
                 self.row_field,self.column_field,self.kind,
-                other,self.factor,
+                np.asarray(other),self.factor,
             )
         return NotImplemented
 
@@ -570,7 +578,11 @@ def _parameter_values(geometry,kwargs):
     values=dict(geometry)
     for name,value in kwargs.items():
         values[name]=(
-            value if callable(value) else _QuadratureValue(value)
+            value
+            if callable(value) or (
+                hasattr(value,"value") and hasattr(value,"grad")
+            )
+            else _QuadratureValue(value)
         )
     return values
 
@@ -654,7 +666,15 @@ def _native_linear_assemble(form, basis, kwargs):
             raw_coefficient, dtype=np.float64
         )
         if term.kind == "value":
-            if coefficient.ndim and coefficient.shape[0] == native._shape[-1]:
+            if (
+                native._shape[-1]==1
+                and coefficient.shape==native._shape[:2]
+            ):
+                coefficient=coefficient[...,None]
+            elif (
+                coefficient.ndim
+                and coefficient.shape[0] == native._shape[-1]
+            ):
                 coefficient = np.moveaxis(coefficient, 0, -1)
             value = coefficient if value is None else value + coefficient
         elif term.kind == "gradient":
@@ -723,6 +743,11 @@ def _native_composite_linear_assemble(form,basis,kwargs):
         field_native=native.assembler(term.field)
         if term.kind=="value":
             if (
+                field_native._shape[-1]==1
+                and coefficient.shape==field_native._shape[:2]
+            ):
+                coefficient=coefficient[...,None]
+            elif (
                 coefficient.ndim
                 and coefficient.shape[0]==field_native._shape[-1]
             ):
@@ -1075,14 +1100,20 @@ def dot(left, right):
     if isinstance(right,_Coefficient) and isinstance(left,_CompositeField):
         if left.role=="test" and left.kind=="value":
             return _CompositeLinearTerm(left.field,"value",right.name)
-    if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
+    if (
+        isinstance(left,(np.ndarray,_QuadratureValue))
+        or (hasattr(left,"value") and hasattr(left,"grad"))
+    ) and isinstance(
         right,_CompositeField
     ):
         if right.role=="test" and right.kind=="value":
             return _CompositeLinearTerm(
                 right.field,"value",np.asarray(left)
             )
-    if isinstance(right,(np.ndarray,_QuadratureValue)) and isinstance(
+    if (
+        isinstance(right,(np.ndarray,_QuadratureValue))
+        or (hasattr(right,"value") and hasattr(right,"grad"))
+    ) and isinstance(
         left,_CompositeField
     ):
         if left.role=="test" and left.kind=="value":
@@ -1093,12 +1124,14 @@ def dot(left, right):
         return _Term("value", left)
     if isinstance(right, _Coefficient) and isinstance(left, _TestValue):
         return _Term("value", right)
-    if isinstance(right,_TestValue) and isinstance(
-        left,(np.ndarray,_QuadratureValue)
+    if isinstance(right,_TestValue) and (
+        isinstance(left,(np.ndarray,_QuadratureValue))
+        or (hasattr(left,"value") and hasattr(left,"grad"))
     ):
         return _Term("value",np.asarray(left))
-    if isinstance(left,_TestValue) and isinstance(
-        right,(np.ndarray,_QuadratureValue)
+    if isinstance(left,_TestValue) and (
+        isinstance(right,(np.ndarray,_QuadratureValue))
+        or (hasattr(right,"value") and hasattr(right,"grad"))
     ):
         return _Term("value",np.asarray(right))
     if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(

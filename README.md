@@ -401,6 +401,38 @@ Boundary predicates are evaluated at boundary-facet centers.  The same named
 selection is preserved by `split_bases()` and maps correctly back through
 `split_indices()`.
 
+DOF vectors can be interpolated onto the basis quadrature points:
+
+```python
+field = basis.interpolate(solution)
+values = field.value
+gradients = field.grad
+divergence = field.div
+```
+
+For a composite basis, interpolation returns one field per subelement:
+
+```python
+velocity, pressure = basis.interpolate(solution)
+
+@skfem.LinearForm
+def residual(v, q, w):
+    return (
+        ddot(grad(w.velocity), grad(v))
+        + w.pressure * q
+    )
+
+r = skfem.asm(
+    residual, basis,
+    velocity=velocity,
+    pressure=pressure,
+)
+```
+
+Interpolated scalar fields can also be passed as quadrature coefficients to a
+`BilinearForm`, enabling solution-dependent native assembly without adding a
+nonlinear solver policy to `skfn`.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

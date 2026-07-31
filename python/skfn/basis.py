@@ -310,6 +310,30 @@ class _Field:
         return np.asarray(self.value, dtype=dtype)
 
 
+class DiscreteField:
+    """Values and physical gradients evaluated at basis quadrature points."""
+
+    def __init__(self,value,grad):
+        self.value=np.asarray(value)
+        self.grad=np.asarray(grad)
+
+    def __array__(self,dtype=None):
+        return np.asarray(self.value,dtype=dtype)
+
+    @property
+    def shape(self):
+        return self.value.shape
+
+    @property
+    def div(self):
+        if self.value.ndim!=3 or self.grad.shape[0]!=self.grad.shape[1]:
+            return None
+        return np.einsum("iieq->eq",self.grad)
+
+    def __getitem__(self,key):
+        return self.value[key]
+
+
 class DofsView:
     """Selected DOF indices with the scikit-fem-style ``all()`` accessor."""
 
@@ -401,6 +425,36 @@ class Basis:
         )
         self.normals=None
         self.basis = self._vector_fields()
+
+    def interpolate(self,coefficients):
+        coefficients=np.asarray(coefficients,dtype=np.float64)
+        if coefficients.shape!=(self.N,):
+            raise ValueError(
+                f"coefficients must have shape ({self.N},)"
+            )
+        if hasattr(self,"subbases"):
+            return tuple(
+                subbasis._interpolate(coefficients)
+                for subbasis in self.subbases
+            )
+        return self._interpolate(coefficients)
+
+    def _interpolate(self,coefficients):
+        components=self.elem._dim
+        nodes=self.tabulated_shape.shape[2]
+        local=coefficients[self.element_dofs.T].reshape(
+            self.mesh.nelements,nodes,components
+        )
+        value=np.einsum(
+            "eqn,enc->ceq",self.tabulated_shape,local
+        )
+        gradient=np.einsum(
+            "eqnd,enc->cdeq",self.tabulated_gradients,local
+        )
+        if components==1:
+            value=value[0]
+            gradient=gradient[0]
+        return DiscreteField(value,gradient)
 
     def split_bases(self):
         if not hasattr(self,"subbases"):
