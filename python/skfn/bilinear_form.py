@@ -35,10 +35,10 @@ class NativeBilinearForm:
         )
         self._matrix.resize((basis.N,basis.N))
 
-    def assemble(self, *, value=None, gradient=None):
+    def assemble(self,*,value=None,gradient=None,num_threads=0):
         value = self._coefficient("value", value)
         gradient = self._coefficient("gradient", gradient)
-        self._native.assemble(value, gradient)
+        self._native.assemble(value,gradient,num_threads)
         return self._matrix
 
     def _coefficient(self, name, coefficient):

@@ -730,7 +730,7 @@ def _compile_linear(form: _LinearForm,basis,kwargs):
     )
 
 
-def _native_linear_assemble(form, basis, kwargs):
+def _native_linear_assemble(form,basis,kwargs,num_threads=0):
     terms = _compile_linear(form,basis,kwargs)
     native = form._native_cache.get(basis)
     if native is None:
@@ -773,7 +773,9 @@ def _native_linear_assemble(form, basis, kwargs):
             )
         else:
             raise UnsupportedNativeForm
-    result, _ = native.assemble(value=value, gradient=gradient)
+    result,_=native.assemble(
+        value=value,gradient=gradient,num_threads=num_threads
+    )
     if result.shape[0]==basis.N:
         return result
     padded=np.zeros(basis.N,dtype=result.dtype)
@@ -865,7 +867,7 @@ def _native_composite_linear_assemble(form,basis,kwargs):
     return result
 
 
-def _native_bilinear_assemble(form, basis, kwargs):
+def _native_bilinear_assemble(form,basis,kwargs,num_threads=0):
     geometry={"x":_QuadratureValue(
         np.moveaxis(basis.global_coordinates,-1,0)
     )}
@@ -924,7 +926,9 @@ def _native_bilinear_assemble(form, basis, kwargs):
     if native is None:
         native = NativeBilinearForm(basis)
         form._native_cache[basis] = native
-    return native.assemble(value=value,gradient=gradient)
+    return native.assemble(
+        value=value,gradient=gradient,num_threads=num_threads
+    )
 
 
 def _native_cross_bilinear_assemble(
@@ -1204,12 +1208,22 @@ def _native_interface_linear_assemble(form,integration,kwargs):
     return result
 
 
-def asm(form, *bases, **kwargs):
+def asm(form,*bases,num_threads=None,**kwargs):
     """Assemble strictly with the native backend.
 
     Unsupported forms raise ``UnsupportedNativeForm``; this function never
     silently delegates assembly to scikit-fem.
     """
+    requested_threads=0
+    if num_threads is not None:
+        from .runtime import available_num_threads
+        if (
+            isinstance(num_threads,bool)
+            or not isinstance(num_threads,int)
+            or num_threads<1
+        ):
+            raise ValueError("num_threads must be a positive integer")
+        requested_threads=min(num_threads,available_num_threads())
     if isinstance(form,_Functional):
         integration=kwargs.pop("integration",None)
         if integration is not None:
@@ -1238,10 +1252,17 @@ def asm(form, *bases, **kwargs):
             )
         if len(bases)==1:
             if hasattr(bases[0],"subbases"):
+                if num_threads is not None:
+                    raise UnsupportedNativeForm(
+                        "per-call threads are not yet supported for "
+                        "composite LinearForm"
+                    )
                 return _native_composite_linear_assemble(
                     form,bases[0],kwargs
                 )
-            return _native_linear_assemble(form,bases[0],kwargs)
+            return _native_linear_assemble(
+                form,bases[0],kwargs,requested_threads
+            )
         raise UnsupportedNativeForm(
             "native LinearForm requires one basis, or two bases with "
             "an interface integration"
@@ -1249,6 +1270,11 @@ def asm(form, *bases, **kwargs):
     if isinstance(form, _BilinearForm):
         integration=kwargs.pop("integration",None)
         if integration is not None:
+            if num_threads is not None:
+                raise UnsupportedNativeForm(
+                    "per-call threads are not yet supported for "
+                    "interface BilinearForm"
+                )
             if len(bases)!=2:
                 raise UnsupportedNativeForm(
                     "interface assembly requires master and slave bases"
@@ -1259,10 +1285,20 @@ def asm(form, *bases, **kwargs):
             and isinstance(bases[0],(list,tuple))
             and isinstance(bases[1],(list,tuple))
         ):
+            if num_threads is not None:
+                raise UnsupportedNativeForm(
+                    "per-call threads are not yet supported for "
+                    "interior BilinearForm"
+                )
             return _native_interior_bilinear_assemble(
                 form,bases[0],bases[1],kwargs
             )
         if len(bases)==2:
+            if num_threads is not None:
+                raise UnsupportedNativeForm(
+                    "per-call threads are not yet supported for "
+                    "cross-basis BilinearForm"
+                )
             return _native_cross_bilinear_assemble(
                 form,bases[0],bases[1],None,kwargs
             )
@@ -1271,10 +1307,17 @@ def asm(form, *bases, **kwargs):
                 "native BilinearForm currently requires one shared basis"
             )
         if hasattr(bases[0],"subbases"):
+            if num_threads is not None:
+                raise UnsupportedNativeForm(
+                    "per-call threads are not yet supported for "
+                    "composite BilinearForm"
+                )
             return _native_composite_bilinear_assemble(
                 form,bases[0],kwargs
             )
-        return _native_bilinear_assemble(form, bases[0], kwargs)
+        return _native_bilinear_assemble(
+            form,bases[0],kwargs,requested_threads
+        )
     raise TypeError(
         "skfn.asm accepts forms created by skfn.Functional, "
         "skfn.LinearForm, or skfn.BilinearForm; use skfem.asm "

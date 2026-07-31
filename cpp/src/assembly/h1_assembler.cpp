@@ -10,6 +10,7 @@
 
 #include "native_fem/continuum_kernel.hpp"
 #include "native_fem/python_bindings.hpp"
+#include "native_fem/parallel.hpp"
 
 namespace py=pybind11;
 
@@ -44,22 +45,26 @@ public:
         elements_=t.shape[0];
         for(auto n:connectivity_) if(n<0||n>=x.shape[0]) throw std::invalid_argument("invalid node index");
         for(auto n:dofs_){if(n<0)throw std::invalid_argument("negative dof index");ndofs_=std::max(ndofs_,std::size_t(n+1));}
-        build_pattern(); build_geometry(topology);
+        build_pattern();build_coloring();build_geometry(topology);
         if(!nonlinear_) build_linear_matrices();
     }
-    py::tuple evaluate(py::array_t<double,py::array::c_style> u,py::object load,bool tangent){
+    py::tuple evaluate(py::array_t<double,py::array::c_style> u,py::object load,
+                       bool tangent,int requested_threads){
         auto b=u.request();validate(b,ndofs_,"u");
-        double seconds=assemble((double*)b.ptr,load_ptr(load),residual_.data(),tangent?values_.data():nullptr);
+        double seconds=assemble((double*)b.ptr,load_ptr(load),residual_.data(),
+            tangent?values_.data():nullptr,requested_threads);
         py::object v=py::none();if(tangent)v=view(values_);
         return py::make_tuple(view(residual_),v,seconds);
     }
     double evaluate_into(py::array_t<double,py::array::c_style> u,
-        py::array_t<double,py::array::c_style> residual,py::object tangent,py::object load){
+        py::array_t<double,py::array::c_style> residual,py::object tangent,
+        py::object load,int requested_threads){
         auto ub=u.request(),rb=residual.request();validate(ub,ndofs_,"u");validate(rb,ndofs_,"residual");
         double* values=nullptr;py::array_t<double,py::array::c_style> holder;
         if(!tangent.is_none()){holder=py::cast<py::array_t<double,py::array::c_style>>(tangent);
             auto vb=holder.request();validate(vb,values_.size(),"tangent_values");values=(double*)vb.ptr;}
-        return assemble((double*)ub.ptr,load_ptr(load),(double*)rb.ptr,values);
+        return assemble((double*)ub.ptr,load_ptr(load),(double*)rb.ptr,values,
+                        requested_threads);
     }
     py::array indptr(){return view(indptr_);} py::array indices(){return view(indices_);}
     py::array values(){return view(values_);} std::size_t ndofs()const{return ndofs_;}
@@ -72,11 +77,32 @@ private:
         auto a=py::cast<py::array_t<double,py::array::c_style>>(o);auto b=a.request();validate(b,ndofs_,"loads");return(double*)b.ptr;}
     template<class T>py::array view(std::vector<T>&v){return py::array_t<T>(
         {py::ssize_t(v.size())},{py::ssize_t(sizeof(T))},v.data(),py::cast(this));}
-    double assemble(const double*u,const double*load,double*r,double*values){
+    double assemble(const double*u,const double*load,double*r,double*values,
+                    int requested_threads){
         auto start=std::chrono::steady_clock::now();std::fill(r,r+ndofs_,0.);
         if(values)std::fill(values,values+values_.size(),0.);
         {py::gil_scoped_release release;
-        for(std::size_t e=0;e<elements_;++e){
+        if(native_fem::effective_threads(elements_,requested_threads)<=1){
+            for(std::size_t e=0;e<elements_;++e)
+                assemble_element(e,u,r,values);
+        }else{
+            for(const auto&color:colors_){
+                native_fem::parallel_for_workers(
+                    color.size(),requested_threads,
+                    [&](std::size_t,std::size_t begin,std::size_t end){
+                    for(std::size_t index=begin;index<end;++index)
+                        assemble_element(color[index],u,r,values);
+                });
+            }
+        }
+        if(load)native_fem::parallel_for_workers(
+            ndofs_,requested_threads,
+            [&](std::size_t,std::size_t begin,std::size_t end){
+                for(std::size_t i=begin;i<end;++i)r[i]-=load[i];
+            });}
+        return std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+    }
+    void assemble_element(std::size_t e,const double*u,double*r,double*values){
             double ue[native_fem::max_dofs],re[native_fem::max_dofs];
             double ke[native_fem::max_dofs*native_fem::max_dofs];
             std::fill(ue,ue+local_dofs_,0.);std::fill(re,re+local_dofs_,0.);
@@ -90,8 +116,6 @@ private:
                 for(int i=0;i<local_dofs_;++i)for(int j=0;j<local_dofs_;++j)re[i]+=ke[i*local_dofs_+j]*ue[j];}
             for(int i=0;i<local_dofs_;++i){r[dofs_[e*local_dofs_+i]]+=re[i];
                 if(values)for(int j=0;j<local_dofs_;++j)values[scatter_[(e*local_dofs_+i)*local_dofs_+j]]+=ke[i*local_dofs_+j];}
-        }if(load)for(std::size_t i=0;i<ndofs_;++i)r[i]-=load[i];}
-        return std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
     }
     void build_pattern(){
         std::vector<std::vector<std::int64_t>>rows(ndofs_);
@@ -103,6 +127,26 @@ private:
         for(std::size_t e=0;e<elements_;++e)for(int i=0;i<local_dofs_;++i){auto row=dofs_[e*local_dofs_+i];
             for(int j=0;j<local_dofs_;++j){auto b=indices_.begin()+indptr_[row],z=indices_.begin()+indptr_[row+1];
                 scatter_[(e*local_dofs_+i)*local_dofs_+j]=std::lower_bound(b,z,dofs_[e*local_dofs_+j])-indices_.begin();}}
+    }
+    void build_coloring(){
+        std::vector<std::vector<int>>dof_colors(ndofs_);
+        std::vector<int>marks;
+        int generation=0;
+        for(std::size_t e=0;e<elements_;++e){
+            ++generation;
+            for(int i=0;i<local_dofs_;++i)
+                for(const int color:dof_colors[dofs_[e*local_dofs_+i]]){
+                    if(color>=static_cast<int>(marks.size()))marks.resize(color+1);
+                    marks[color]=generation;
+                }
+            int color=0;
+            while(color<static_cast<int>(marks.size())&&marks[color]==generation)
+                ++color;
+            if(color==static_cast<int>(colors_.size()))colors_.emplace_back();
+            colors_[color].push_back(e);
+            for(int i=0;i<local_dofs_;++i)
+                dof_colors[dofs_[e*local_dofs_+i]].push_back(color);
+        }
     }
     void reference_gradients(const std::string&topology,int q,double*out){
         if(topology=="tet4"){constexpr double g[12]={-1.,-1.,-1.,1.,0.,0.,0.,1.,0.,0.,0.,1.};std::copy(g,g+12,out);return;}
@@ -130,6 +174,7 @@ private:
     std::vector<double>coordinates_,reference_points_,reference_weights_;
     std::vector<double>gradients_,weights_,linear_,values_,residual_;
     std::vector<std::int64_t>connectivity_,dofs_,indptr_,indices_,scatter_;
+    std::vector<std::vector<int>>colors_;
 };
 
 void native_fem::bind_h1_assembler(py::module_&m){py::class_<H1Assembler>(m,"H1Assembler")
@@ -139,10 +184,9 @@ void native_fem::bind_h1_assembler(py::module_&m){py::class_<H1Assembler>(m,"H1A
         std::string,std::string,double,double,
         py::array_t<double,py::array::c_style|py::array::forcecast>,
         py::array_t<double,py::array::c_style|py::array::forcecast>>())
-    .def("evaluate",&H1Assembler::evaluate,py::arg("u"),py::arg("external_load")=py::none(),py::arg("with_tangent")=true)
-    .def("evaluate_into",&H1Assembler::evaluate_into,py::arg("u"),py::arg("residual"),py::arg("tangent_values")=py::none(),py::arg("external_load")=py::none())
+    .def("evaluate",&H1Assembler::evaluate,py::arg("u"),py::arg("external_load")=py::none(),py::arg("with_tangent")=true,py::arg("num_threads")=0)
+    .def("evaluate_into",&H1Assembler::evaluate_into,py::arg("u"),py::arg("residual"),py::arg("tangent_values")=py::none(),py::arg("external_load")=py::none(),py::arg("num_threads")=0)
     .def_property_readonly("indptr",&H1Assembler::indptr).def_property_readonly("indices",&H1Assembler::indices)
     .def_property_readonly("values",&H1Assembler::values).def_property_readonly("ndofs",&H1Assembler::ndofs)
     .def_property_readonly("nelements",&H1Assembler::nelements);
 }
-

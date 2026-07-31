@@ -45,8 +45,8 @@ sdist.include = [
   "CMakeLists.txt",
   "cpp/include/**/*.hpp",
   "cpp/src/**/*.cpp",
-  "benchmark/**/*.md",
-  "benchmark/**/*.py",
+  "benchmarks/**/*.md",
+  "benchmarks/**/*.py",
   "python/skfn/**/*.py",
   "tests/**/*.py",
 ]

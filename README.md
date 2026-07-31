@@ -53,6 +53,92 @@ The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
 Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Hex8/Hex27, volume and facet integration,
 mixed fields, and nonmatching surface coupling.
 
+Reproducible scaling reports live under `benchmarks/`.  In addition to the
+Poisson comparison, `benchmarks/nonlinear-assembly/neo_hookean.py` measures
+fused Tet4 Neo-Hookean residual/tangent assembly against numerically equivalent
+scikit-fem forms, including one- and four-thread native series.
+
+Stateful small-strain J2 plasticity uses the same fused assembly shape.  The
+input state remains committed until the caller accepts the returned trial
+state, so a failed Newton step can be rolled back by retaining the old object:
+
+```python
+material = skfn.J2Plasticity(
+    young_modulus=210e3,
+    poisson_ratio=.3,
+    yield_stress=250.,
+    hardening_modulus=1e3,
+)
+assembler = skfn.MaterialAssembler(basis, material)
+state = assembler.initial_state()
+
+result = assembler.assemble(u, state, num_threads=4)
+# commit after convergence
+state = result.trial_state
+```
+
+Material state is a contiguous
+`(integration_points, material.state_size)` buffer.  J2 exposes named
+zero-copy views for plastic strain and accumulated equivalent plastic strain.
+State-free `LinearElasticity` uses the same `MaterialAssembler` workflow with
+`state_size == 0`.
+
+One-branch Standard Linear Solid viscoelasticity uses six viscous-strain state
+components and a backward-Euler material update:
+
+```python
+material = skfn.StandardLinearSolid(
+    equilibrium_modulus=1000.,
+    branch_modulus=500.,
+    poisson_ratio=.3,
+    relaxation_time=2.,
+    time_step=.1,
+)
+assembler = skfn.MaterialAssembler(basis, material)
+state = assembler.initial_state()
+result = assembler.assemble(u, state, num_threads=4)
+state = result.trial_state
+```
+
+The material's `time_step` is the default.  Adaptive stepping and cutback pass
+an evaluation-time override without rebuilding the CSR pattern, coloring, or
+geometry:
+
+```python
+trial = assembler.assemble(u, state, time_step=dt, num_threads=4)
+# retain state when rejected; commit trial.trial_state when accepted
+```
+
+The fused call returns the internal-force residual, a consistent CSR tangent,
+and integration-point plastic strain history.  It supports any three-component
+H1 `Basis` whose tabulated gradients fit the native element-size limit,
+including the Tet and Hex orders implemented by skfn.
+
+Native element loops use one thread by default.  Geometry tabulation can use
+the shared native thread pool explicitly:
+
+```python
+skfn.set_num_threads(4)
+basis = skfn.Basis(mesh, element)
+```
+
+Use `skfn.get_num_threads()` to inspect the current setting.  Explicit thread
+selection keeps benchmarks reproducible and avoids oversubscription when a
+surrounding application already uses parallel workers.
+
+When an application supports both scikit-fem and skfn, branch explicitly for
+native-only controls:
+
+```python
+if getattr(skfem, "has_capability", lambda name: False)("native_threads"):
+    with skfem.thread_limit(4):
+        basis = skfem.Basis(mesh, element)
+else:
+    basis = skfem.Basis(mesh, element)
+```
+
+The requested limit is capped by the CPU affinity visible to the process.
+
 ### Package and release checks
 
 The same distribution check used by GitHub Actions can be run locally.  It

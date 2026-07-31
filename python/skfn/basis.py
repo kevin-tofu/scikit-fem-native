@@ -6,6 +6,8 @@ from itertools import combinations
 
 import numpy as np
 
+from ._skfn import tabulate_basis_geometry
+
 
 class _TopologyMesh:
     """Cached codimension-one topology shared by independent meshes."""
@@ -1185,14 +1187,10 @@ class Basis:
             )
         self.active_nodes=active_nodes
         self.field_connectivity=connectivity
-        self.tabulated_shape,self.tabulated_gradients,self.dx=self._geometry()
-        element_coordinates=np.stack([
-            mesh.p[:,mesh.t[:,element]].T
-            for element in range(mesh.nelements)
-        ])
-        self.global_coordinates=np.einsum(
-            "eqn,end->eqd",self._geometry_shape,element_coordinates
-        )
+        (
+            self.tabulated_shape,self.tabulated_gradients,self.dx,
+            self.global_coordinates,
+        )=self._geometry()
         self.normals=None
         self.basis = self._vector_fields()
         self.tind=np.arange(mesh.nelements,dtype=np.int64)
@@ -1573,23 +1571,10 @@ class Basis:
             geometry_shape,geometry_refgrad=_mesh_geometry_shapes(
                 self.mesh,self.X
             )
-        nq,nodes=shape.shape
-        gradients=np.empty((
-            self.mesh.nelements,nq,nodes,self.mesh.dim()
-        ))
-        dx=np.empty((self.mesh.nelements,nq))
-        for e, nodes in enumerate(self.mesh.t.T):
-            x = self.mesh.p[:, nodes]
-            for q in range(nq):
-                jacobian=x@geometry_refgrad[q]
-                determinant=np.linalg.det(jacobian)
-                gradients[e,q]=refgrad[q]@np.linalg.inv(jacobian)
-                dx[e,q]=abs(determinant)*self.W[q]
-        self._geometry_shape=np.broadcast_to(
-            geometry_shape,
-            (self.mesh.nelements,nq,geometry_shape.shape[1]),
-        ).copy()
-        return np.broadcast_to(shape,(self.mesh.nelements,nq,shape.shape[1])).copy(),gradients,dx
+        return tabulate_basis_geometry(
+            self.mesh.p,self.mesh.t,shape,refgrad,
+            geometry_shape,geometry_refgrad,self.W,
+        )
 
     def _evaluate_reference(self, points):
         old_points = self.X

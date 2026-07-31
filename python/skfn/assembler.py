@@ -133,9 +133,11 @@ class NativeAssembler:
         *,
         loads: np.ndarray | None = None,
         mode: Literal["residual_tangent", "residual"] = "residual_tangent",
+        num_threads: int = 0,
     ) -> NativeEvaluation:
         if mode not in ("residual_tangent", "residual"):
             raise ValueError(f"unsupported evaluation mode: {mode!r}")
+        num_threads=self._validated_num_threads(num_threads)
         u = np.asarray(u)
         if u.dtype != np.float64 or not u.flags.c_contiguous:
             raise TypeError("u must be a C-contiguous float64 array")
@@ -144,7 +146,7 @@ class NativeAssembler:
             if loads.dtype != np.float64 or not loads.flags.c_contiguous:
                 raise TypeError("loads must be a C-contiguous float64 array")
         residual, _, seconds = self._native.evaluate(
-            u, loads, mode == "residual_tangent"
+            u,loads,mode == "residual_tangent",num_threads
         )
         diagnostics = EvaluationDiagnostics(
             element_count=self._native.nelements,
@@ -165,6 +167,7 @@ class NativeAssembler:
         *,
         loads: np.ndarray | None = None,
         mode: Literal["residual_tangent", "residual"] = "residual_tangent",
+        num_threads: int = 0,
     ) -> NativeEvaluation:
         """Assemble the current residual and tangent.
 
@@ -173,7 +176,9 @@ class NativeAssembler:
         """
         if state is not None:
             raise ValueError("the selected kernel does not accept state")
-        return self.evaluate(u, loads=loads, mode=mode)
+        return self.evaluate(
+            u,loads=loads,mode=mode,num_threads=num_threads
+        )
 
     def evaluate_into(
         self,
@@ -182,6 +187,7 @@ class NativeAssembler:
         *,
         tangent_values: np.ndarray | None = None,
         loads: np.ndarray | None = None,
+        num_threads: int = 0,
     ) -> EvaluationDiagnostics:
         """Assemble directly into caller-owned contiguous arrays.
 
@@ -189,6 +195,7 @@ class NativeAssembler:
         ``assembler.tangent.data`` updates the matrix exposed by ``tangent``.
         """
         u = self._validated_vector("u", u, self.ndofs)
+        num_threads=self._validated_num_threads(num_threads)
         residual = self._validated_vector("residual", residual, self.ndofs)
         if tangent_values is not None:
             tangent_values = self._validated_vector(
@@ -197,7 +204,7 @@ class NativeAssembler:
         if loads is not None:
             loads = self._validated_vector("loads", loads, self.ndofs)
         seconds = self._native.evaluate_into(
-            u, residual, tangent_values, loads
+            u,residual,tangent_values,loads,num_threads
         )
         return EvaluationDiagnostics(
             element_count=self._native.nelements,
@@ -216,3 +223,12 @@ class NativeAssembler:
         if not value.flags.writeable and name in ("residual", "tangent_values"):
             raise ValueError(f"{name} must be writeable")
         return value
+
+    @staticmethod
+    def _validated_num_threads(value: int) -> int:
+        if isinstance(value,bool) or not isinstance(value,int) or value<0:
+            raise ValueError("num_threads must be a nonnegative integer")
+        if value==0:
+            return 0
+        from .runtime import available_num_threads
+        return min(value,available_num_threads())

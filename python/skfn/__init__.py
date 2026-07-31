@@ -58,6 +58,21 @@ from .kernels import (
     NeoHookeanHex8,
     NeoHookeanTet4,
 )
+from .runtime import (
+    BACKEND,
+    CAPABILITIES,
+    available_num_threads,
+    get_num_threads,
+    has_capability,
+    set_num_threads,
+    thread_limit,
+)
+from .material import (
+    J2Assembler,J2Evaluation,J2Plasticity,J2State,MaterialAssembler,
+    MaterialState,
+    StandardLinearSolid,StandardLinearSolidEvaluation,
+    StandardLinearSolidState,
+)
 
 try:
     __version__=_distribution_version("skfem-native")
@@ -66,11 +81,27 @@ except _PackageNotFoundError:
 
 __all__ = [
     "__version__",
+    "BACKEND",
+    "CAPABILITIES",
+    "available_num_threads",
+    "get_num_threads",
+    "has_capability",
+    "set_num_threads",
+    "thread_limit",
     "EvaluationDiagnostics",
     "LinearElasticTet4",
     "LinearElasticHex8",
     "LinearElasticity",
     "LinearFormDiagnostics",
+    "J2Evaluation",
+    "J2Assembler",
+    "J2Plasticity",
+    "J2State",
+    "MaterialAssembler",
+    "MaterialState",
+    "StandardLinearSolid",
+    "StandardLinearSolidEvaluation",
+    "StandardLinearSolidState",
     "NativeAssembler",
     "NativeEvaluation",
     "NativeLinearForm",

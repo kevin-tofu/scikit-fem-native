@@ -62,12 +62,13 @@ class NativeLinearForm:
         *,
         value: np.ndarray | None = None,
         gradient: np.ndarray | None = None,
+        num_threads: int = 0,
     ) -> tuple[np.ndarray, LinearFormDiagnostics]:
         value = self._coefficient("value", value, self._shape)
         gradient = self._coefficient(
             "gradient", gradient, self._gradient_shape
         )
-        result, seconds = self._native.assemble(value, gradient)
+        result, seconds = self._native.assemble(value,gradient,num_threads)
         return result, LinearFormDiagnostics(
             entity_count=self._native.entity_count,
             quadrature_point_count=self._native.quadrature_point_count,
@@ -81,6 +82,9 @@ class NativeLinearForm:
         coefficient = np.asarray(coefficient)
         if coefficient.dtype != np.float64:
             raise TypeError(f"{name} coefficient must have dtype float64")
+        constant_shape = shape[2:]
+        if coefficient.shape == constant_shape:
+            return np.ascontiguousarray(coefficient)
         try:
             coefficient = np.broadcast_to(coefficient, shape)
         except ValueError as error:

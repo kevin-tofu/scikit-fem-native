@@ -3,6 +3,9 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class LinearElasticity:
+    kernel_name="linear_elastic"
+    state_size=0
+    state_fields=()
     young_modulus: float
     poisson_ratio: float
 

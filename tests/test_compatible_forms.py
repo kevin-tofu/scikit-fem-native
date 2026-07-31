@@ -9,6 +9,18 @@ import skfn
 from skfn.helpers import ddot, dot, grad
 
 
+def test_native_linear_form_preserves_constant_coefficient_shape():
+    value = np.array([2.], dtype=np.float64)
+    gradient = np.array([[3., 4.]], dtype=np.float64)
+
+    assert skfn.NativeLinearForm._coefficient(
+        "value", value, (100, 3, 1)
+    ).shape == (1,)
+    assert skfn.NativeLinearForm._coefficient(
+        "gradient", gradient, (100, 3, 1, 2)
+    ).shape == (1, 2)
+
+
 def vector_basis():
     mesh = skfn.MeshTet.init_tensor(
         np.linspace(0., 1., 3),
