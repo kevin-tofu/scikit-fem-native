@@ -70,8 +70,13 @@ class NativeCrossBilinearForm:
         trial_scalar=trial_basis.elem.elem
         test_components=test_basis.elem._dim
         trial_components=trial_basis.elem._dim
-        if test_components!=trial_components:
-            raise ValueError("trial and test components must match")
+        if not np.allclose(
+            test_basis.global_coordinates,
+            trial_basis.global_coordinates,
+        ):
+            raise ValueError(
+                "trial and test quadrature coordinates must match"
+            )
         entities=test_basis.dx.shape[0]
         test_dofs=test_basis.element_dofs.T.reshape(
             entities,len(test_scalar.doflocs),test_components
@@ -90,15 +95,61 @@ class NativeCrossBilinearForm:
         )
         self.shape=(test_basis.N,trial_basis.N)
         self.coefficient_shape=test_basis.dx.shape
+        self.test_components=test_components
+        self.trial_components=trial_components
+        self.dimension=test_basis.mesh.dim()
 
     def assemble(self,kind,coefficient):
         coefficient=np.asarray(coefficient,dtype=np.float64)
-        coefficient=np.broadcast_to(
-            coefficient,self.coefficient_shape
-        )
-        field_kind="gradient" if kind=="gradient" else "value"
+        if kind in {"row_divergence","column_divergence"}:
+            if kind=="row_divergence":
+                if (
+                    self.test_components!=self.dimension
+                    or self.trial_components!=1
+                ):
+                    raise ValueError(
+                        "row divergence requires vector test and scalar trial"
+                    )
+                tensor=np.zeros((
+                    self.test_components,self.dimension,
+                    self.trial_components,
+                ))
+                for component in range(self.test_components):
+                    tensor[component,component,0]=1.
+                row_kind,column_kind="gradient","value"
+            else:
+                if (
+                    self.trial_components!=self.dimension
+                    or self.test_components!=1
+                ):
+                    raise ValueError(
+                        "column divergence requires scalar test and vector trial"
+                    )
+                tensor=np.zeros((
+                    self.test_components,
+                    self.trial_components,self.dimension,
+                ))
+                for component in range(self.trial_components):
+                    tensor[0,component,component]=1.
+                row_kind,column_kind="value","gradient"
+            scalar=np.broadcast_to(
+                coefficient,self.coefficient_shape
+            )
+            coefficient=scalar[(...,)+(None,)*tensor.ndim]*tensor
+        else:
+            if self.test_components!=self.trial_components:
+                raise ValueError(
+                    "value and gradient contractions require matching "
+                    "component counts"
+                )
+            coefficient=np.broadcast_to(
+                coefficient,self.coefficient_shape
+            )
+            row_kind=column_kind=(
+                "gradient" if kind=="gradient" else "value"
+            )
         self._native.assemble(
-            np.ascontiguousarray(coefficient),field_kind,field_kind
+            np.ascontiguousarray(coefficient),row_kind,column_kind
         )
         matrix=csr_matrix(
             (

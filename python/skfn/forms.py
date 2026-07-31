@@ -50,6 +50,10 @@ class _QuadratureValue:
             return _CompositeWeightedField(
                 other,np.asarray(self.value)
             )
+        if isinstance(other,_Divergence):
+            return _Divergence(
+                other.role,other.factor,np.asarray(self.value)
+            )
         return _QuadratureValue(self.value*np.asarray(other))
 
     def __rmul__(self,other):
@@ -113,6 +117,30 @@ class _TrialValue:
 @dataclass(frozen=True)
 class _TrialGradient:
     factor: float = 1.
+
+
+@dataclass(frozen=True)
+class _Divergence:
+    role: str
+    factor: float = 1.
+    coefficient: Any = None
+
+    def __mul__(self,other):
+        if self.role=="trial" and isinstance(other,_TestValue):
+            return _BilinearTerm(
+                "column_divergence",
+                coefficient=self.coefficient,
+                factor=self.factor*other.factor,
+            )
+        if self.role=="test" and isinstance(other,_TrialValue):
+            return _BilinearTerm(
+                "row_divergence",
+                coefficient=self.coefficient,
+                factor=self.factor*other.factor,
+            )
+        return NotImplemented
+
+    __rmul__=__mul__
 
 
 @dataclass(frozen=True)
@@ -906,8 +934,9 @@ def _native_cross_bilinear_assemble(
         "x":_QuadratureValue(np.moveaxis(
             test_basis.global_coordinates,-1,0
         )),
-        "idx":idx,
     }
+    if idx is not None:
+        geometry["idx"]=idx
     if test_basis.normals is not None:
         geometry["n"]=_QuadratureValue(np.moveaxis(
             test_basis.normals,-1,0
@@ -921,7 +950,7 @@ def _native_cross_bilinear_assemble(
         raise
     except Exception as error:
         raise UnsupportedNativeForm(
-            f"interior facet BilinearForm contains an unsupported "
+            f"cross-basis BilinearForm contains an unsupported "
             f"operation: {error}"
         ) from error
     terms=(
@@ -931,8 +960,8 @@ def _native_cross_bilinear_assemble(
     )
     if terms is None:
         raise UnsupportedNativeForm(
-            "interior facet BilinearForm must reduce to value or "
-            "gradient contractions"
+            "cross-basis BilinearForm must reduce to value, gradient, "
+            "or divergence contractions"
         )
     by_trial=form._cross_cache.setdefault(
         trial_basis,WeakKeyDictionary()
@@ -1233,6 +1262,10 @@ def asm(form, *bases, **kwargs):
             return _native_interior_bilinear_assemble(
                 form,bases[0],bases[1],kwargs
             )
+        if len(bases)==2:
+            return _native_cross_bilinear_assemble(
+                form,bases[0],bases[1],None,kwargs
+            )
         if len(bases) != 1:
             raise UnsupportedNativeForm(
                 "native BilinearForm currently requires one shared basis"
@@ -1508,6 +1541,10 @@ def grad(value):
 
 
 def div(value):
+    if isinstance(value,_TrialValue):
+        return _Divergence("trial",value.factor)
+    if isinstance(value,_TestValue):
+        return _Divergence("test",value.factor)
     if isinstance(value,_CompositeField):
         if value.kind!="value":
             raise UnsupportedNativeForm("div() expects a composite value")

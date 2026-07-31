@@ -1505,16 +1505,17 @@ class FacetBasis:
                 mesh.boundary_facets()
                 if facets is None else np.asarray(facets)
             )
+        quadratic_geometry=mesh.t.shape[0] in (10,27)
         expected_face_nodes=(
-            6 if is_tet and quadratic_field else
+            6 if is_tet and quadratic_geometry else
             3 if is_tet else
-            9 if quadratic_field else 4
+            9 if quadratic_geometry else 4
         )
         if facets.shape[0] != expected_face_nodes:
             facets = facets.T
         if is_tet:
             local_faces=((0,1,2),(0,1,3),(0,2,3),(1,2,3))
-            if isinstance(scalar,ElementTetP2):
+            if mesh.t.shape[0]==10:
                 edge_map={(0,1):4,(1,2):5,(0,2):6,(0,3):7,(1,3):8,(2,3):9}
                 local_faces=tuple(tuple(face)+tuple(
                     edge_map[tuple(sorted((face[i],face[(i+1)%3])))] for i in range(3)
@@ -1530,7 +1531,7 @@ class FacetBasis:
                 face_weights=np.full(3,1/6)
             face_points=bary[:,1:]
         else:
-            if not isinstance(scalar,ElementHex2):
+            if mesh.t.shape[0]!=27:
                 local_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
                              (2,4,7,6),(1,5,7,4),(3,6,7,5))
                 corners=local_faces

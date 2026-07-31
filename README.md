@@ -24,6 +24,7 @@ no runtime fallback to scikit-fem or Python element assembly.
 | Bases | `Basis`, `FacetBasis`, `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
 | Mixed forms | Expanded signatures such as `u, p, v, q, w` |
+| Rectangular forms | `asm(form, trial_basis, test_basis)` across different orders or components |
 | Interfaces | `jump`, `avg`, `normal_grad`, value and gradient contractions |
 
 ### skfn extensions
@@ -116,6 +117,26 @@ def penalty(u, v, w):
 
 matrix = skfem.asm(penalty, side, side)
 ```
+
+Different trial and test spaces assemble a rectangular block without requiring
+an `ElementComposite`:
+
+```python
+velocity = skfem.Basis(
+    mesh, skfem.ElementVector(skfem.ElementTriP2())
+)
+pressure = skfem.Basis(mesh, skfem.ElementTriP1())
+
+@skfem.BilinearForm
+def divergence(u, q, w):
+    return div(u) * q
+
+# Shape: (pressure.N, velocity.N)
+B = skfem.asm(divergence, velocity, pressure)
+```
+
+Value, gradient, and row/column divergence blocks use retained native CSR
+patterns.  The same two-Basis form supports compatible `FacetBasis` objects.
 
 Cellwise constants and discontinuous nodal spaces use the familiar element
 wrappers:
