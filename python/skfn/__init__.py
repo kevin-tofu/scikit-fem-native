@@ -1,6 +1,7 @@
 from .assembler import NativeAssembler
 from .basis import (
     Basis,
+    DofsView,
     ElementHex1,
     ElementHex2,
     ElementComposite,
@@ -41,6 +42,7 @@ __all__ = [
     "LinearForm",
     "BilinearForm",
     "Basis",
+    "DofsView",
     "ElementTetP1",
     "ElementTetP2",
     "ElementHex1",

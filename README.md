@@ -362,6 +362,26 @@ rhs = skfem.asm(
 Value and full-gradient terms are grouped per subfield and each cached native
 linear assembler is traversed once.
 
+Mixed-field DOFs can be separated without introducing a solver dependency:
+
+```python
+velocity_basis, pressure_basis = basis.split_bases()
+velocity_indices, pressure_indices = basis.split_indices()
+
+velocity_boundary = velocity_indices[
+    velocity_basis.get_dofs().all()
+]
+pressure_boundary = pressure_indices[
+    pressure_basis.get_dofs().all()
+]
+```
+
+`split_bases()` returns independently numbered field bases, while
+`split_indices()` maps their local ordering into the assembled composite
+matrix and vector.  `get_dofs()` selects boundary DOFs by default and also
+accepts explicit facet connectivity, element indices, or node indices.
+Condensation, pressure pinning, and linear solution remain user-side choices.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

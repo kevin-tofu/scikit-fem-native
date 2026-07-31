@@ -306,3 +306,68 @@ def test_taylor_hood_composite_linear_form_matches_skfem():
     np.testing.assert_allclose(
         actual,expected[permutation],rtol=2e-12,atol=2e-12
     )
+
+
+def test_taylor_hood_split_and_boundary_dofs_match_skfem():
+    linear=skfn.MeshTet.init_tensor(
+        np.linspace(0.,1.,3),
+        np.linspace(0.,1.,2),
+        np.linspace(0.,1.,2),
+    )
+    mesh=skfn.MeshTet2.from_mesh(linear)
+    basis=skfn.Basis(
+        mesh,
+        skfn.ElementVector(skfn.ElementTetP2())
+        *skfn.ElementTetP1(),
+        intorder=4,
+    )
+    velocity,pressure=basis.split_bases()
+    velocity_indices,pressure_indices=basis.split_indices()
+
+    assert velocity.N==3*mesh.p.shape[1]
+    assert pressure.N==len(np.unique(mesh.t[:4]))
+    np.testing.assert_array_equal(
+        np.sort(np.concatenate((velocity_indices,pressure_indices))),
+        np.arange(basis.N),
+    )
+
+    velocity_boundary_local=velocity.get_dofs().all()
+    pressure_boundary_local=pressure.get_dofs().all()
+    velocity_boundary=velocity_indices[velocity_boundary_local]
+    pressure_boundary=pressure_indices[pressure_boundary_local]
+    composite_boundary=basis.get_dofs().all()
+    np.testing.assert_array_equal(
+        composite_boundary,
+        np.sort(np.concatenate((
+            velocity_boundary,pressure_boundary
+        ))),
+    )
+
+    reference_mesh=skfem.MeshTet2.from_mesh(
+        skfem.MeshTet(linear.p,linear.t)
+    )
+    reference_basis=skfem.Basis(
+        reference_mesh,
+        skfem.ElementVector(skfem.ElementTetP2())
+        *skfem.ElementTetP1(),
+        intorder=4,
+    )
+    reference_split=reference_basis.split_bases()
+    assert tuple(part.N for part in (velocity,pressure))==tuple(
+        part.N for part in reference_split
+    )
+    for native_part,reference_part in zip(
+        (velocity,pressure),reference_split
+    ):
+        native_coordinates=np.round(
+            native_part.doflocs[:,native_part.get_dofs().all()].T,14
+        )
+        reference_coordinates=np.round(
+            reference_part.doflocs[
+                :,reference_part.get_dofs().all()
+            ].T,14
+        )
+        np.testing.assert_array_equal(
+            np.unique(native_coordinates,axis=0),
+            np.unique(reference_coordinates,axis=0),
+        )

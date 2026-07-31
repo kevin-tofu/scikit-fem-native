@@ -266,8 +266,29 @@ class _Field:
         return np.asarray(self.value, dtype=dtype)
 
 
+class DofsView:
+    """Selected DOF indices with the scikit-fem-style ``all()`` accessor."""
+
+    def __init__(self,dofs,doflocs):
+        self._dofs=np.unique(np.asarray(dofs,dtype=np.int64))
+        self.doflocs=doflocs
+
+    def all(self):
+        return self._dofs.copy()
+
+    def flatten(self):
+        return self.all()
+
+    def __array__(self,dtype=None):
+        return np.asarray(self._dofs,dtype=dtype)
+
+    def __len__(self):
+        return len(self._dofs)
+
+
 class Basis:
     def __init__(self, mesh: MeshTet, element: ElementVector, intorder=2):
+        self.intorder=intorder
         if isinstance(element,ElementComposite):
             self._init_composite(mesh,element,intorder)
             return
@@ -336,6 +357,61 @@ class Basis:
         )
         self.normals=None
         self.basis = self._vector_fields()
+
+    def split_bases(self):
+        if not hasattr(self,"subbases"):
+            raise ValueError("split_bases() requires ElementComposite")
+        return tuple(
+            Basis(self.mesh,element,intorder=self.intorder)
+            for element in (
+                field if isinstance(field,ElementVector)
+                else ElementVector(field,dim=1)
+                for field in self.elem.elems
+            )
+        )
+
+    def split_indices(self):
+        if not hasattr(self,"subbases"):
+            raise ValueError("split_indices() requires ElementComposite")
+        return tuple(
+            subbasis.nodal_dofs.reshape(-1,order="F").copy()
+            for subbasis in self.subbases
+        )
+
+    def get_dofs(self,facets=None,elements=None,nodes=None,skip=None):
+        if skip:
+            raise NotImplementedError(
+                "named component skipping is not implemented"
+            )
+        if sum(value is not None for value in (facets,elements,nodes))>1:
+            raise ValueError("select only one of facets, elements, or nodes")
+        if nodes is not None:
+            selected=np.asarray(nodes)
+            if selected.dtype==bool:
+                selected=np.flatnonzero(selected)
+            selected=np.asarray(selected,dtype=np.int64).reshape(-1)
+        elif elements is not None:
+            element_ids=np.asarray(elements,dtype=np.int64).reshape(-1)
+            selected=np.unique(self.mesh.t[:,element_ids])
+        else:
+            selected_facets=(
+                self.mesh.boundary_facets()
+                if facets is None else np.asarray(facets,dtype=np.int64)
+            )
+            selected=np.unique(selected_facets)
+        selected_set=set(map(int,selected))
+        if hasattr(self,"subbases"):
+            dofs=[]
+            for subbasis in self.subbases:
+                for local,node in enumerate(subbasis.active_nodes):
+                    if int(node) in selected_set:
+                        dofs.extend(subbasis.nodal_dofs[:,local])
+        else:
+            dofs=[]
+            for local,node in enumerate(self.active_nodes):
+                if int(node) in selected_set:
+                    dofs.extend(self.nodal_dofs[:,local])
+        return DofsView(dofs,self.doflocs)
 
     def _init_composite(self,mesh,element,intorder):
         vector_elements=tuple(
