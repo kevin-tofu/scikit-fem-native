@@ -114,6 +114,11 @@ and integration-point plastic strain history.  It supports any three-component
 H1 `Basis` whose tabulated gradients fit the native element-size limit,
 including the Tet and Hex orders implemented by skfn.
 
+Stateful material assembly is regression-tested on Tet4, Tet10, Hex8, and
+Hex27.  Tet10 and Hex27 coverage includes curved/distorted geometry,
+integration orders 2, 4, and 6, serial/parallel agreement, finite-difference
+consistent tangents, and J2 comparison with scikit-fem forms.
+
 Native element loops use one thread by default.  Geometry tabulation can use
 the shared native thread pool explicitly:
 
