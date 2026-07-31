@@ -198,6 +198,46 @@ class _InterfaceCoefficientTrace:
 
 
 @dataclass(frozen=True)
+class _InterfaceLinearTerm:
+    trace: _InterfaceTrace
+    coefficient: Any
+    factor: float = 1.
+
+    def __neg__(self):
+        return _InterfaceLinearTerm(
+            self.trace,self.coefficient,-self.factor
+        )
+
+    def __mul__(self,value):
+        if np.isscalar(value):
+            return _InterfaceLinearTerm(
+                self.trace,self.coefficient,self.factor*value
+            )
+        return NotImplemented
+
+    __rmul__=__mul__
+
+    def __add__(self,other):
+        if isinstance(other,_InterfaceLinearTerm):
+            return _InterfaceLinearSum((self,other))
+        if isinstance(other,_InterfaceLinearSum):
+            return _InterfaceLinearSum((self,)+other.terms)
+        return NotImplemented
+
+
+@dataclass(frozen=True)
+class _InterfaceLinearSum:
+    terms: tuple[_InterfaceLinearTerm,...]
+
+    def __add__(self,other):
+        if isinstance(other,_InterfaceLinearTerm):
+            return _InterfaceLinearSum(self.terms+(other,))
+        if isinstance(other,_InterfaceLinearSum):
+            return _InterfaceLinearSum(self.terms+other.terms)
+        return NotImplemented
+
+
+@dataclass(frozen=True)
 class _InterfaceBilinearTerm:
     row: _InterfaceTrace
     column: _InterfaceTrace
@@ -255,8 +295,8 @@ class _LinearForm:
         self.function = function
         self._native_cache = WeakKeyDictionary()
 
-    def assemble(self, basis, **kwargs):
-        return asm(self, basis, **kwargs)
+    def assemble(self, *bases, **kwargs):
+        return asm(self, *bases, **kwargs)
 
 
 class _BilinearForm:
@@ -431,14 +471,72 @@ def _native_interface_assemble(form,integration,kwargs):
     return result
 
 
+def _native_interface_linear_assemble(form,integration,kwargs):
+    try:
+        expression=form.function(
+            _InterfaceTrace("test"),_Parameters()
+        )
+    except Exception as error:
+        if isinstance(error,UnsupportedNativeForm):
+            raise
+        raise UnsupportedNativeForm(
+            f"interface LinearForm contains an unsupported operation: {error}"
+        ) from error
+    terms=(
+        expression.terms if isinstance(expression,_InterfaceLinearSum)
+        else (expression,) if isinstance(expression,_InterfaceLinearTerm)
+        else None
+    )
+    if terms is None:
+        raise UnsupportedNativeForm(
+            "interface LinearForm must contract a coefficient with "
+            "jump/avg of its test field"
+        )
+    result=None
+    for term in terms:
+        if term.trace.weights is None:
+            raise UnsupportedNativeForm(
+                "interface LinearForm test field requires jump() or avg()"
+            )
+        if isinstance(term.coefficient,_Coefficient):
+            name=term.coefficient.name
+            if name not in kwargs:
+                raise ValueError(f"missing form parameter {name!r}")
+            coefficient=kwargs[name]
+        else:
+            coefficient=term.coefficient
+        vector=integration.assemble_linear_trace(
+            term.trace.weights,trace_kind=term.trace.kind,
+            coefficient=term.factor*np.asarray(
+                coefficient,dtype=np.float64
+            ),
+        )
+        result=vector if result is None else result+vector
+    return result
+
+
 def asm(form, *bases, **kwargs):
     """Assemble strictly with the native backend.
 
     Unsupported forms raise ``UnsupportedNativeForm``; this function never
     silently delegates assembly to scikit-fem.
     """
-    if isinstance(form, _LinearForm) and len(bases) == 1:
-        return _native_linear_assemble(form, bases[0], kwargs)
+    if isinstance(form,_LinearForm):
+        integration=kwargs.pop("integration",None)
+        if integration is not None:
+            if len(bases)!=2:
+                raise UnsupportedNativeForm(
+                    "interface LinearForm requires master and slave bases"
+                )
+            return _native_interface_linear_assemble(
+                form,integration,kwargs
+            )
+        if len(bases)==1:
+            return _native_linear_assemble(form,bases[0],kwargs)
+        raise UnsupportedNativeForm(
+            "native LinearForm requires one basis, or two bases with "
+            "an interface integration"
+        )
     if isinstance(form, _BilinearForm):
         integration=kwargs.pop("integration",None)
         if integration is not None:
@@ -452,10 +550,6 @@ def asm(form, *bases, **kwargs):
                 "native BilinearForm currently requires one shared basis"
             )
         return _native_bilinear_assemble(form, bases[0], kwargs)
-    if isinstance(form, _LinearForm):
-        raise UnsupportedNativeForm(
-            "native LinearForm currently requires exactly one basis"
-        )
     raise TypeError(
         "skfn.asm accepts forms created by skfn.LinearForm or "
         "skfn.BilinearForm; use skfem.asm explicitly for scikit-fem forms"
@@ -484,12 +578,24 @@ def dot(left, right):
     ):
         return _BilinearTerm("value")
     if isinstance(left,_Coefficient) and isinstance(right,_InterfaceTrace):
+        if right.role=="test":
+            if right.kind=="gradient":
+                raise UnsupportedNativeForm(
+                    "use ddot(coefficient, grad(test)) for a full gradient"
+                )
+            return _InterfaceLinearTerm(right,left)
         if right.kind!="gradient":
             raise UnsupportedNativeForm(
                 "an interface coefficient contraction requires grad(field)"
             )
         return _InterfaceCoefficientTrace(right,left.name)
     if isinstance(right,_Coefficient) and isinstance(left,_InterfaceTrace):
+        if left.role=="test":
+            if left.kind=="gradient":
+                raise UnsupportedNativeForm(
+                    "use ddot(coefficient, grad(test)) for a full gradient"
+                )
+            return _InterfaceLinearTerm(left,right)
         if left.kind!="gradient":
             raise UnsupportedNativeForm(
                 "an interface coefficient contraction requires grad(field)"
@@ -533,6 +639,12 @@ def ddot(left, right):
         and isinstance(left, _TestGradient)
     ):
         return _BilinearTerm("gradient")
+    if isinstance(left,_Coefficient) and isinstance(right,_InterfaceTrace):
+        if right.role=="test" and right.kind=="gradient":
+            return _InterfaceLinearTerm(right,left)
+    if isinstance(right,_Coefficient) and isinstance(left,_InterfaceTrace):
+        if left.role=="test" and left.kind=="gradient":
+            return _InterfaceLinearTerm(left,right)
     if isinstance(left,_InterfaceTrace) and isinstance(right,_InterfaceTrace):
         if left.kind!="gradient" or right.kind!="gradient":
             raise UnsupportedNativeForm(

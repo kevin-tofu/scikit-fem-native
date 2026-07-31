@@ -211,6 +211,27 @@ matrix = skfem.asm(
 )
 ```
 
+Interface `LinearForm` uses the same reusable supermesh quadrature and returns
+one vector containing the master DOFs followed by the slave DOFs:
+
+```python
+@skfem.LinearForm
+def interface_load(v, w):
+    return dot(w.traction, jump(v))
+
+rhs = skfem.asm(
+    interface_load,
+    master_basis,
+    slave_basis,
+    integration=supermesh,
+    traction=traction,
+)
+```
+
+`avg(v)`, `jump(grad(v))`, `avg(grad(v))`, and normal-gradient traces are
+assembled natively as well.  The weights supplied by `jump` produce equal and
+opposite master/slave resultants for a constant interface traction.
+
 `skfn` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.

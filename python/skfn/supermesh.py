@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import bmat, csr_matrix
 
-from ._skfn import CrossBilinearAssembler
+from ._skfn import CrossBilinearAssembler,LinearFormAssembler
 
 
 class BoundarySurface:
@@ -502,6 +502,69 @@ class TriangleSupermesh:
             [rw[0]*cw[0]*blocks[0][0],rw[0]*cw[1]*blocks[0][1]],
             [rw[1]*cw[0]*blocks[1][0],rw[1]*cw[1]*blocks[1][1]],
         ],format="csr")
+
+    def assemble_linear_trace(
+        self, trace_weights, *, trace_kind="value", coefficient=1.,
+    ):
+        """Assemble master/slave interface test traces into one vector."""
+        if trace_kind not in {"value","gradient","normal_gradient"}:
+            raise ValueError(
+                "trace kind must be value, gradient, or normal_gradient"
+            )
+        weights=np.asarray(trace_weights,dtype=float)
+        if weights.shape!=(2,):
+            raise ValueError("interface trace weights must contain two values")
+        master=self._linear_trace("master",trace_kind,coefficient)
+        slave=self._linear_trace("slave",trace_kind,coefficient)
+        result=np.zeros(self.master_size+self.slave_size,dtype=np.float64)
+        result[:len(master)]=weights[0]*master
+        result[self.master_size:self.master_size+len(slave)]=weights[1]*slave
+        return result
+
+    def _linear_trace(self,side,kind,coefficient):
+        cache=getattr(self,"_linear_trace_assemblers",None)
+        if cache is None:
+            cache={};self._linear_trace_assemblers=cache
+        native=cache.get((side,kind))
+        dofs=self._row_dofs if side=="master" else self._column_dofs
+        shape=self._trace(side,"value")
+        gradients=(
+            self._row_gradients if side=="master"
+            else self._column_gradients
+        )
+        native_kind=kind
+        if kind=="normal_gradient":
+            shape=self._trace(side,kind)
+            native_kind="value"
+        if gradients is None:
+            gradients=np.zeros(shape.shape+(3,),dtype=np.float64)
+        if native is None:
+            native=LinearFormAssembler(
+                dofs,np.ascontiguousarray(shape),
+                np.ascontiguousarray(gradients),self._weights,
+            )
+            cache[(side,kind)]=native
+        components=dofs.shape[2]
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        if native_kind=="value":
+            if coefficient.ndim and coefficient.shape[0]==components:
+                coefficient=np.moveaxis(coefficient,0,-1)
+            target=self._coefficient_shape+(components,)
+            value=np.ascontiguousarray(np.broadcast_to(coefficient,target))
+            result,_=native.assemble(value,None)
+        else:
+            dimension=gradients.shape[3]
+            if (
+                coefficient.ndim>=2
+                and coefficient.shape[:2]==(components,dimension)
+            ):
+                coefficient=np.moveaxis(coefficient,(0,1),(-2,-1))
+            target=self._coefficient_shape+(components,dimension)
+            gradient=np.ascontiguousarray(
+                np.broadcast_to(coefficient,target)
+            )
+            result,_=native.assemble(None,gradient)
+        return np.asarray(result)
 
     def _trace(self,side,kind):
         if kind=="value":

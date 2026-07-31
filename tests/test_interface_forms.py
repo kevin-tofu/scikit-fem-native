@@ -120,3 +120,59 @@ def test_direction_tensor_mixed_form_dispatches_to_cross_kernel():
     np.testing.assert_allclose(
         actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
     )
+
+
+def test_interface_linear_jump_has_equal_and_opposite_resultants():
+    master,slave,integration=interface()
+    traction=np.array([.4,-1.2,2.3])
+
+    @skfn.LinearForm
+    def load(v,w):
+        return dot(w.traction,jump(v))
+
+    actual=skfn.asm(
+        load,master,slave,integration=integration,traction=traction
+    )
+    expected=integration.assemble_linear_trace(
+        (1.,-1.),coefficient=traction
+    )
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
+    master_resultant=actual[:master.N].reshape(-1,3).sum(axis=0)
+    slave_resultant=actual[master.N:].reshape(-1,3).sum(axis=0)
+    np.testing.assert_allclose(
+        master_resultant+slave_resultant,0.,atol=3e-14
+    )
+
+
+def test_interface_linear_average_full_gradient_is_composable():
+    master,slave,integration=interface()
+    tensor=np.arange(9,dtype=float).reshape(3,3)/7.
+
+    @skfn.LinearForm
+    def load(v,w):
+        return ddot(w.tensor,avg(grad(v),weights=(.25,.75)))
+
+    actual=load.assemble(
+        master,slave,integration=integration,tensor=tensor
+    )
+    expected=integration.assemble_linear_trace(
+        (.25,.75),trace_kind="gradient",coefficient=tensor
+    )
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
+
+
+def test_interface_linear_normal_gradient_uses_both_sides():
+    master,slave,integration=interface()
+    flux=np.array([1.,-.5,.25])
+
+    @skfn.LinearForm
+    def load(v,w):
+        return dot(w.flux,jump(normal_grad(v)))
+
+    actual=skfn.asm(
+        load,master,slave,integration=integration,flux=flux
+    )
+    expected=integration.assemble_linear_trace(
+        (1.,-1.),trace_kind="normal_gradient",coefficient=flux
+    )
+    np.testing.assert_allclose(actual,expected,rtol=3e-14,atol=3e-14)
