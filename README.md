@@ -19,9 +19,9 @@ no runtime fallback to scikit-fem or Python element assembly.
 |---|---|
 | Forms | `BilinearForm`, `LinearForm`, `Functional`, `asm` |
 | Form helpers | `dot`, `ddot`, `grad`, `div`, `sym_grad`, `trace` |
-| Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshHex`, `MeshHex2` |
+| Meshes | `MeshTri`, `MeshTri2`, `MeshQuad`, `MeshQuad2`, `MeshTet`, `MeshTet2`, `MeshWedge1`, `MeshHex`, `MeshHex2` |
 | Mesh topology | cached `facets`, `t2f`, `f2t`, `boundary_facets`, facet/element predicates |
-| Elements | Tri/Quad/Tet/Hex P0, nodal P1/P2 or Q1/Q2, `ElementDG`, `ElementVector`, `ElementComposite` |
+| Elements | Tri/Quad/Tet/Hex P0, nodal P1/P2 or Q1/Q2, Wedge6, `ElementDG`, `ElementVector`, `ElementComposite` |
 | Bases | `Basis`, `FacetBasis`, `InteriorFacetBasis`, `interpolate`, `get_dofs`, composite splitting |
 | Form context | `w.x`, facet `w.n`, user scalars, arrays, callables, interpolated fields |
 | Mixed forms | Expanded signatures such as `u, p, v, q, w` |
@@ -40,6 +40,7 @@ unchanged with upstream scikit-fem.
 | `TriangleSupermesh.update()` | Refit/rebuild overlap data after motion |
 | Interface `Functional` | Integrate gap, normals, and two-sided traces |
 | `NativeAssembler` and native kernels | Direct residual/tangent evaluation |
+| `MeshPyramid1` / `ElementPyramid1` | Pyramid5 volume and mixed-face assembly (not provided by scikit-fem) |
 
 ### Intentionally out of scope
 
@@ -50,13 +51,20 @@ unchanged with upstream scikit-fem.
 - importing scikit-fem at runtime.
 
 The core H1 assembly engine exposes reusable SciPy CSR matrices and supports
-Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Hex8/Hex27, volume and facet integration,
+Tri3/Tri6, Quad4/Quad9, Tet4/Tet10, Wedge6, Pyramid5, and Hex8/Hex27 volume and facet integration,
 mixed fields, and nonmatching surface coupling.
 
 Reproducible scaling reports live under `benchmarks/`.  In addition to the
 Poisson comparison, `benchmarks/nonlinear-assembly/neo_hookean.py` measures
 fused Tet4 Neo-Hookean residual/tangent assembly against numerically equivalent
 scikit-fem forms, including one- and four-thread native series.
+
+The topology-independent Neo-Hookean kernel is also regression-tested with
+native Tet10, Hex27, Wedge6, and Pyramid5 bases.  Tet10, Hex27, and Wedge6
+residuals and consistent tangents are compared with equivalent scikit-fem
+forms at integration orders 2, 4, and 6; Pyramid5 uses finite-difference
+consistent-tangent checks because it is an skfn extension.  Every topology
+checks serial/parallel agreement, inverted deformation, and singular geometry.
 
 Stateful small-strain J2 plasticity uses the same fused assembly shape.  The
 input state remains committed until the caller accepts the returned trial
@@ -113,6 +121,21 @@ The fused call returns the internal-force residual, a consistent CSR tangent,
 and integration-point plastic strain history.  It supports any three-component
 H1 `Basis` whose tabulated gradients fit the native element-size limit,
 including the Tet and Hex orders implemented by skfn.
+
+Stateful material assembly is regression-tested on Tet4, Tet10, Wedge6,
+Pyramid5, Hex8, and Hex27.  Tet10, Wedge6, Pyramid5, and Hex27 coverage includes distorted geometry,
+integration orders 2, 4, and 6, serial/parallel agreement, finite-difference
+consistent tangents, and J2 comparison with scikit-fem forms.
+
+Wedge6 and Pyramid5 support mixed triangular/quadrilateral boundary and
+interior facets in one `FacetBasis`.  A common collapsed-square quadrature
+keeps the per-facet arrays rectangular; `mesh._facet_sizes` identifies the
+three- or four-node topology represented by each padded `mesh.facets` column.
+
+Pyramid5 is an explicit skfn extension rather than part of the
+scikit-fem-compatible subset;
+its rational shape functions are tested by volume, partition-of-unity,
+constant-strain, material-tangent, and serial/parallel checks.
 
 Native element loops use one thread by default.  Geometry tabulation can use
 the shared native thread pool explicitly:
