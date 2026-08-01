@@ -59,6 +59,13 @@ Poisson comparison, `benchmarks/nonlinear-assembly/neo_hookean.py` measures
 fused Tet4 Neo-Hookean residual/tangent assembly against numerically equivalent
 scikit-fem forms, including one- and four-thread native series.
 
+The topology-independent Neo-Hookean kernel is also regression-tested with
+native Tet10, Hex27, Wedge6, and Pyramid5 bases.  Tet10, Hex27, and Wedge6
+residuals and consistent tangents are compared with equivalent scikit-fem
+forms at integration orders 2, 4, and 6; Pyramid5 uses finite-difference
+consistent-tangent checks because it is an skfn extension.  Every topology
+checks serial/parallel agreement, inverted deformation, and singular geometry.
+
 Stateful small-strain J2 plasticity uses the same fused assembly shape.  The
 input state remains committed until the caller accepts the returned trial
 state, so a failed Newton step can be rolled back by retaining the old object:
