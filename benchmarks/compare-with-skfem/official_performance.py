@@ -14,16 +14,16 @@ import skfem
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,dot,grad
 
 
-@skfn.BilinearForm
+@skfemntv.BilinearForm
 def native_laplace(u,v,w):
     return ddot(grad(u),grad(v))
 
 
-@skfn.LinearForm
+@skfemntv.LinearForm
 def native_load(v,w):
     return dot(w.source,v)
 
@@ -65,17 +65,17 @@ def median_time(function,repeat):
 def mesh_for_k(k):
     subdivisions=int(2**(k/3))
     axis=np.linspace(0.,1.,subdivisions)
-    return subdivisions,skfn.MeshTet.init_tensor(axis,axis,axis)
+    return subdivisions,skfemntv.MeshTet.init_tensor(axis,axis,axis)
 
 
 def benchmark(k,repeat):
     subdivisions,mesh=mesh_for_k(k)
     reference_mesh=skfem.MeshTet(mesh.p,mesh.t)
-    native_element=skfn.ElementVector(skfn.ElementTetP1(),dim=1)
+    native_element=skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=1)
 
     def native_cold():
-        basis=skfn.Basis(mesh,native_element)
-        return basis,skfn.asm(native_laplace,basis),skfn.asm(
+        basis=skfemntv.Basis(mesh,native_element)
+        return basis,skfemntv.asm(native_laplace,basis),skfemntv.asm(
             native_load,basis,source=np.array([1.])
         )
 
@@ -97,14 +97,14 @@ def benchmark(k,repeat):
     if error>3e-12:
         raise RuntimeError(f"implementation mismatch: {error:.3e}")
 
-    _,native_basis_ms=elapsed(lambda:skfn.Basis(mesh,native_element))
+    _,native_basis_ms=elapsed(lambda:skfemntv.Basis(mesh,native_element))
     _,reference_basis_ms=elapsed(
         lambda:skfem.Basis(reference_mesh,skfem.ElementTetP1())
     )
     source=np.array([1.])
     native_warm_ms=median_time(lambda:(
-        skfn.asm(native_laplace,basis),
-        skfn.asm(native_load,basis,source=source),
+        skfemntv.asm(native_laplace,basis),
+        skfemntv.asm(native_load,basis,source=source),
     ),repeat)
     reference_warm_ms=median_time(lambda:(
         skfem.asm(reference_laplace,reference_basis),
@@ -120,9 +120,9 @@ def benchmark(k,repeat):
 
 def markdown(results):
     lines=[
-        "| DoFs | Elements | skfn cold [ms] | skfem cold [ms] | "
-        "skfn cold speedup | skfn warm [ms] | skfem warm [ms] | "
-        "skfn warm speedup |",
+        "| DoFs | Elements | skfemntv cold [ms] | skfem cold [ms] | "
+        "skfemntv cold speedup | skfemntv warm [ms] | skfem warm [ms] | "
+        "skfemntv warm speedup |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for result in results:

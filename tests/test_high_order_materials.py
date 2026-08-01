@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import skfem
 
-import skfn
+import skfemntv
 
 
 sys.path.insert(0,str(Path(__file__).parents[1]/"benchmarks"))
@@ -15,17 +15,17 @@ from skfem_j2 import forms as reference_forms,update as reference_j2
 def spaces(topology,distorted=False,intorder=4):
     axis=np.linspace(0.,1.,2)
     if topology=="tet10":
-        linear=skfn.MeshTet.init_tensor(axis,axis,axis)
-        mesh=skfn.MeshTet2.from_mesh(linear)
-        element=skfn.ElementTetP2()
+        linear=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+        mesh=skfemntv.MeshTet2.from_mesh(linear)
+        element=skfemntv.ElementTetP2()
         reference_mesh=skfem.MeshTet2.from_mesh(
             skfem.MeshTet(linear.p,linear.t)
         )
         reference_element=skfem.ElementTetP2()
     else:
-        linear=skfn.MeshHex.init_tensor(axis,axis,axis)
-        mesh=skfn.MeshHex2.from_mesh(linear)
-        element=skfn.ElementHex2()
+        linear=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+        mesh=skfemntv.MeshHex2.from_mesh(linear)
+        element=skfemntv.ElementHex2()
         reference_mesh=skfem.MeshHex2.from_mesh(
             skfem.MeshHex(linear.p,linear.t)
         )
@@ -37,8 +37,8 @@ def spaces(topology,distorted=False,intorder=4):
         points[2]=z+.04*x*y+.015*np.sin(np.pi*x)*np.sin(np.pi*y)
         mesh=type(mesh)(points,mesh.t)
         reference_mesh=type(reference_mesh)(points,mesh.t)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=3),intorder=intorder
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=3),intorder=intorder
     )
     reference=skfem.Basis(
         reference_mesh,skfem.ElementVector(reference_element),
@@ -71,8 +71,8 @@ def strain(field):
 @pytest.mark.parametrize("topology",["tet10","hex27"])
 def test_high_order_j2_matches_scikit_fem(topology):
     basis,reference=spaces(topology)
-    material=skfn.J2Plasticity(210.,.3,.25,2.)
-    assembler=skfn.MaterialAssembler(basis,material)
+    material=skfemntv.J2Plasticity(210.,.3,.25,2.)
+    assembler=skfemntv.MaterialAssembler(basis,material)
     state=assembler.initial_state()
     coordinates=basis.doflocs
     u=np.zeros(basis.N)
@@ -112,12 +112,12 @@ def test_high_order_j2_matches_scikit_fem(topology):
 
 @pytest.mark.parametrize("topology",["tet10","hex27"])
 @pytest.mark.parametrize("material",[
-    skfn.J2Plasticity(210.,.3,.25,2.),
-    skfn.StandardLinearSolid(100.,60.,.25,2.,.2),
+    skfemntv.J2Plasticity(210.,.3,.25,2.),
+    skfemntv.StandardLinearSolid(100.,60.,.25,2.,.2),
 ])
 def test_distorted_high_order_material_tangent_and_parallel(topology,material):
     basis,_=spaces(topology,distorted=True)
-    assembler=skfn.MaterialAssembler(basis,material)
+    assembler=skfemntv.MaterialAssembler(basis,material)
     state=assembler.initial_state()
     rng=np.random.default_rng(32)
     u=np.ascontiguousarray(rng.normal(scale=8e-4,size=basis.N))
@@ -153,8 +153,8 @@ def test_distorted_high_order_material_tangent_and_parallel(topology,material):
 @pytest.mark.parametrize("intorder",[2,4,6])
 def test_high_order_material_integration_order_sweep(topology,intorder):
     basis,_=spaces(topology,distorted=True,intorder=intorder)
-    material=skfn.StandardLinearSolid(100.,60.,.25,2.,.2)
-    assembler=skfn.MaterialAssembler(basis,material)
+    material=skfemntv.StandardLinearSolid(100.,60.,.25,2.,.2)
+    assembler=skfemntv.MaterialAssembler(basis,material)
     state=assembler.initial_state()
     assert assembler.state_count==basis.mesh.nelements*basis.X.shape[1]
     u=np.ascontiguousarray(
@@ -163,11 +163,11 @@ def test_high_order_material_integration_order_sweep(topology,intorder):
     actual=assembler.assemble(u,state,num_threads=4)
     residual=actual.residual.copy();tangent=actual.tangent.copy()
     factor=1./(1.+material.time_step/material.relaxation_time)
-    equivalent=skfn.LinearElasticity(
+    equivalent=skfemntv.LinearElasticity(
         material.equilibrium_modulus+factor*material.branch_modulus,
         material.poisson_ratio,
     )
-    reference=skfn.NativeAssembler.from_basis(basis,equivalent).assemble(
+    reference=skfemntv.NativeAssembler.from_basis(basis,equivalent).assemble(
         u,num_threads=1
     )
     np.testing.assert_allclose(

@@ -5,15 +5,15 @@ from skfem.helpers import ddot as reference_ddot
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot,div,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,div,dot,grad
 
 
 def test_element_multiplication_creates_composite_basis():
-    mesh=skfn.MeshTet()
-    element=skfn.ElementTetP1()*skfn.ElementTetP1()
-    basis=skfn.Basis(mesh,element,intorder=2)
-    assert isinstance(element,skfn.ElementComposite)
+    mesh=skfemntv.MeshTet()
+    element=skfemntv.ElementTetP1()*skfemntv.ElementTetP1()
+    basis=skfemntv.Basis(mesh,element,intorder=2)
+    assert isinstance(element,skfemntv.ElementComposite)
     assert len(element.elems)==2
     assert len(basis.subbases)==2
     assert basis.N==2*mesh.p.shape[1]
@@ -26,16 +26,16 @@ def test_element_multiplication_creates_composite_basis():
 
 
 def test_composite_form_signature_and_all_scalar_blocks_match_skfem():
-    mesh=skfn.MeshTet.init_tensor(
+    mesh=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,3),
     )
-    basis=skfn.Basis(
-        mesh,skfn.ElementTetP1()*skfn.ElementTetP1(),intorder=2
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementTetP1()*skfemntv.ElementTetP1(),intorder=2
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u1,u2,v1,v2,w):
         return (
             (1.+w.x[0])*u1*v1
@@ -43,7 +43,7 @@ def test_composite_form_signature_and_all_scalar_blocks_match_skfem():
             +w.diffusion*dot(grad(u1),grad(v1))
         )
 
-    actual=skfn.asm(form,basis,diffusion=.6)
+    actual=skfemntv.asm(form,basis,diffusion=.6)
 
     reference_mesh=skfem.MeshTet(mesh.p,mesh.t)
     reference_basis=skfem.Basis(
@@ -69,19 +69,19 @@ def test_composite_form_signature_and_all_scalar_blocks_match_skfem():
 
 
 def test_repeated_composite_assembly_reuses_native_blocks():
-    basis=skfn.Basis(
-        skfn.MeshTet(),
-        skfn.ElementTetP1()*skfn.ElementTetP1(),
+    basis=skfemntv.Basis(
+        skfemntv.MeshTet(),
+        skfemntv.ElementTetP1()*skfemntv.ElementTetP1(),
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u1,u2,v1,v2,w):
         return w.a*u1*v1+w.b*u2*v2
 
-    first=skfn.asm(form,basis,a=1.,b=2.)
+    first=skfemntv.asm(form,basis,a=1.,b=2.)
     native=form._native_cache[basis]
     ids={key:id(value) for key,value in native._assemblers.items()}
-    second=skfn.asm(form,basis,a=3.,b=4.)
+    second=skfemntv.asm(form,basis,a=3.,b=4.)
     assert ids=={
         key:id(value) for key,value in native._assemblers.items()
     }
@@ -89,15 +89,15 @@ def test_repeated_composite_assembly_reuses_native_blocks():
 
 
 def test_vector_scalar_divergence_blocks_match_skfem():
-    mesh=skfn.MeshTet.init_tensor(
+    mesh=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,3),
     )
-    element=skfn.ElementVector(skfn.ElementTetP1())*skfn.ElementTetP1()
-    basis=skfn.Basis(mesh,element,intorder=2)
+    element=skfemntv.ElementVector(skfemntv.ElementTetP1())*skfemntv.ElementTetP1()
+    basis=skfemntv.Basis(mesh,element,intorder=2)
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,p,v,q,w):
         return (
             w.mu*ddot(grad(u),grad(v))
@@ -106,7 +106,7 @@ def test_vector_scalar_divergence_blocks_match_skfem():
             +w.stabilization*p*q
         )
 
-    actual=skfn.asm(form,basis,mu=.7,stabilization=.05)
+    actual=skfemntv.asm(form,basis,mu=.7,stabilization=.05)
 
     reference_mesh=skfem.MeshTet(mesh.p,mesh.t)
     reference_element=(
@@ -134,17 +134,17 @@ def test_vector_scalar_divergence_blocks_match_skfem():
 
 
 def test_vector_scalar_divergence_blocks_are_transposes():
-    basis=skfn.Basis(
-        skfn.MeshTet(),
-        skfn.ElementVector(skfn.ElementTetP1())*skfn.ElementTetP1(),
+    basis=skfemntv.Basis(
+        skfemntv.MeshTet(),
+        skfemntv.ElementVector(skfemntv.ElementTetP1())*skfemntv.ElementTetP1(),
         intorder=2,
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,p,v,q,w):
         return p*div(v)+q*div(u)
 
-    matrix=skfn.asm(form,basis).toarray()
+    matrix=skfemntv.asm(form,basis).toarray()
     vector_dofs=basis.subbases[0].nodal_dofs.reshape(-1,order="F")
     scalar_dofs=basis.subbases[1].nodal_dofs.reshape(-1,order="F")
     upper=matrix[np.ix_(vector_dofs,scalar_dofs)]
@@ -153,26 +153,26 @@ def test_vector_scalar_divergence_blocks_are_transposes():
 
 
 def test_taylor_hood_p2_p1_form_matches_skfem():
-    linear=skfn.MeshTet.init_tensor(
+    linear=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,2),
         np.linspace(0.,1.,2),
     )
-    mesh=skfn.MeshTet2.from_mesh(linear)
+    mesh=skfemntv.MeshTet2.from_mesh(linear)
     element=(
-        skfn.ElementVector(skfn.ElementTetP2())
-        *skfn.ElementTetP1()
+        skfemntv.ElementVector(skfemntv.ElementTetP2())
+        *skfemntv.ElementTetP1()
     )
-    basis=skfn.Basis(mesh,element,intorder=4)
+    basis=skfemntv.Basis(mesh,element,intorder=4)
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,p,v,q,w):
         return (
             w.mu*ddot(grad(u),grad(v))
             -p*div(v)-q*div(u)
         )
 
-    actual=skfn.asm(form,basis,mu=.65)
+    actual=skfemntv.asm(form,basis,mu=.65)
 
     reference_linear=skfem.MeshTet(linear.p,linear.t)
     reference_mesh=skfem.MeshTet2.from_mesh(reference_linear)
@@ -219,20 +219,20 @@ def test_taylor_hood_p2_p1_form_matches_skfem():
 
 
 def test_taylor_hood_composite_linear_form_matches_skfem():
-    linear=skfn.MeshTet.init_tensor(
+    linear=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,2),
         np.linspace(0.,1.,2),
     )
-    mesh=skfn.MeshTet2.from_mesh(linear)
-    basis=skfn.Basis(
+    mesh=skfemntv.MeshTet2.from_mesh(linear)
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(skfn.ElementTetP2())
-        *skfn.ElementTetP1(),
+        skfemntv.ElementVector(skfemntv.ElementTetP2())
+        *skfemntv.ElementTetP1(),
         intorder=4,
     )
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def load(v,q,w):
         return (
             dot(w.force,v)
@@ -246,7 +246,7 @@ def test_taylor_hood_composite_linear_form_matches_skfem():
         [.4,.5,-.2],
         [-.3,.1,.6],
     ])[:,:,None,None]
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         load,basis,force=force,source=.35,flux=flux
     )
     native=load._native_cache[basis]
@@ -254,7 +254,7 @@ def test_taylor_hood_composite_linear_form_matches_skfem():
         field:id(assembler)
         for field,assembler in native._assemblers.items()
     }
-    repeated=skfn.asm(
+    repeated=skfemntv.asm(
         load,basis,force=2.*force,source=.7,flux=2.*flux
     )
     assert assembler_ids=={
@@ -309,16 +309,16 @@ def test_taylor_hood_composite_linear_form_matches_skfem():
 
 
 def test_taylor_hood_split_and_boundary_dofs_match_skfem():
-    linear=skfn.MeshTet.init_tensor(
+    linear=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,2),
         np.linspace(0.,1.,2),
     )
-    mesh=skfn.MeshTet2.from_mesh(linear)
-    basis=skfn.Basis(
+    mesh=skfemntv.MeshTet2.from_mesh(linear)
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(skfn.ElementTetP2())
-        *skfn.ElementTetP1(),
+        skfemntv.ElementVector(skfemntv.ElementTetP2())
+        *skfemntv.ElementTetP1(),
         intorder=4,
     )
     velocity,pressure=basis.split_bases()

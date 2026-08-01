@@ -1,4 +1,4 @@
-"""Form helpers implemented independently by skfn."""
+"""Form helpers implemented independently by skfemntv."""
 
 import numpy as np
 

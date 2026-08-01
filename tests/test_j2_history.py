@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import skfem
 
-import skfn
+import skfemntv
 
 
 sys.path.insert(0,str(Path(__file__).parents[1]/"benchmarks"))
@@ -25,24 +25,24 @@ def _strain(field):
 def test_j2_load_unload_reload_history_matches_scikit_fem(topology):
     axis=np.linspace(0.,1.,3)
     if topology=="tet":
-        mesh=skfn.MeshTet.init_tensor(axis,axis,axis)
-        element=skfn.ElementTetP1()
+        mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementTetP1()
         reference_mesh=skfem.MeshTet(mesh.p,mesh.t)
         reference_element=skfem.ElementTetP1()
     else:
-        mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-        element=skfn.ElementHex1()
+        mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementHex1()
         reference_mesh=skfem.MeshHex(mesh.p,mesh.t)
         reference_element=skfem.ElementHex1()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=3),intorder=2
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=3),intorder=2
     )
     reference_basis=skfem.Basis(
         reference_mesh,skfem.ElementVector(reference_element),
         quadrature=(basis.X,basis.W),
     )
-    material=skfn.J2Plasticity(210.,.3,.25,2.)
-    assembler=skfn.J2Assembler(basis,material)
+    material=skfemntv.J2Plasticity(210.,.3,.25,2.)
+    assembler=skfemntv.J2Assembler(basis,material)
     residual_form,tangent_form=reference_forms()
     state=assembler.initial_state()
     entities,quadrature=basis.dx.shape
@@ -103,12 +103,12 @@ def test_j2_load_unload_reload_history_matches_scikit_fem(topology):
 
 
 def test_j2_history_rejected_trial_does_not_affect_reload():
-    mesh=skfn.MeshTet()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet()
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
-    assembler=skfn.J2Assembler(
-        basis,skfn.J2Plasticity(210.,.3,.25,2.)
+    assembler=skfemntv.J2Assembler(
+        basis,skfemntv.J2Plasticity(210.,.3,.25,2.)
     )
     committed=assembler.initial_state()
     rejected=np.ascontiguousarray(np.linspace(-.02,.02,basis.N))

@@ -3,16 +3,16 @@ import skfem
 from scipy.sparse.linalg import spsolve
 from skfem.models.elasticity import linear_elasticity
 
-import skfn
+import skfemntv
 
 
 def meshes():
-    linear = skfn.MeshHex.init_tensor(
+    linear = skfemntv.MeshHex.init_tensor(
         np.linspace(0., 1., 3),
         np.linspace(0., 1., 2),
         np.linspace(0., 1., 2),
     )
-    return linear, skfn.MeshHex2.from_mesh(linear)
+    return linear, skfemntv.MeshHex2.from_mesh(linear)
 
 
 def reference_basis(linear):
@@ -40,8 +40,8 @@ def permutation(native, reference):
 
 def test_independent_hex27_matches_skfem_reference():
     linear, mesh = meshes()
-    basis = skfn.Basis(
-        mesh, skfn.ElementVector(skfn.ElementHex2()), intorder=4
+    basis = skfemntv.Basis(
+        mesh, skfemntv.ElementVector(skfemntv.ElementHex2()), intorder=4
     )
     reference = reference_basis(linear)
     young, poisson = 37., .19
@@ -50,8 +50,8 @@ def test_independent_hex27_matches_skfem_reference():
     expected = linear_elasticity(Lambda=lmbda, Mu=mu).assemble(reference)
     order = permutation(basis, reference)
     expected = expected[order][:, order]
-    actual = skfn.NativeAssembler.from_basis(
-        basis, skfn.LinearElasticity(young, poisson)
+    actual = skfemntv.NativeAssembler.from_basis(
+        basis, skfemntv.LinearElasticity(young, poisson)
     ).assemble(np.zeros(basis.N), None).tangent
     np.testing.assert_allclose(
         actual.toarray(), expected.toarray(), rtol=8e-12, atol=8e-12
@@ -60,17 +60,17 @@ def test_independent_hex27_matches_skfem_reference():
 
 def test_hex27_reproduces_quadratic_solution():
     _, mesh = meshes()
-    basis = skfn.Basis(
-        mesh, skfn.ElementVector(skfn.ElementHex2()), intorder=4
+    basis = skfemntv.Basis(
+        mesh, skfemntv.ElementVector(skfemntv.ElementHex2()), intorder=4
     )
     young, poisson = 10., .25
     lmbda = young*poisson/((1+poisson)*(1-2*poisson))
     mu = young/(2*(1+poisson))
-    tangent = skfn.NativeAssembler.from_basis(
-        basis, skfn.LinearElasticity(young, poisson)
+    tangent = skfemntv.NativeAssembler.from_basis(
+        basis, skfemntv.LinearElasticity(young, poisson)
     ).assemble(np.zeros(basis.N), None).tangent
     body = -2*lmbda-4*mu
-    load, _ = skfn.NativeLinearForm(basis).assemble(
+    load, _ = skfemntv.NativeLinearForm(basis).assemble(
         value=np.array([body, body, body])
     )
     exact = np.array([

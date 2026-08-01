@@ -4,14 +4,14 @@ from skfem.helpers import ddot as reference_ddot
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot, dot, grad
+import skfemntv
+from skfemntv.helpers import ddot, dot, grad
 
 
 def bases():
-    mesh = skfn.MeshHex()
-    native = skfn.FacetBasis(
-        mesh, skfn.ElementVector(skfn.ElementHex1()), intorder=4
+    mesh = skfemntv.MeshHex()
+    native = skfemntv.FacetBasis(
+        mesh, skfemntv.ElementVector(skfemntv.ElementHex1()), intorder=4
     )
     reference_mesh = skfem.MeshHex(mesh.p, mesh.t)
     reference = skfem.FacetBasis(
@@ -26,7 +26,7 @@ def bases():
 def test_native_facet_penalty_bilinear_form():
     native, reference = bases()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def penalty(u, v, w):
         return w.alpha * dot(u, v)
 
@@ -34,7 +34,7 @@ def test_native_facet_penalty_bilinear_form():
     def expected_form(u, v, w):
         return w.alpha * reference_dot(u, v)
 
-    actual = skfn.asm(penalty, native, alpha=7.5)
+    actual = skfemntv.asm(penalty, native, alpha=7.5)
     expected = skfem.asm(expected_form, reference, alpha=7.5)
     np.testing.assert_allclose(
         actual.toarray(), expected.toarray(), rtol=5e-13, atol=5e-13
@@ -44,7 +44,7 @@ def test_native_facet_penalty_bilinear_form():
 def test_native_facet_gradient_bilinear_form():
     native, reference = bases()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def gradient_form(u, v, w):
         return ddot(grad(u), grad(v))
 
@@ -62,7 +62,7 @@ def test_native_facet_gradient_bilinear_form():
 def test_repeated_facet_assembly_reuses_csr_structure():
     native, _ = bases()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def penalty(u, v, w):
         return w.alpha * dot(u, v)
 
@@ -77,7 +77,7 @@ def test_repeated_facet_assembly_reuses_csr_structure():
 def test_native_facet_multiterm_form_uses_one_matrix():
     native,reference=bases()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return (
             w.mass*dot(u,v)
@@ -93,7 +93,7 @@ def test_native_facet_multiterm_form_uses_one_matrix():
             )
         )
 
-    actual=skfn.asm(form,native,mass=.7,diffusion=1.9)
+    actual=skfemntv.asm(form,native,mass=.7,diffusion=1.9)
     expected=skfem.asm(
         expected_form,reference,mass=.7,diffusion=1.9
     )

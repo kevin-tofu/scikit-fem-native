@@ -1,20 +1,20 @@
 import numpy as np
 from scipy.sparse.linalg import spsolve
 
-import skfn
+import skfemntv
 
 
 def test_load_controlled_j2_newton_commits_only_after_convergence():
     axis=np.linspace(0.,1.,3)
-    mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementHex1(),dim=3),intorder=2
+    mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementHex1(),dim=3),intorder=2
     )
-    material=skfn.J2Plasticity(
+    material=skfemntv.J2Plasticity(
         young_modulus=210.,poisson_ratio=.3,
         yield_stress=.25,hardening_modulus=2.,
     )
-    assembler=skfn.J2Assembler(basis,material)
+    assembler=skfemntv.J2Assembler(basis,material)
     state=assembler.initial_state()
     coordinates=basis.doflocs
     fixed=np.flatnonzero(np.isclose(coordinates[0],0.))
@@ -60,12 +60,12 @@ def test_load_controlled_j2_newton_commits_only_after_convergence():
 
 
 def test_j2_trial_state_can_be_rolled_back():
-    mesh=skfn.MeshTet()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet()
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
-    assembler=skfn.J2Assembler(
-        basis,skfn.J2Plasticity(100.,.3,.1,1.)
+    assembler=skfemntv.J2Assembler(
+        basis,skfemntv.J2Plasticity(100.,.3,.1,1.)
     )
     committed=assembler.initial_state()
     trial=assembler.assemble(

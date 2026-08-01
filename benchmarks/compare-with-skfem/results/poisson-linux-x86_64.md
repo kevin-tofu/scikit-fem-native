@@ -1,12 +1,12 @@
-# skfn vs. scikit-fem: Poisson assembly
+# skfemntv vs. scikit-fem: Poisson assembly
 
 Generated: 2026-07-31T15:13:28.351151+00:00
 
-Environment: `Python 3.12.12, NumPy 2.5.1, SciPy 1.18.0, skfn 0.1.0, scikit-fem 12.0.2, Linux-6.8.0-136-generic-x86_64-with-glibc2.35`
+Environment: `Python 3.12.12, NumPy 2.5.1, SciPy 1.18.0, skfemntv 0.1.0, scikit-fem 12.0.2, Linux-6.8.0-136-generic-x86_64-with-glibc2.35`
 
 Warm-cache median of 7 timed runs after 2 warm-up runs; solve time is excluded.
 
-| DoFs | Elements | skfn K [ms] | skfn K parallel [ms] | threads | skfem K [ms] | K speedup | parallel K speedup | skfn f [ms] | skfn f parallel [ms] | threads | skfem f [ms] | skfn f speedup | parallel f speedup | skfn total speedup |
+| DoFs | Elements | skfemntv K [ms] | skfemntv K parallel [ms] | threads | skfem K [ms] | K speedup | parallel K speedup | skfemntv f [ms] | skfemntv f parallel [ms] | threads | skfem f [ms] | skfemntv f speedup | parallel f speedup | skfemntv total speedup |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 289 | 512 | 0.118 | 0.120 | 4 | 0.510 | 4.33x | 4.24x | 0.053 | 0.057 | 4 | 0.147 | 2.77x | 2.60x | 3.85x |
 | 1089 | 2048 | 0.351 | 0.350 | 4 | 1.030 | 2.93x | 2.94x | 0.088 | 0.263 | 4 | 0.180 | 2.05x | 0.68x | 2.76x |
@@ -18,7 +18,7 @@ Warm-cache median of 7 timed runs after 2 warm-up runs; solve time is excluded.
 
 Basis construction:
 
-| DoFs | skfn 1 thread [ms] | skfn parallel [ms] | threads | skfem [ms] | speedup |
+| DoFs | skfemntv 1 thread [ms] | skfemntv parallel [ms] | threads | skfem [ms] | speedup |
 |---:|---:|---:|---:|---:|---:|
 | 289 | 0.541 | 0.450 | 4 | 0.848 | 1.57x |
 | 1089 | 0.840 | 1.131 | 4 | 1.269 | 1.51x |

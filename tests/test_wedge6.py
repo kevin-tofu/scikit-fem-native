@@ -6,8 +6,8 @@ import pytest
 import skfem
 from skfem.models.elasticity import linear_elasticity
 
-import skfn
-from skfn.helpers import dot
+import skfemntv
+from skfemntv.helpers import dot
 
 
 sys.path.insert(0,str(Path(__file__).parents[1]/"benchmarks"))
@@ -15,7 +15,7 @@ from skfem_j2 import forms as reference_forms,update as reference_j2
 
 
 def spaces(*,distorted=False,intorder=4):
-    mesh=skfn.MeshWedge1.init_tensor(
+    mesh=skfemntv.MeshWedge1.init_tensor(
         np.linspace(0.,1.,3),np.linspace(0.,1.,2),np.linspace(0.,1.,3)
     )
     if distorted:
@@ -23,9 +23,9 @@ def spaces(*,distorted=False,intorder=4):
         points[0]=x+.08*y*z
         points[1]=y-.05*x*z
         points[2]=z+.04*x*y
-        mesh=skfn.MeshWedge1(points,mesh.t)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementWedge1()),intorder=intorder
+        mesh=skfemntv.MeshWedge1(points,mesh.t)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementWedge1()),intorder=intorder
     )
     reference=skfem.Basis(
         skfem.MeshWedge1(mesh.p,mesh.t),
@@ -51,8 +51,8 @@ def test_wedge6_linear_elasticity_matches_scikit_fem(intorder):
     lmbda=young*poisson/((1.+poisson)*(1.-2.*poisson))
     mu=young/(2.*(1.+poisson))
     expected=linear_elasticity(Lambda=lmbda,Mu=mu).assemble(reference)
-    actual=skfn.NativeAssembler.from_basis(
-        basis,skfn.LinearElasticity(young,poisson)
+    actual=skfemntv.NativeAssembler.from_basis(
+        basis,skfemntv.LinearElasticity(young,poisson)
     ).assemble(np.zeros(basis.N),num_threads=4).tangent
     np.testing.assert_allclose(
         actual.toarray(),expected.toarray(),rtol=5e-13,atol=5e-13
@@ -61,8 +61,8 @@ def test_wedge6_linear_elasticity_matches_scikit_fem(intorder):
 
 def test_wedge6_j2_matches_scikit_fem():
     basis,reference=spaces(distorted=True)
-    material=skfn.J2Plasticity(210.,.3,.25,2.)
-    assembler=skfn.MaterialAssembler(basis,material)
+    material=skfemntv.J2Plasticity(210.,.3,.25,2.)
+    assembler=skfemntv.MaterialAssembler(basis,material)
     state=assembler.initial_state()
     coordinates=basis.doflocs
     u=np.zeros(basis.N)
@@ -99,12 +99,12 @@ def test_wedge6_j2_matches_scikit_fem():
 
 
 @pytest.mark.parametrize("material",[
-    skfn.J2Plasticity(210.,.3,.25,2.),
-    skfn.StandardLinearSolid(100.,60.,.25,2.,.2),
+    skfemntv.J2Plasticity(210.,.3,.25,2.),
+    skfemntv.StandardLinearSolid(100.,60.,.25,2.,.2),
 ])
 def test_wedge6_material_tangent_and_parallel(material):
     basis,_=spaces(distorted=True,intorder=4)
-    assembler=skfn.MaterialAssembler(basis,material)
+    assembler=skfemntv.MaterialAssembler(basis,material)
     state=assembler.initial_state()
     rng=np.random.default_rng(74)
     u=np.ascontiguousarray(rng.normal(scale=8e-4,size=basis.N))
@@ -135,9 +135,9 @@ def test_wedge6_material_tangent_and_parallel(material):
 
 
 def test_wedge_mixed_facets_area_normals_and_functional():
-    mesh=skfn.MeshWedge1()
-    facets=skfn.FacetBasis(
-        mesh,skfn.ElementVector(skfn.ElementWedge1()),intorder=6
+    mesh=skfemntv.MeshWedge1()
+    facets=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementWedge1()),intorder=6
     )
     np.testing.assert_allclose(
         facets.dx.sum(),3.+np.sqrt(2.),rtol=2e-14,atol=2e-14
@@ -148,38 +148,38 @@ def test_wedge_mixed_facets_area_normals_and_functional():
     )
     assert sorted(mesh._facet_sizes.tolist())==[3,3,4,4,4]
 
-    @skfn.Functional
+    @skfemntv.Functional
     def moment(w):
         return 1.+w.x[0]+w.n[2]**2
 
-    value=skfn.asm(moment,facets)
+    value=skfemntv.asm(moment,facets)
     direct=np.sum(
         (1.+facets.global_coordinates[:,:,0]+facets.normals[:,:,2]**2)
         *facets.dx
     )
     np.testing.assert_allclose(value,direct,rtol=2e-14,atol=2e-14)
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def normal_load(v,w):
         return dot(w.n,v)
 
     resultant=np.array([
-        skfn.asm(normal_load,facets)[component::3].sum()
+        skfemntv.asm(normal_load,facets)[component::3].sum()
         for component in range(3)
     ])
     np.testing.assert_allclose(resultant,0.,atol=3e-14)
 
 
 def test_wedge_mixed_interior_facets_and_predicate():
-    mesh=skfn.MeshWedge1.init_tensor([0.,1.],[0.,1.],[0.,1.,2.])
+    mesh=skfemntv.MeshWedge1.init_tensor([0.,1.],[0.,1.],[0.,1.,2.])
     interior=mesh.interior_facets()
     assert sorted(mesh._facet_sizes[interior].tolist())==[3,3,4,4]
-    side0=skfn.InteriorFacetBasis(
-        mesh,skfn.ElementVector(skfn.ElementWedge1()),facets=interior,
+    side0=skfemntv.InteriorFacetBasis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementWedge1()),facets=interior,
         side=0,intorder=4,
     )
-    side1=skfn.InteriorFacetBasis(
-        mesh,skfn.ElementVector(skfn.ElementWedge1()),facets=interior,
+    side1=skfemntv.InteriorFacetBasis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementWedge1()),facets=interior,
         side=1,intorder=4,
     )
     np.testing.assert_allclose(

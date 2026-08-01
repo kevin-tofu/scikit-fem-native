@@ -7,8 +7,8 @@ from skfem.helpers import div as reference_div
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot,div,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,div,dot,grad
 
 
 def _reference_tri_mesh(mesh,quadratic):
@@ -52,11 +52,11 @@ def _composite_permutation(native,reference):
     "mesh,element,reference_mesh,reference_element,intorder",
     [
         (
-            skfn.MeshTri(),skfn.ElementTriP1(),
+            skfemntv.MeshTri(),skfemntv.ElementTriP1(),
             skfem.MeshTri,skfem.ElementTriP1,2,
         ),
         (
-            skfn.MeshTri2(),skfn.ElementTriP2(),
+            skfemntv.MeshTri2(),skfemntv.ElementTriP2(),
             skfem.MeshTri2,skfem.ElementTriP2,4,
         ),
     ],
@@ -64,18 +64,18 @@ def _composite_permutation(native,reference):
 def test_tri_volume_forms_match_skfem(
     mesh,element,reference_mesh,reference_element,intorder
 ):
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=1),intorder=intorder
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=1),intorder=intorder
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return (
             (1.+w.x[0])*dot(u,v)
             +.7*ddot(grad(u),grad(v))
         )
 
-    actual=skfn.asm(form,basis)
+    actual=skfemntv.asm(form,basis)
     reference_basis=skfem.Basis(
         _reference_tri_mesh(mesh,intorder>=4),reference_element(),
         intorder=intorder,
@@ -100,11 +100,11 @@ def test_tri_volume_forms_match_skfem(
     "mesh,element,reference_mesh,reference_element,intorder",
     [
         (
-            skfn.MeshTri(),skfn.ElementTriP1(),
+            skfemntv.MeshTri(),skfemntv.ElementTriP1(),
             skfem.MeshTri,skfem.ElementTriP1,2,
         ),
         (
-            skfn.MeshTri2(),skfn.ElementTriP2(),
+            skfemntv.MeshTri2(),skfemntv.ElementTriP2(),
             skfem.MeshTri2,skfem.ElementTriP2,4,
         ),
     ],
@@ -112,21 +112,21 @@ def test_tri_volume_forms_match_skfem(
 def test_tri_facet_linear_and_functional_match_skfem(
     mesh,element,reference_mesh,reference_element,intorder
 ):
-    basis=skfn.FacetBasis(
-        mesh,skfn.ElementVector(element),intorder=intorder
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(element),intorder=intorder
     )
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def pressure(v,w):
         return dot((1.+w.x[0])*w.n,v)
 
-    actual=skfn.asm(pressure,basis)
+    actual=skfemntv.asm(pressure,basis)
 
-    @skfn.Functional
+    @skfemntv.Functional
     def boundary_measure(w):
         return 1.+w.x[1]+w.n[0]**2
 
-    actual_measure=skfn.asm(boundary_measure,basis)
+    actual_measure=skfemntv.asm(boundary_measure,basis)
     reference_basis=skfem.FacetBasis(
         _reference_tri_mesh(mesh,intorder>=4),
         skfem.ElementVector(reference_element()),
@@ -152,25 +152,25 @@ def test_tri_facet_linear_and_functional_match_skfem(
 
 
 def test_tri_taylor_hood_blocks_match_skfem():
-    linear=skfn.MeshTri.init_tensor(
+    linear=skfemntv.MeshTri.init_tensor(
         np.linspace(0.,1.,3),np.linspace(0.,1.,3)
     )
-    mesh=skfn.MeshTri2.from_mesh(linear)
-    basis=skfn.Basis(
+    mesh=skfemntv.MeshTri2.from_mesh(linear)
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(skfn.ElementTriP2())
-        *skfn.ElementTriP1(),
+        skfemntv.ElementVector(skfemntv.ElementTriP2())
+        *skfemntv.ElementTriP1(),
         intorder=4,
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def stokes(u,p,v,q,w):
         return (
             ddot(grad(u),grad(v))
             -p*div(v)-q*div(u)
         )
 
-    actual=skfn.asm(stokes,basis)
+    actual=skfemntv.asm(stokes,basis)
     reference_mesh=skfem.MeshTri2.from_mesh(
         skfem.MeshTri(linear.p,linear.t)
     )
@@ -197,19 +197,19 @@ def test_tri_taylor_hood_blocks_match_skfem():
 
 
 def test_tri_p1_facet_on_quadratic_geometry_matches_skfem():
-    linear=skfn.MeshTri.init_tensor(
+    linear=skfemntv.MeshTri.init_tensor(
         np.linspace(0.,1.,3),np.linspace(0.,1.,3)
     )
-    mesh=skfn.MeshTri2.from_mesh(linear)
-    basis=skfn.FacetBasis(
-        mesh,skfn.ElementVector(skfn.ElementTriP1()),intorder=4
+    mesh=skfemntv.MeshTri2.from_mesh(linear)
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTriP1()),intorder=4
     )
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def form(v,w):
         return dot((1.+w.x[0])*w.n,v)
 
-    actual=skfn.asm(form,basis)
+    actual=skfemntv.asm(form,basis)
     reference_mesh=skfem.MeshTri2.from_mesh(
         skfem.MeshTri(linear.p,linear.t)
     )
@@ -232,26 +232,26 @@ def test_tri_p1_facet_on_quadratic_geometry_matches_skfem():
 
 def test_tri_taylor_hood_solve_and_interpolation_match_skfem():
     axis=np.linspace(0.,1.,4)
-    linear=skfn.MeshTri.init_tensor(axis,axis)
-    mesh=skfn.MeshTri2.from_mesh(linear)
-    basis=skfn.Basis(
+    linear=skfemntv.MeshTri.init_tensor(axis,axis)
+    mesh=skfemntv.MeshTri2.from_mesh(linear)
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(skfn.ElementTriP2())
-        *skfn.ElementTriP1(),
+        skfemntv.ElementVector(skfemntv.ElementTriP2())
+        *skfemntv.ElementTriP1(),
         intorder=4,
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def stokes(u,p,v,q,w):
         return ddot(grad(u),grad(v))-p*div(v)-q*div(u)
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def load(v,q,w):
         return dot(w.force,v)
 
-    matrix=skfn.asm(stokes,basis)
+    matrix=skfemntv.asm(stokes,basis)
     x=np.moveaxis(basis.global_coordinates,-1,0)
-    rhs=skfn.asm(load,basis,force=np.stack((x[1],-x[0])))
+    rhs=skfemntv.asm(load,basis,force=np.stack((x[1],-x[0])))
     velocity_basis,_=basis.split_bases()
     velocity_indices,pressure_indices=basis.split_indices()
     constrained=np.concatenate((

@@ -46,7 +46,7 @@ def main() -> None:
     if arguments.skip_tests:
         return
 
-    with tempfile.TemporaryDirectory(prefix="skfn-wheel-test-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="skfemntv-wheel-test-") as temporary:
         environment=Path(temporary)/"venv"
         venv.EnvBuilder(with_pip=True).create(environment)
         python=venv_python(environment)
@@ -60,9 +60,9 @@ def main() -> None:
         )
         run(
             str(python),"-c",
-            "import skfn; from importlib.metadata import version; "
-            "assert skfn.__version__ == version('skfem-native'); "
-            "print('installed skfn:', skfn.__file__, skfn.__version__)",
+            "import skfemntv; from importlib.metadata import version; "
+            "assert skfemntv.__version__ == version('skfem-native'); "
+            "print('installed skfemntv:', skfemntv.__file__, skfemntv.__version__)",
             cwd=Path(temporary),
         )
 

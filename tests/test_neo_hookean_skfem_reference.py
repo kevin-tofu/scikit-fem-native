@@ -15,7 +15,7 @@ from skfem import (
 sys.path.insert(0, str(Path(__file__).parents[1] / "benchmarks"))
 from skfem_neo_hookean import forms
 
-from skfn import NativeAssembler, NeoHookean
+from skfemntv import NativeAssembler, NeoHookean
 
 
 @pytest.mark.parametrize("topology", ["tet", "hex"])

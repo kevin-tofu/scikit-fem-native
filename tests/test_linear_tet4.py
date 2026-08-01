@@ -1,6 +1,6 @@
 import numpy as np
 
-from skfn import LinearElasticTet4, NativeAssembler
+from skfemntv import LinearElasticTet4, NativeAssembler
 
 
 def one_tet():

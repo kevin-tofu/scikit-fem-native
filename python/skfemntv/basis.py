@@ -420,7 +420,7 @@ class MeshQuad2(MeshQuad):
 
 
 class MeshTet(_TopologyMesh):
-    """Minimal tetrahedral mesh container compatible with skfn.Basis."""
+    """Minimal tetrahedral mesh container compatible with skfemntv.Basis."""
 
     def __init__(self, p: np.ndarray | None = None, t: np.ndarray | None = None):
         self.p = np.asarray(
@@ -577,7 +577,7 @@ class MeshWedge1(_TopologyMesh):
 
 
 class MeshPyramid1(_TopologyMesh):
-    """Five-node pyramid mesh; an skfn extension not present in scikit-fem."""
+    """Five-node pyramid mesh; an skfemntv extension not present in scikit-fem."""
 
     def __init__(self,p=None,t=None):
         self.p=np.asarray(

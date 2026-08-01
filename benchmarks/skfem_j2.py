@@ -19,7 +19,7 @@ def update(
     strain,young,poisson,yield_stress,hardening,
     plastic_strain=None,equivalent_plastic_strain=None,
 ):
-    """Vectorized radial return matching ``skfn.J2Plasticity``."""
+    """Vectorized radial return matching ``skfemntv.J2Plasticity``."""
     if plastic_strain is None:
         plastic_strain=np.zeros_like(strain)
     if equivalent_plastic_strain is None:

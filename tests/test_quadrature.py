@@ -4,31 +4,31 @@ import numpy as np
 import pytest
 import skfem
 
-import skfn
+import skfemntv
 
 
 def _volume_case(kind):
     if kind=="tri":
-        mesh=skfn.MeshTri()
+        mesh=skfemntv.MeshTri()
         return (
-            mesh,skfn.ElementTriP1(),
+            mesh,skfemntv.ElementTriP1(),
             skfem.MeshTri(mesh.p,mesh.t),skfem.ElementTriP1(),(4,3),
         )
     if kind=="quad":
-        mesh=skfn.MeshQuad()
+        mesh=skfemntv.MeshQuad()
         return (
-            mesh,skfn.ElementQuad1(),
+            mesh,skfemntv.ElementQuad1(),
             skfem.MeshQuad(mesh.p,mesh.t),skfem.ElementQuad1(),(4,3),
         )
     if kind=="tet":
-        mesh=skfn.MeshTet()
+        mesh=skfemntv.MeshTet()
         return (
-            mesh,skfn.ElementTetP1(),
+            mesh,skfemntv.ElementTetP1(),
             skfem.MeshTet(mesh.p,mesh.t),skfem.ElementTetP1(),(3,2,2),
         )
-    mesh=skfn.MeshHex()
+    mesh=skfemntv.MeshHex()
     return (
-        mesh,skfn.ElementHex1(),
+        mesh,skfemntv.ElementHex1(),
         skfem.MeshHex(mesh.p,mesh.t),skfem.ElementHex1(),(3,2,2),
     )
 
@@ -43,11 +43,11 @@ def _exact_monomial(kind,powers):
 @pytest.mark.parametrize("kind",["tri","quad","tet","hex"])
 def test_high_order_volume_quadrature_integrates_monomials(kind):
     mesh,element,_,_,powers=_volume_case(kind)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=1),intorder=8
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=1),intorder=8
     )
 
-    @skfn.Functional
+    @skfemntv.Functional
     def monomial(w):
         value=1.
         for axis,power in enumerate(powers):
@@ -55,7 +55,7 @@ def test_high_order_volume_quadrature_integrates_monomials(kind):
         return value
 
     np.testing.assert_allclose(
-        skfn.asm(monomial,basis),_exact_monomial(kind,powers),
+        skfemntv.asm(monomial,basis),_exact_monomial(kind,powers),
         rtol=3e-13,atol=3e-13,
     )
     assert basis.X.shape[1]>(
@@ -67,14 +67,14 @@ def test_high_order_volume_quadrature_integrates_monomials(kind):
 @pytest.mark.parametrize("kind",["tri","quad","tet","hex"])
 def test_high_order_facet_quadrature_matches_skfem(kind):
     mesh,element,reference_mesh,reference_element,_=_volume_case(kind)
-    basis=skfn.FacetBasis(
-        mesh,skfn.ElementVector(element,dim=1),intorder=8
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(element,dim=1),intorder=8
     )
     reference=skfem.FacetBasis(
         reference_mesh,reference_element,intorder=8
     )
 
-    @skfn.Functional
+    @skfemntv.Functional
     def functional(w):
         return (
             1.+w.x[0]**6+.3*w.x[-1]**7
@@ -89,7 +89,7 @@ def test_high_order_facet_quadrature_matches_skfem(kind):
         )
 
     np.testing.assert_allclose(
-        skfn.asm(functional,basis),
+        skfemntv.asm(functional,basis),
         skfem.asm(reference_functional,reference),
         rtol=2e-12,atol=2e-12,
     )
@@ -107,15 +107,15 @@ def test_custom_volume_quadrature_matches_skfem(kind):
         point[:]=.5
     weight=np.array([.123])
     quadrature=(point,weight)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=1),
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=1),
         quadrature=quadrature,
     )
     reference=skfem.Basis(
         reference_mesh,reference_element,quadrature=quadrature
     )
 
-    @skfn.Functional
+    @skfemntv.Functional
     def functional(w):
         return 1.+w.x[0]+.2*w.x[-1]**2
 
@@ -124,7 +124,7 @@ def test_custom_volume_quadrature_matches_skfem(kind):
         return 1.+w.x[0]+.2*w.x[-1]**2
 
     np.testing.assert_allclose(
-        skfn.asm(functional,basis),
+        skfemntv.asm(functional,basis),
         skfem.asm(reference_functional,reference),
         rtol=3e-14,atol=3e-14,
     )
@@ -141,15 +141,15 @@ def test_custom_facet_quadrature_matches_skfem(kind):
         point[:]=.25
     weight=np.array([.41])
     quadrature=(point,weight)
-    basis=skfn.FacetBasis(
-        mesh,skfn.ElementVector(element,dim=1),
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(element,dim=1),
         quadrature=quadrature,
     )
     reference=skfem.FacetBasis(
         reference_mesh,reference_element,quadrature=quadrature
     )
 
-    @skfn.Functional
+    @skfemntv.Functional
     def functional(w):
         return 1.+w.x[0]+.2*w.n[-1]**2
 
@@ -158,18 +158,18 @@ def test_custom_facet_quadrature_matches_skfem(kind):
         return 1.+w.x[0]+.2*w.n[-1]**2
 
     np.testing.assert_allclose(
-        skfn.asm(functional,basis),
+        skfemntv.asm(functional,basis),
         skfem.asm(reference_functional,reference),
         rtol=3e-13,atol=3e-13,
     )
 
 
 def test_custom_interior_quadrature_aligns_both_sides():
-    mesh=skfn.MeshHex.init_tensor([0.,.5,1.],[0.,1.],[0.,1.])
+    mesh=skfemntv.MeshHex.init_tensor([0.,.5,1.],[0.,1.],[0.,1.])
     quadrature=(np.array([[.2,.7],[.3,.6]]),np.array([.4,.6]))
     bases=[
-        skfn.InteriorFacetBasis(
-            mesh,skfn.ElementVector(skfn.ElementHex1(),dim=1),
+        skfemntv.InteriorFacetBasis(
+            mesh,skfemntv.ElementVector(skfemntv.ElementHex1(),dim=1),
             side=side,quadrature=quadrature,
         )
         for side in (0,1)
@@ -192,8 +192,8 @@ def test_custom_interior_quadrature_aligns_both_sides():
 )
 def test_invalid_custom_quadrature_raises(quadrature):
     with pytest.raises(ValueError):
-        skfn.Basis(
-            skfn.MeshTri(),
-            skfn.ElementVector(skfn.ElementTriP1(),dim=1),
+        skfemntv.Basis(
+            skfemntv.MeshTri(),
+            skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1),
             quadrature=quadrature,
         )

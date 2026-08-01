@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.sparse.linalg import spsolve
 
-from skfn import NativeAssembler, NeoHookeanTet4
+from skfemntv import NativeAssembler, NeoHookeanTet4
 
 
 def one_tet():

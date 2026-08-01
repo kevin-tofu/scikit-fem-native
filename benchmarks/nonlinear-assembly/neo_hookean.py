@@ -14,7 +14,7 @@ import time
 import numpy as np
 import skfem
 
-import skfn
+import skfemntv
 
 sys.path.insert(0,str(Path(__file__).parents[1]))
 from skfem_neo_hookean import forms as reference_forms
@@ -51,13 +51,13 @@ def benchmark(
 ):
     axis=np.linspace(0.,1.,points)
     if topology=="tet":
-        mesh=skfn.MeshTet.init_tensor(axis,axis,axis)
-        element=skfn.ElementTetP1()
+        mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementTetP1()
         reference_mesh_type=skfem.MeshTet
         reference_element=skfem.ElementTetP1()
     else:
-        mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-        element=skfn.ElementHex1()
+        mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementHex1()
         reference_mesh_type=skfem.MeshHex
         reference_element=skfem.ElementHex1()
     if distorted:
@@ -71,8 +71,8 @@ def benchmark(
         (np.full((3,1),.25),np.array([1./6.]))
         if topology=="tet" and intorder==1 else None
     )
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=3),
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=3),
         intorder=intorder,quadrature=quadrature,
     )
     local_nodes=len(element.doflocs)
@@ -82,14 +82,14 @@ def benchmark(
     young,poisson=100.,.3
     lmbda=young*poisson/((1.+poisson)*(1.-2.*poisson))
     mu=young/(2.*(1.+poisson))
-    kernel=skfn.NeoHookean(mu,lmbda)
+    kernel=skfemntv.NeoHookean(mu,lmbda)
     assembler=(
-        skfn.NativeAssembler(
+        skfemntv.NativeAssembler(
             mesh.p.T,mesh.t.T,element_dofs,kernel,
             quadrature=(basis.X.T,basis.W),
         )
         if topology=="tet" else
-        skfn.NativeAssembler.from_basis(basis,kernel)
+        skfemntv.NativeAssembler.from_basis(basis,kernel)
     )
     reference_basis=skfem.Basis(
         reference_mesh_type(mesh.p,mesh.t),
@@ -120,7 +120,7 @@ def benchmark(
             native.tangent.toarray(),tangent.toarray(),
             rtol=3e-11,atol=3e-11,
         )
-    effective=min(native_threads,skfn.available_num_threads())
+    effective=min(native_threads,skfemntv.available_num_threads())
     return Result(
         topology=topology,intorder=intorder,distorted=int(distorted),
         points=points,dofs=basis.N,elements=mesh.nelements,
@@ -145,9 +145,9 @@ def benchmark(
 
 def markdown(results):
     lines=[
-        "| Mesh | Order | Distorted | DoFs | Elements | skfn R [ms] | "
-        "skfn R parallel [ms] | "
-        "skfn R+K [ms] | skfn R+K parallel [ms] | threads | "
+        "| Mesh | Order | Distorted | DoFs | Elements | skfemntv R [ms] | "
+        "skfemntv R parallel [ms] | "
+        "skfemntv R+K [ms] | skfemntv R+K parallel [ms] | threads | "
         "skfem R+K [ms] | parallel speedup |",
         "|:---|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
@@ -179,7 +179,7 @@ def write_csv(path,results):
 def write_plot(path,results,repeat):
     if "MPLCONFIGDIR" not in __import__("os").environ:
         __import__("os").environ["MPLCONFIGDIR"]=str(
-            Path(tempfile.gettempdir())/"skfn-matplotlib"
+            Path(tempfile.gettempdir())/"skfemntv-matplotlib"
         )
     import matplotlib.pyplot as plt
     dofs=np.array([result.dofs for result in results])
@@ -187,8 +187,8 @@ def write_plot(path,results,repeat):
     figure,axes=plt.subplots(1,2,figsize=(11,4.5),constrained_layout=True)
     axis=axes[0]
     for values,label,marker in (
-        ("skfn_tangent_ms","skfn R+K (1 thread)","o-"),
-        ("skfn_tangent_parallel_ms",f"skfn R+K ({threads} threads)","^-"),
+        ("skfn_tangent_ms","skfemntv R+K (1 thread)","o-"),
+        ("skfn_tangent_parallel_ms",f"skfemntv R+K ({threads} threads)","^-"),
         ("skfem_tangent_ms","scikit-fem R+K","s-"),
     ):
         axis.loglog(
@@ -204,15 +204,15 @@ def write_plot(path,results,repeat):
     speedup=axes[1]
     speedup.semilogx(
         dofs,[result.skfem_tangent_ms/result.skfn_tangent_ms for result in results],
-        "o-",label="skfn 1 thread",linewidth=2,
+        "o-",label="skfemntv 1 thread",linewidth=2,
     )
     speedup.semilogx(
         dofs,[result.skfem_tangent_ms/result.skfn_tangent_parallel_ms for result in results],
-        "^-",label=f"skfn {threads} threads",linewidth=2,
+        "^-",label=f"skfemntv {threads} threads",linewidth=2,
     )
     speedup.axhline(1.,color="black",linestyle="--",linewidth=1)
     speedup.set(xlabel="Degrees of freedom",ylabel="Speedup [x]",
-                title="scikit-fem time / skfn time (>1 is faster)")
+                title="scikit-fem time / skfemntv time (>1 is faster)")
     speedup.grid(True,which="both",alpha=.3);speedup.legend()
     figure.suptitle(f"Median of {repeat} timed runs after one warm-up")
     path.parent.mkdir(parents=True,exist_ok=True)

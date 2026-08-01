@@ -1319,8 +1319,8 @@ def asm(form,*bases,num_threads=None,**kwargs):
             form,bases[0],kwargs,requested_threads
         )
     raise TypeError(
-        "skfn.asm accepts forms created by skfn.Functional, "
-        "skfn.LinearForm, or skfn.BilinearForm; use skfem.asm "
+        "skfemntv.asm accepts forms created by skfemntv.Functional, "
+        "skfemntv.LinearForm, or skfemntv.BilinearForm; use skfem.asm "
         "explicitly for scikit-fem forms"
     )
 

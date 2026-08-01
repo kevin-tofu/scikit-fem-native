@@ -1,7 +1,7 @@
 """Reproducible single-thread assembly benchmark.
 
 The linear comparison performs equivalent work: tangent assembly plus one
-matrix-vector product in scikit-fem, and residual+tangent assembly in skfn.
+matrix-vector product in scikit-fem, and residual+tangent assembly in skfemntv.
 Initialization and sparsity construction are intentionally outside timings.
 """
 
@@ -20,7 +20,7 @@ from skfem import (
 )
 from skfem.models.elasticity import linear_elasticity
 
-from skfn import LinearElasticity, NativeAssembler, NeoHookean
+from skfemntv import LinearElasticity, NativeAssembler, NeoHookean
 from skfem_neo_hookean import forms as neo_hookean_forms
 
 
@@ -92,7 +92,7 @@ def run(topology, points, repeats):
         f"elements={basis.mesh.nelements:7} dofs={basis.N:7} "
         f"nnz={linear.tangent.nnz:8} "
         f"skfem={1e3*skfem_time:9.3f}ms "
-        f"skfn={1e3*native_time:8.3f}ms "
+        f"skfemntv={1e3*native_time:8.3f}ms "
         f"speedup={skfem_time/native_time:7.1f}x "
         f"neo-R={1e3*residual_time:8.3f}ms "
         f"neo-RK={1e3*nonlinear_time:8.3f}ms "

@@ -5,8 +5,8 @@ from skfem.helpers import div as reference_div
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot,div,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,div,dot,grad
 
 
 def _permutation(native,reference,components):
@@ -23,54 +23,54 @@ def _permutation(native,reference,components):
 
 def _spaces(kind):
     if kind=="tri":
-        linear=skfn.MeshTri.init_tensor(
+        linear=skfemntv.MeshTri.init_tensor(
             np.linspace(0.,1.,4),np.linspace(0.,1.,3)
         )
-        mesh=skfn.MeshTri2.from_mesh(linear)
+        mesh=skfemntv.MeshTri2.from_mesh(linear)
         reference_mesh=skfem.MeshTri2.from_mesh(
             skfem.MeshTri(linear.p,linear.t)
         )
         return (
             mesh,reference_mesh,
-            skfn.ElementTriP1(),skfn.ElementTriP2(),
+            skfemntv.ElementTriP1(),skfemntv.ElementTriP2(),
             skfem.ElementTriP1(),skfem.ElementTriP2(),
         )
     if kind=="quad":
-        linear=skfn.MeshQuad.init_tensor(
+        linear=skfemntv.MeshQuad.init_tensor(
             np.linspace(0.,1.,4),np.linspace(0.,1.,3)
         )
-        mesh=skfn.MeshQuad2.from_mesh(linear)
+        mesh=skfemntv.MeshQuad2.from_mesh(linear)
         reference_mesh=skfem.MeshQuad2.from_mesh(
             skfem.MeshQuad(linear.p,linear.t)
         )
         return (
             mesh,reference_mesh,
-            skfn.ElementQuad1(),skfn.ElementQuad2(),
+            skfemntv.ElementQuad1(),skfemntv.ElementQuad2(),
             skfem.ElementQuad1(),skfem.ElementQuad2(),
         )
     if kind=="tet":
-        linear=skfn.MeshTet.init_tensor(
+        linear=skfemntv.MeshTet.init_tensor(
             [0.,1.],[0.,1.],[0.,1.]
         )
-        mesh=skfn.MeshTet2.from_mesh(linear)
+        mesh=skfemntv.MeshTet2.from_mesh(linear)
         reference_mesh=skfem.MeshTet2.from_mesh(
             skfem.MeshTet(linear.p,linear.t)
         )
         return (
             mesh,reference_mesh,
-            skfn.ElementTetP1(),skfn.ElementTetP2(),
+            skfemntv.ElementTetP1(),skfemntv.ElementTetP2(),
             skfem.ElementTetP1(),skfem.ElementTetP2(),
         )
-    linear=skfn.MeshHex.init_tensor(
+    linear=skfemntv.MeshHex.init_tensor(
         [0.,.5,1.],[0.,1.],[0.,1.]
     )
-    mesh=skfn.MeshHex2.from_mesh(linear)
+    mesh=skfemntv.MeshHex2.from_mesh(linear)
     reference_mesh=skfem.MeshHex2.from_mesh(
         skfem.MeshHex(linear.p,linear.t)
     )
     return (
         mesh,reference_mesh,
-        skfn.ElementHex1(),skfn.ElementHex2(),
+        skfemntv.ElementHex1(),skfemntv.ElementHex2(),
         skfem.ElementHex1(),skfem.ElementHex2(),
     )
 
@@ -80,11 +80,11 @@ def test_rectangular_value_gradient_assembly_matches_skfem(kind):
     (
         mesh,reference_mesh,low,high,reference_low,reference_high
     )=_spaces(kind)
-    trial=skfn.Basis(
-        mesh,skfn.ElementVector(low,dim=1),intorder=4
+    trial=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(low,dim=1),intorder=4
     )
-    test=skfn.Basis(
-        mesh,skfn.ElementVector(high,dim=1),intorder=4
+    test=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(high,dim=1),intorder=4
     )
     reference_trial=skfem.Basis(
         reference_mesh,reference_low,intorder=4,
@@ -93,7 +93,7 @@ def test_rectangular_value_gradient_assembly_matches_skfem(kind):
         reference_mesh,reference_high,intorder=4,
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return (
             (1.+w.x[0])*dot(u,v)
@@ -107,7 +107,7 @@ def test_rectangular_value_gradient_assembly_matches_skfem(kind):
             +.4*reference_dot(reference_grad(u),reference_grad(v))
         )
 
-    actual=skfn.asm(form,trial,test)
+    actual=skfemntv.asm(form,trial,test)
     expected=skfem.asm(reference,reference_trial,reference_test)
     rows=_permutation(test,reference_test,1)
     columns=_permutation(trial,reference_trial,1)
@@ -123,11 +123,11 @@ def test_rectangular_divergence_block_matches_skfem(kind):
         mesh,reference_mesh,low,high,reference_low,reference_high
     )=_spaces(kind)
     dimension=mesh.dim()
-    velocity=skfn.Basis(
-        mesh,skfn.ElementVector(high),intorder=4
+    velocity=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(high),intorder=4
     )
-    pressure=skfn.Basis(
-        mesh,skfn.ElementVector(low,dim=1),intorder=4
+    pressure=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(low,dim=1),intorder=4
     )
     reference_velocity=skfem.Basis(
         reference_mesh,skfem.ElementVector(reference_high),intorder=4
@@ -136,7 +136,7 @@ def test_rectangular_divergence_block_matches_skfem(kind):
         reference_mesh,reference_low,intorder=4,
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def divergence(u,q,w):
         return (1.+.2*w.x[-1])*div(u)*q
 
@@ -144,7 +144,7 @@ def test_rectangular_divergence_block_matches_skfem(kind):
     def reference(u,q,w):
         return (1.+.2*w.x[-1])*reference_div(u)*q
 
-    actual=skfn.asm(divergence,velocity,pressure)
+    actual=skfemntv.asm(divergence,velocity,pressure)
     expected=skfem.asm(
         reference,reference_velocity,reference_pressure
     )
@@ -157,7 +157,7 @@ def test_rectangular_divergence_block_matches_skfem(kind):
         rtol=8e-12,atol=8e-12,
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def transpose_divergence(p,v,w):
         return div(v)*p*(1.+.2*w.x[-1])
 
@@ -165,7 +165,7 @@ def test_rectangular_divergence_block_matches_skfem(kind):
     def reference_transpose(p,v,w):
         return reference_div(v)*p*(1.+.2*w.x[-1])
 
-    actual_transpose=skfn.asm(
+    actual_transpose=skfemntv.asm(
         transpose_divergence,pressure,velocity
     )
     expected_transpose=skfem.asm(
@@ -190,11 +190,11 @@ def test_rectangular_facet_assembly_matches_skfem(kind):
         mesh,reference_mesh,low,high,reference_low,reference_high
     )=_spaces(kind)
     dimension=mesh.dim()
-    trial=skfn.FacetBasis(
-        mesh,skfn.ElementVector(low),intorder=4
+    trial=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(low),intorder=4
     )
-    test=skfn.FacetBasis(
-        mesh,skfn.ElementVector(high),intorder=4
+    test=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(high),intorder=4
     )
     reference_trial=skfem.FacetBasis(
         reference_mesh,skfem.ElementVector(reference_low),intorder=4
@@ -203,7 +203,7 @@ def test_rectangular_facet_assembly_matches_skfem(kind):
         reference_mesh,skfem.ElementVector(reference_high),intorder=4
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def boundary_mass(u,v,w):
         return (1.+w.x[0]+.1*w.n[-1]**2)*dot(u,v)
 
@@ -211,7 +211,7 @@ def test_rectangular_facet_assembly_matches_skfem(kind):
     def reference(u,v,w):
         return (1.+w.x[0]+.1*w.n[-1]**2)*reference_dot(u,v)
 
-    actual=skfn.asm(boundary_mass,trial,test)
+    actual=skfemntv.asm(boundary_mass,trial,test)
     expected=skfem.asm(reference,reference_trial,reference_test)
     rows=_permutation(test,reference_test,dimension)
     columns=_permutation(trial,reference_trial,dimension)

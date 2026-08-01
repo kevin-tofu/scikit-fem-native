@@ -116,7 +116,7 @@ class NativeAssembler:
         assembler._initialize_matrix()
         return assembler
 
-    # Test/reference bridge; skfn itself never imports scikit-fem.
+    # Test/reference bridge; skfemntv itself never imports scikit-fem.
     from_skfem = from_basis
 
     @property
@@ -126,6 +126,21 @@ class NativeAssembler:
     @property
     def tangent(self) -> csr_matrix:
         return self._tangent
+
+    @property
+    def parallel_diagnostics(self) -> dict[str,int]:
+        """Read-only coloring sizes used by race-free parallel scatter."""
+        return {
+            "color_count": int(getattr(self._native,"color_count",0)),
+            "min_color_size": int(getattr(self._native,"min_color_size",0)),
+            "max_color_size": int(getattr(self._native,"max_color_size",0)),
+            "explicit_thread_threshold": int(getattr(
+                self._native,"explicit_thread_threshold",128
+            )),
+            "parallel_eligible_color_count": int(getattr(
+                self._native,"parallel_eligible_color_count",0
+            )),
+        }
 
     def evaluate(
         self,

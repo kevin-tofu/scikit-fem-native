@@ -4,35 +4,35 @@ import skfem
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import jump as reference_jump
 
-import skfn
-from skfn.helpers import dot,jump
+import skfemntv
+from skfemntv.helpers import dot,jump
 
 
 def _meshes(kind,order):
     if kind=="tet":
-        linear=skfn.MeshTet.init_tensor([0.,1.],[0.,1.],[0.,1.])
+        linear=skfemntv.MeshTet.init_tensor([0.,1.],[0.,1.],[0.,1.])
         reference_linear=skfem.MeshTet(linear.p,linear.t)
         if order==2:
             return (
-                skfn.MeshTet2.from_mesh(linear),
+                skfemntv.MeshTet2.from_mesh(linear),
                 skfem.MeshTet2.from_mesh(reference_linear),
-                skfn.ElementTetP2(),skfem.ElementTetP2(),
+                skfemntv.ElementTetP2(),skfem.ElementTetP2(),
             )
         return (
             linear,reference_linear,
-            skfn.ElementTetP1(),skfem.ElementTetP1(),
+            skfemntv.ElementTetP1(),skfem.ElementTetP1(),
         )
-    linear=skfn.MeshHex.init_tensor([0.,.5,1.],[0.,1.],[0.,1.])
+    linear=skfemntv.MeshHex.init_tensor([0.,.5,1.],[0.,1.],[0.,1.])
     reference_linear=skfem.MeshHex(linear.p,linear.t)
     if order==2:
         return (
-            skfn.MeshHex2.from_mesh(linear),
+            skfemntv.MeshHex2.from_mesh(linear),
             skfem.MeshHex2.from_mesh(reference_linear),
-            skfn.ElementHex2(),skfem.ElementHex2(),
+            skfemntv.ElementHex2(),skfem.ElementHex2(),
         )
     return (
         linear,reference_linear,
-        skfn.ElementHex1(),skfem.ElementHex1(),
+        skfemntv.ElementHex1(),skfem.ElementHex1(),
     )
 
 
@@ -54,15 +54,15 @@ def _coordinate_permutation(native,reference,components):
 def test_3d_interior_facet_forms_match_skfem(kind,order,side):
     mesh,reference_mesh,element,reference_element=_meshes(kind,order)
     intorder=4 if order==2 else 2
-    basis=skfn.InteriorFacetBasis(
-        mesh,skfn.ElementVector(element),side=side,intorder=intorder
+    basis=skfemntv.InteriorFacetBasis(
+        mesh,skfemntv.ElementVector(element),side=side,intorder=intorder
     )
     reference_basis=skfem.InteriorFacetBasis(
         reference_mesh,skfem.ElementVector(reference_element),
         side=side,intorder=intorder,
     )
 
-    @skfn.Functional
+    @skfemntv.Functional
     def measure(w):
         return (
             1.+w.x[0]+.2*w.x[2]
@@ -77,12 +77,12 @@ def test_3d_interior_facet_forms_match_skfem(kind,order,side):
         )
 
     np.testing.assert_allclose(
-        skfn.asm(measure,basis),
+        skfemntv.asm(measure,basis),
         skfem.asm(reference_measure,reference_basis),
         rtol=8e-12,atol=8e-12,
     )
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def flux(v,w):
         return dot((1.+w.x[1])*w.n,v)
 
@@ -90,7 +90,7 @@ def test_3d_interior_facet_forms_match_skfem(kind,order,side):
     def reference_flux(v,w):
         return reference_dot((1.+w.x[1])*w.n,v)
 
-    actual=skfn.asm(flux,basis)
+    actual=skfemntv.asm(flux,basis)
     expected=skfem.asm(reference_flux,reference_basis)
     permutation=_coordinate_permutation(basis,reference_basis,3)
     np.testing.assert_allclose(
@@ -102,8 +102,8 @@ def test_3d_interior_facet_forms_match_skfem(kind,order,side):
 def test_3d_interior_sides_share_points_normals_and_continuous_trace(kind):
     mesh,_,element,_=_meshes(kind,1)
     bases=[
-        skfn.InteriorFacetBasis(
-            mesh,skfn.ElementVector(element,dim=1),side=side
+        skfemntv.InteriorFacetBasis(
+            mesh,skfemntv.ElementVector(element,dim=1),side=side
         )
         for side in (0,1)
     ]
@@ -130,16 +130,16 @@ def test_3d_interior_sides_share_points_normals_and_continuous_trace(kind):
 def test_3d_discontinuous_jump_penalty_matches_skfem(kind,space):
     mesh,reference_mesh,h1,reference_h1=_meshes(kind,1)
     if space=="p0":
-        element=skfn.ElementTetP0() if kind=="tet" else skfn.ElementHex0()
+        element=skfemntv.ElementTetP0() if kind=="tet" else skfemntv.ElementHex0()
         reference_element=(
             skfem.ElementTetP0() if kind=="tet" else skfem.ElementHex0()
         )
     else:
-        element=skfn.ElementDG(h1)
+        element=skfemntv.ElementDG(h1)
         reference_element=skfem.ElementDG(reference_h1)
     bases=[
-        skfn.InteriorFacetBasis(
-            mesh,skfn.ElementVector(element,dim=1),side=side
+        skfemntv.InteriorFacetBasis(
+            mesh,skfemntv.ElementVector(element,dim=1),side=side
         )
         for side in (0,1)
     ]
@@ -151,7 +151,7 @@ def test_3d_discontinuous_jump_penalty_matches_skfem(kind,space):
         for side in (0,1)
     ]
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def penalty(u,v,w):
         return (1.+w.x[2])*dot(jump(w,u),jump(w,v))
 
@@ -164,7 +164,7 @@ def test_3d_discontinuous_jump_penalty_matches_skfem(kind,space):
             )
         )
 
-    actual=skfn.asm(penalty,bases,bases)
+    actual=skfemntv.asm(penalty,bases,bases)
     expected=skfem.asm(
         reference_penalty,reference_bases,reference_bases
     )

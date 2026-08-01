@@ -15,7 +15,7 @@ import time
 import numpy as np
 import skfem
 
-import skfn
+import skfemntv
 
 sys.path.insert(0,str(Path(__file__).parents[1]))
 from skfem_j2 import forms as reference_forms,update as reference_update
@@ -49,24 +49,24 @@ def median_time(function,repeat):
 def benchmark(topology,points,repeat,native_threads,check):
     axis=np.linspace(0.,1.,points)
     if topology=="tet":
-        mesh=skfn.MeshTet.init_tensor(axis,axis,axis)
-        element=skfn.ElementTetP1()
+        mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementTetP1()
         reference_mesh=skfem.MeshTet(mesh.p,mesh.t)
         reference_element=skfem.ElementTetP1()
     else:
-        mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-        element=skfn.ElementHex1()
+        mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementHex1()
         reference_mesh=skfem.MeshHex(mesh.p,mesh.t)
         reference_element=skfem.ElementHex1()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=3),intorder=2
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=3),intorder=2
     )
     reference_basis=skfem.Basis(
         reference_mesh,skfem.ElementVector(reference_element),
         quadrature=(basis.X,basis.W),
     )
-    material=skfn.J2Plasticity(210.,.3,.25,2.)
-    assembler=skfn.J2Assembler(basis,material)
+    material=skfemntv.J2Plasticity(210.,.3,.25,2.)
+    assembler=skfemntv.J2Assembler(basis,material)
     residual_form,tangent_form=reference_forms()
     coordinates=basis.doflocs
     displacements=[]
@@ -109,7 +109,7 @@ def benchmark(topology,points,repeat,native_threads,check):
             )
         return residual,tangent,plastic,alpha
 
-    effective=min(native_threads,skfn.available_num_threads())
+    effective=min(native_threads,skfemntv.available_num_threads())
     if check:
         native_result,native_state=native(effective)
         residual,tangent,plastic,alpha=reference()
@@ -139,8 +139,8 @@ def benchmark(topology,points,repeat,native_threads,check):
 
 def markdown(results):
     lines=[
-        "| Mesh | DoFs | Elements | IPs | Steps | skfn 1t [ms] | "
-        "skfn Nt [ms] | skfem [ms] | threads | skfem/skfn Nt |",
+        "| Mesh | DoFs | Elements | IPs | Steps | skfemntv 1t [ms] | "
+        "skfemntv Nt [ms] | skfem [ms] | threads | skfem/skfemntv Nt |",
         "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for result in results:
@@ -165,14 +165,14 @@ def write_csv(path,results):
 
 def write_plot(path,results,repeat):
     os.environ.setdefault(
-        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfn-matplotlib")
+        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfemntv-matplotlib")
     )
     import matplotlib.pyplot as plt
     dofs=[row.dofs for row in results];threads=results[0].native_threads
     figure,axes=plt.subplots(1,2,figsize=(11,4.5),constrained_layout=True)
     for field,label,style in (
-        ("skfn_1t_ms","skfn 1 thread","o-"),
-        ("skfn_parallel_ms",f"skfn {threads} threads","^-"),
+        ("skfn_1t_ms","skfemntv 1 thread","o-"),
+        ("skfn_parallel_ms",f"skfemntv {threads} threads","^-"),
         ("skfem_ms","scikit-fem","s-"),
     ):
         axes[0].loglog(
@@ -186,11 +186,11 @@ def write_plot(path,results,repeat):
     axes[0].grid(True,which="both",alpha=.3);axes[0].legend()
     axes[1].semilogx(
         dofs,[row.skfem_ms/row.skfn_1t_ms for row in results],
-        "o-",label="skfem / skfn 1 thread",linewidth=2,
+        "o-",label="skfem / skfemntv 1 thread",linewidth=2,
     )
     axes[1].semilogx(
         dofs,[row.skfem_ms/row.skfn_parallel_ms for row in results],
-        "^-",label=f"skfem / skfn {threads} threads",linewidth=2,
+        "^-",label=f"skfem / skfemntv {threads} threads",linewidth=2,
     )
     axes[1].axhline(1.,color="black",linestyle="--",linewidth=1)
     axes[1].set(

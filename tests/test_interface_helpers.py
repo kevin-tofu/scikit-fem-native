@@ -1,7 +1,7 @@
 import numpy as np
 
-from skfn.helpers import avg, jump, normal_grad
-from skfn.interface import InterfaceField
+from skfemntv.helpers import avg, jump, normal_grad
+from skfemntv.interface import InterfaceField
 
 
 def test_jump_and_weighted_average_are_formulation_neutral():

@@ -39,7 +39,7 @@ test = ["pytest>=8", "scikit-fem>=10"]
 benchmark = ["scikit-fem>=10", "matplotlib>=3.8"]
 
 [tool.scikit-build]
-wheel.packages = ["python/skfn"]
+wheel.packages = ["python/skfemntv"]
 cmake.build-type = "Release"
 sdist.include = [
   "CMakeLists.txt",
@@ -47,7 +47,7 @@ sdist.include = [
   "cpp/src/**/*.cpp",
   "benchmarks/**/*.md",
   "benchmarks/**/*.py",
-  "python/skfn/**/*.py",
+  "python/skfemntv/**/*.py",
   "tests/**/*.py",
 ]
 
