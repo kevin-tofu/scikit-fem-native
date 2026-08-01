@@ -27,6 +27,10 @@ SLS_SCRIPT=(
     Path(__file__).parents[1]
     /"benchmarks"/"nonlinear-assembly"/"standard_linear_solid.py"
 )
+MESH_ORDER_SCRIPT=(
+    Path(__file__).parents[1]
+    /"benchmarks"/"nonlinear-assembly"/"mesh_order_sweep.py"
+)
 
 
 def test_poisson_benchmark_smoke(tmp_path):
@@ -89,6 +93,25 @@ def test_nonlinear_hex_distorted_high_order_benchmark_smoke():
     )
     assert result.returncode==0,result.stderr
     assert "| hex | 4 | yes |" in result.stdout
+
+
+def test_nonlinear_mesh_order_benchmark_smoke(tmp_path):
+    output=tmp_path/"mesh-order.csv"
+    plot=tmp_path/"mesh-order.png"
+    result=subprocess.run(
+        [
+            sys.executable,str(MESH_ORDER_SCRIPT),
+            "--topology","wedge6","--intorder","2","--distorted",
+            "--points","2","--repeat","1","--output",str(output),
+            "--plot-output",str(plot),
+        ],
+        cwd=MESH_ORDER_SCRIPT.parents[2],capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    assert "skfn R t1/t2/t4" in result.stdout
+    assert "| wedge6 | 24 |" in result.stdout
+    assert len(output.read_text().splitlines())==2
+    assert plot.stat().st_size>10_000
 
 
 def test_j2_benchmark_smoke(tmp_path):

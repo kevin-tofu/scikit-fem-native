@@ -33,6 +33,43 @@ timings remain in the CSV and table for line search, modified Newton, and
 matrix-free use cases, but are not plotted as though they were equivalent to
 residual-plus-tangent assembly.
 
+## Mesh type and interpolation-order sweep
+
+`mesh_order_sweep.py` applies the same distorted-geometry Neo-Hookean problem
+to Tet4, Tet10, Hex8, Hex27, and Wedge6.  Each run reports residual-only and
+residual-plus-tangent assembly at one, two, and four requested native threads,
+alongside the equivalent scikit-fem R+K forms.  Setup, Basis construction, and
+the linear solve remain outside the timed region.  The reported memory values
+are persistent CSR storage, not process peak RSS.
+
+Run one topology directly:
+
+```bash
+python benchmarks/nonlinear-assembly/mesh_order_sweep.py \
+  --topology tet10 --intorder 4 --points 2 3 4 --repeat 1 --distorted \
+  --output benchmarks/nonlinear-assembly/results/neo-hookean-tet10-order-sweep.csv \
+  --plot-output benchmarks/nonlinear-assembly/results/neo-hookean-tet10-order-sweep.png
+```
+
+Run the complete local suite with the same defaults used for the committed
+plots:
+
+```bash
+bash benchmarks/nonlinear-assembly/run_mesh_order_sweep.sh
+```
+
+Override the sweep without editing the script, for example:
+
+```bash
+REPEAT=3 POINTS="2 3 4 5" INTORDER=6 \
+  bash benchmarks/nonlinear-assembly/run_mesh_order_sweep.sh
+```
+
+Before timing, every size compares native residual and tangent values with
+scikit-fem using the native quadrature.  Tet10 and Hex27 DOFs are matched by
+physical nodal coordinates so differing package-local node order does not
+affect the comparison.
+
 ## J2 plasticity
 
 The J2 benchmark separates the constitutive material-point update from fused
