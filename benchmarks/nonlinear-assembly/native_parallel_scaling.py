@@ -6,11 +6,15 @@ import argparse
 import csv
 from dataclasses import asdict,dataclass
 from pathlib import Path
-import resource
 import statistics
 import sys
 import tempfile
 import time
+
+try:
+    import resource
+except ModuleNotFoundError:  # Not available on Windows.
+    resource=None
 
 import numpy as np
 
@@ -52,6 +56,36 @@ def current_rss_mb():
     if statm.exists():
         resident=int(statm.read_text().split()[1])
         return resident*__import__("os").sysconf("SC_PAGE_SIZE")/1024.**2
+    if resource is None:
+        import ctypes
+
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_=[
+                ("cb",ctypes.c_ulong),("PageFaultCount",ctypes.c_ulong),
+                ("PeakWorkingSetSize",ctypes.c_size_t),
+                ("WorkingSetSize",ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage",ctypes.c_size_t),
+                ("QuotaPagedPoolUsage",ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage",ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage",ctypes.c_size_t),
+                ("PagefileUsage",ctypes.c_size_t),
+                ("PeakPagefileUsage",ctypes.c_size_t),
+            ]
+
+        counters=ProcessMemoryCounters()
+        counters.cb=ctypes.sizeof(counters)
+        get_current_process=ctypes.windll.kernel32.GetCurrentProcess
+        get_current_process.restype=ctypes.c_void_p
+        get_process_memory_info=ctypes.windll.psapi.GetProcessMemoryInfo
+        get_process_memory_info.argtypes=(
+            ctypes.c_void_p,ctypes.POINTER(ProcessMemoryCounters),ctypes.c_ulong
+        )
+        get_process_memory_info.restype=ctypes.c_int
+        if not get_process_memory_info(
+            get_current_process(),ctypes.byref(counters),counters.cb
+        ):
+            raise ctypes.WinError()
+        return counters.WorkingSetSize/1024.**2
     value=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return value/(1024. if sys.platform!="darwin" else 1024.**2)
 
