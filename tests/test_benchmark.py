@@ -38,6 +38,26 @@ NATIVE_PARALLEL_SCRIPT=(
 SUPERMESH_PARALLEL_SCRIPT=(
     Path(__file__).parents[1]/"benchmarks"/"supermesh_parallel.py"
 )
+CUT_ASSEMBLY_SCRIPT=(
+    Path(__file__).parents[1]/"benchmarks"/"cutfem"/"cut_assembly.py"
+)
+
+
+def test_cut_assembly_benchmark_smoke(tmp_path):
+    output=tmp_path/"cut.csv";plot=tmp_path/"cut.png"
+    result=subprocess.run(
+        [
+            sys.executable,str(CUT_ASSEMBLY_SCRIPT),
+            "--resolution","3","--fractions",".5",
+            "--intorders","1","2","--threads","2","--repeat","1",
+            "--output",str(output),"--plot-output",str(plot),
+        ],
+        cwd=CUT_ASSEMBLY_SCRIPT.parents[2],capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    assert "assembly speedup" in result.stdout
+    assert len(output.read_text().splitlines())==3
+    assert plot.stat().st_size>10_000
 
 
 def test_poisson_benchmark_smoke(tmp_path):
