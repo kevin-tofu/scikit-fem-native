@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import skfem
 
 import skfemntv
 from skfemntv.helpers import ddot,grad
@@ -39,6 +40,25 @@ def test_region_algebra_rejects_incompatible_entities():
         cells|skfemntv.CellRegion([0],3)
     with pytest.raises(ValueError,match="requires entity_count"):
         ~skfemntv.NodeRegion([0])
+
+
+def test_facet_region_algebra_preserves_orientation_metadata():
+    left=skfemntv.FacetRegion(
+        [3,1],5,sides=[1,0],normal_signs=[1,-1]
+    )
+    right=skfemntv.FacetRegion([1,2],5,sides=[0,1],normal_signs=[-1,1])
+    combined=left|right
+
+    np.testing.assert_array_equal(combined,[1,2,3])
+    np.testing.assert_array_equal(combined.sides,[0,1,1])
+    np.testing.assert_array_equal(combined.normal_signs,[-1,1,1])
+    intersection=left&right
+    np.testing.assert_array_equal(intersection,[1])
+    np.testing.assert_array_equal(intersection.normal_signs,[-1])
+
+    conflict=skfemntv.FacetRegion([1],5,sides=[1])
+    with pytest.raises(ValueError,match="orientation metadata conflicts"):
+        left|conflict
 
 
 def test_mesh_predicates_return_first_class_regions():
@@ -103,6 +123,81 @@ def test_named_boundary_is_a_region_and_constructs_facet_basis():
         named.global_coordinates,direct.global_coordinates
     )
     np.testing.assert_allclose(named.dx,direct.dx)
+
+
+def test_exterior_normal_selection_flips_normal_without_changing_parent():
+    mesh=skfemntv.MeshQuad.init_tensor(
+        np.linspace(0.,1.,4),np.linspace(0.,1.,3)
+    )
+    right_facing=mesh.facets_satisfying(
+        lambda x:np.isclose(x[0],0.),
+        boundaries_only=True,normal=np.array([1.,0.]),
+    )
+    assert isinstance(right_facing,skfemntv.FacetRegion)
+    np.testing.assert_array_equal(right_facing.sides,0)
+    np.testing.assert_array_equal(right_facing.normal_signs,-1)
+
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementQuad1(),dim=1),
+        facets=right_facing,
+    )
+    assert np.all(basis.normals[...,0]>.999999)
+    np.testing.assert_array_equal(
+        basis.parent_elements,mesh.f2t[0,right_facing]
+    )
+
+
+@pytest.mark.parametrize("dimension",[2,3])
+def test_interior_normal_selection_chooses_parent_side(dimension):
+    if dimension==2:
+        mesh=skfemntv.MeshTri.init_tensor(
+            np.linspace(0.,1.,3),np.linspace(0.,1.,3)
+        )
+        element=skfemntv.ElementTriP1()
+    else:
+        mesh=skfemntv.MeshTet.init_tensor(
+            np.linspace(0.,1.,3),np.linspace(0.,1.,2),
+            np.linspace(0.,1.,2),
+        )
+        element=skfemntv.ElementTetP1()
+    requested=np.zeros(dimension);requested[0]=1.
+    oriented=mesh.facets_satisfying(
+        lambda x:np.isclose(x[0],.5),normal=requested
+    )
+    assert len(oriented)>0
+    assert np.all(mesh.f2t[1,oriented]>=0)
+
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(element,dim=1),facets=oriented
+    )
+    np.testing.assert_array_equal(
+        basis.parent_elements,
+        mesh.f2t[oriented.sides,np.asarray(oriented)],
+    )
+    assert np.all(np.einsum("eqd,d->eq",basis.normals,requested)>.999999)
+
+
+def test_normal_oriented_side_matches_scikit_fem():
+    mesh=skfemntv.MeshTri.init_tensor(
+        np.linspace(0.,1.,3),np.linspace(0.,1.,3)
+    )
+    predicate=lambda x:np.isclose(x[0],.5)
+    native=mesh.facets_satisfying(predicate,normal=np.array([1.,0.]))
+    reference_mesh=skfem.MeshTri(mesh.p,mesh.t)
+    reference=reference_mesh.facets_satisfying(
+        predicate,normal=np.array([1.,0.])
+    )
+
+    np.testing.assert_array_equal(native,reference)
+    np.testing.assert_array_equal(native.sides,reference.ori)
+
+
+def test_normal_selection_validation():
+    mesh=skfemntv.MeshTri()
+    with pytest.raises(ValueError,match="shape"):
+        mesh.facets_satisfying(lambda x:x[0]>=0.,normal=[1.,0.,0.])
+    with pytest.raises(ValueError,match="nonzero"):
+        mesh.facets_satisfying(lambda x:x[0]>=0.,normal=[0.,0.])
 
 
 def test_regions_are_accepted_by_get_dofs():

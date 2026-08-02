@@ -433,6 +433,22 @@ selection diagnostics, and the entity count needed for complement.  Named
 subdomains can also be selected directly using `elements="left"`; restricting
 a Basis does not renumber its global DOFs.
 
+Pass `normal=` to orient selected facets.  For an interior facet this selects
+the parent side whose outward normal is aligned with the requested direction;
+for an exterior facet it retains the only parent and records a normal sign:
+
+```python
+interface = mesh.facets_satisfying(
+    lambda x: np.isclose(x[0], 0.5),
+    normal=np.array([1.0, 0.0]),
+)
+oriented = skfem.FacetBasis(mesh, element, facets=interface)
+```
+
+The resulting `FacetRegion.sides` and `FacetRegion.normal_signs` are immutable
+per-facet metadata.  `FacetBasis` applies both, including mixed orientations in
+one region.
+
 The cached `mesh.facets`, `mesh.t2f`, and `mesh.f2t` arrays are shared by
 repeated Basis construction.  `mesh.interior_facets()` is a small skfemntv
 convenience returning `np.flatnonzero(mesh.f2t[1] != -1)`.

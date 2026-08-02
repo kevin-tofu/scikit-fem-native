@@ -67,7 +67,9 @@ immutable region values; named cell subdomains and named boundary regions can
 be passed directly to Basis, FacetBasis, and DOF selection.  Region algebra
 provides union, intersection, difference, and complement without renumbering
 global entities.  `facets_satisfying(..., normal=...)` and
-`get_dofs(skip=...)` remain the next gaps.
+`get_dofs(skip=...)` remains the next gap.  Normal-oriented selection now
+records a parent side and normal sign for every facet and is consumed by all
+FacetBasis topology paths.
 
 The public region results are:
 
@@ -84,7 +86,7 @@ renumber global DOFs.  First implement:
 1. [x] named cell subdomains (`mesh.with_subdomains`);
 2. [x] union, intersection, difference, and complement;
 3. [x] deterministic selection and empty-region diagnostics;
-4. [ ] normal-oriented exterior-facet selection;
+4. [x] normal-oriented exterior/interior facet selection;
 5. [ ] component-aware DOF selection for vector/composite spaces;
 6. [ ] classification/orientation metadata for level-set results.
 
@@ -237,7 +239,7 @@ solutions cover the genuinely CutFEM-specific parts.
 
 ## Recommended execution order
 
-1. Implement normal-oriented facet selection and component-aware DOF queries.
+1. Implement component-aware DOF queries.
 2. Add classification metadata needed by level-set regions.
 3. Add arbitrary-point value/gradient evaluation.
 4. Close form-algebra gaps required by anisotropic and multi-coefficient forms.

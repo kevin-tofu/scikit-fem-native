@@ -192,9 +192,11 @@ empty-region diagnostics, named cell subdomains, named boundary regions, and
 direct use by Basis, FacetBasis, and DOF selection.  Global IDs are preserved
 and restricted bases do not renumber global DOFs.
 
-The next selection additions are normal-oriented facet queries,
-component-aware DOF selection for vector/composite spaces, and classification
-metadata needed by level sets.
+Normal-oriented facet queries are implemented for exterior and interior
+facets.  Each `FacetRegion` carries immutable parent-side and normal-sign
+metadata, and every FacetBasis topology path consumes mixed orientations.  The
+next selection additions are component-aware DOF selection for
+vector/composite spaces and classification metadata needed by level sets.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -277,7 +279,7 @@ case requires them:
 
 ## Recommended next work
 
-1. Add normal-oriented facet and component-aware DOF selection.
+1. Add component-aware DOF selection.
 2. Add classification metadata needed by level-set regions.
 3. Add arbitrary-point value/gradient evaluation.
 4. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.

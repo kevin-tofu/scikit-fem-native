@@ -158,8 +158,6 @@ class _TopologyMesh:
         return CellRegion(np.flatnonzero(mask),self.nelements)
 
     def facets_satisfying(self,test,boundaries_only=False,normal=None):
-        if normal is not None:
-            raise NotImplementedError("normal-oriented facet queries are not implemented")
         candidates=(
             self.boundary_facets() if boundaries_only else
             np.arange(self.facets.shape[1],dtype=np.int64)
@@ -174,7 +172,53 @@ class _TopologyMesh:
         mask=np.asarray(test(centers),dtype=bool)
         if mask.shape!=(len(candidates),):
             raise ValueError("facet predicate must return one boolean per facet")
-        return FacetRegion(candidates[mask],self.facets.shape[1])
+        selected=candidates[mask]
+        if normal is None:
+            return FacetRegion(selected,self.facets.shape[1])
+        requested=np.asarray(normal,dtype=np.float64)
+        if requested.shape!=(self.dim(),) or not np.all(np.isfinite(requested)):
+            raise ValueError(
+                f"normal must be a finite vector with shape ({self.dim()},)"
+            )
+        length=np.linalg.norm(requested)
+        if length==0.:
+            raise ValueError("normal must be nonzero")
+        requested=requested/length
+        sides=np.zeros(len(selected),dtype=np.int8)
+        signs=np.ones(len(selected),dtype=np.int8)
+        corners=_corner_count(self)
+        for local,facet in enumerate(selected):
+            element=int(self.f2t[0,facet])
+            size=(
+                int(self._facet_sizes[facet])
+                if hasattr(self,"_facet_sizes") else self.facets.shape[0]
+            )
+            facet_nodes=self.facets[:size,facet]
+            points=self.p[:,facet_nodes]
+            center=points.mean(axis=1)
+            element_center=self.p[:,self.t[:corners,element]].mean(axis=1)
+            if self.dim()==2:
+                tangent=points[:,1]-points[:,0]
+                outward=np.array([tangent[1],-tangent[0]])
+            else:
+                outward=np.cross(
+                    points[:,1]-points[:,0],points[:,2]-points[:,0]
+                )
+            outward_length=np.linalg.norm(outward)
+            if not outward_length>0.:
+                raise ValueError(f"facet {facet} has singular geometry")
+            outward=outward/outward_length
+            if np.dot(outward,center-element_center)<0.:
+                outward=-outward
+            if np.dot(requested,outward)<0.:
+                if self.f2t[1,facet]>=0:
+                    sides[local]=1
+                else:
+                    signs[local]=-1
+        return FacetRegion(
+            selected,self.facets.shape[1],
+            sides=sides,normal_signs=signs,
+        )
 
     @property
     def subdomains(self):
@@ -2111,17 +2155,24 @@ class FacetBasis:
                 facets=mesh.boundaries[facets]
             except KeyError as error:
                 raise KeyError(f"unknown boundary {facets!r}") from error
+        oriented=facets if isinstance(facets,FacetRegion) else None
+        orientation_sides=(None if oriented is None else oriented.sides)
+        normal_signs=(None if oriented is None else oriented.normal_signs)
         if mesh.dim()==2:
             self._init_2d(
                 mesh,element,facets,intorder,
                 side=_side,interior=_interior,
                 quadrature=quadrature,
+                orientation_sides=orientation_sides,
+                normal_signs=normal_signs,
             )
             return
         if mesh.t.shape[0] in (5,6):
             self._init_mixed_3d(
                 mesh,element,facets,intorder,
                 side=_side,interior=_interior,quadrature=quadrature,
+                orientation_sides=orientation_sides,
+                normal_signs=normal_signs,
             )
             return
         volume = Basis(mesh, element, intorder=intorder)
@@ -2145,6 +2196,10 @@ class FacetBasis:
                 mesh.boundary_facets()
                 if facets is None else np.asarray(facets)
             )
+        id_selection=np.asarray(facet_ids).ndim==1
+        selected_ids=(
+            np.asarray(facet_ids,dtype=np.int64) if id_selection else None
+        )
         if np.asarray(facet_ids).ndim==1:
             facets=mesh._facet_connectivity(facet_ids,full=True)
         else:
@@ -2230,16 +2285,40 @@ class FacetBasis:
         self.global_coordinates=np.empty((facets.shape[1],nq,3))
         self.normals=np.empty((facets.shape[1],nq,3))
         self.parent_elements=np.empty(facets.shape[1],dtype=np.int64)
+        self.facet_ids=(
+            selected_ids.copy() if selected_ids is not None
+            else np.full(facets.shape[1],-1,dtype=np.int64)
+        )
+        facet_sides=(
+            np.full(facets.shape[1],_side,dtype=np.int8)
+            if orientation_sides is None else np.asarray(orientation_sides)
+        )
+        facet_signs=(
+            np.ones(facets.shape[1],dtype=np.int8)
+            if normal_signs is None else np.asarray(normal_signs)
+        )
+        if facet_sides.shape!=(facets.shape[1],) or facet_signs.shape!=(facets.shape[1],):
+            raise ValueError("facet orientation metadata has the wrong shape")
+        self.facet_sides=facet_sides.copy()
+        self.normal_signs=facet_signs.copy()
         self.local_faces=[]
         for f, face in enumerate(facets.T):
             face_corners=face[:3] if is_tet else (face[0],face[2] if len(face)==9 else face[1],
                 face[8] if len(face)==9 else face[2],face[6] if len(face)==9 else face[3])
             adjacent=lookup[tuple(sorted(map(int,face_corners)))]
-            if _side>=len(adjacent):
-                raise ValueError(
-                    f"facet {tuple(face_corners)} does not have side {_side}"
+            local_side=int(facet_sides[f])
+            if selected_ids is not None:
+                parent=int(mesh.f2t[local_side,selected_ids[f]])
+                matching=[item for item in adjacent if item[1]==parent]
+            else:
+                matching=(
+                    [adjacent[local_side]] if local_side<len(adjacent) else []
                 )
-            _,e,local,corner=adjacent[_side]
+            if not matching:
+                raise ValueError(
+                    f"facet {tuple(face_corners)} does not have side {local_side}"
+                )
+            _,e,local,corner=matching[0]
             self.parent_elements[f]=e
             self.local_faces.append(tuple(local))
             self.element_dofs[:, f] = volume.element_dofs[:, e]
@@ -2293,8 +2372,9 @@ class FacetBasis:
                 normal/=np.linalg.norm(normal)
                 if np.dot(normal,point-x.mean(axis=1))<0.:
                     normal=-normal
-                if _interior and _side==1:
+                if _interior and local_side==1:
                     normal=-normal
+                normal*=facet_signs[f]
                 self.tabulated_shape[f,q]=shape[0]
                 self.tabulated_gradients[f,q]=physical
                 self.global_coordinates[f,q]=point
@@ -2304,7 +2384,8 @@ class FacetBasis:
         self.volume_basis=volume
 
     def _init_mixed_3d(
-        self,mesh,element,facets,intorder,*,side,interior,quadrature
+        self,mesh,element,facets,intorder,*,side,interior,quadrature,
+        orientation_sides=None,normal_signs=None,
     ):
         volume=Basis(mesh,element,intorder=intorder)
         if facets is None:
@@ -2339,6 +2420,18 @@ class FacetBasis:
         count=len(facet_ids)
         self.mesh,self.elem=mesh,element
         self.facet_ids=np.asarray(facet_ids,dtype=np.int64)
+        facet_sides=(
+            np.full(count,side,dtype=np.int8)
+            if orientation_sides is None else np.asarray(orientation_sides)
+        )
+        facet_signs=(
+            np.ones(count,dtype=np.int8)
+            if normal_signs is None else np.asarray(normal_signs)
+        )
+        if facet_sides.shape!=(count,) or facet_signs.shape!=(count,):
+            raise ValueError("facet orientation metadata has the wrong shape")
+        self.facet_sides=facet_sides.copy()
+        self.normal_signs=facet_signs.copy()
         self.X=parameter_points;self.W=parameter_weights
         self.quadrature=(self.X.copy(),self.W.copy())
         self.N=volume.N;self.doflocs=volume.doflocs
@@ -2353,9 +2446,12 @@ class FacetBasis:
         self.parent_elements=np.empty(count,dtype=np.int64)
         self.local_faces=[]
         for f,facet in enumerate(facet_ids):
-            element_index=int(mesh.f2t[side,facet])
+            local_side=int(facet_sides[f])
+            element_index=int(mesh.f2t[local_side,facet])
             if element_index<0:
-                raise ValueError(f"facet {facet} does not have side {side}")
+                raise ValueError(
+                    f"facet {facet} does not have side {local_side}"
+                )
             local_index=int(np.flatnonzero(
                 mesh.t2f[:,element_index]==facet
             )[0])
@@ -2397,8 +2493,9 @@ class FacetBasis:
                 normal=cross/measure
                 if np.dot(normal,point-geometry_nodes.mean(axis=1))<0.:
                     normal=-normal
-                if interior and side==1:
+                if interior and local_side==1:
                     normal=-normal
+                normal*=facet_signs[f]
                 self.tabulated_shape[f,q]=shape[0]
                 self.tabulated_gradients[f,q]=physical
                 self.global_coordinates[f,q]=point
@@ -2409,7 +2506,7 @@ class FacetBasis:
 
     def _init_2d(
         self,mesh,element,facets,intorder,*,side=0,interior=False,
-        quadrature=None,
+        quadrature=None,orientation_sides=None,normal_signs=None,
     ):
         volume=Basis(mesh,element,intorder=intorder)
         if interior:
@@ -2474,6 +2571,20 @@ class FacetBasis:
         for adjacent in lookup.values():
             adjacent.sort(key=lambda item:(item[0],item[1]))
         entities=facets.shape[1];nq=len(points)
+        selected_ids=(
+            np.asarray(facet_ids,dtype=np.int64)
+            if np.asarray(facet_ids).ndim==1 else None
+        )
+        facet_sides=(
+            np.full(entities,side,dtype=np.int8)
+            if orientation_sides is None else np.asarray(orientation_sides)
+        )
+        facet_signs=(
+            np.ones(entities,dtype=np.int8)
+            if normal_signs is None else np.asarray(normal_signs)
+        )
+        if facet_sides.shape!=(entities,) or facet_signs.shape!=(entities,):
+            raise ValueError("facet orientation metadata has the wrong shape")
         nodes_per_element=len(element.elem.doflocs)
         components=element._dim
         self.mesh,self.elem=mesh,element
@@ -2491,15 +2602,30 @@ class FacetBasis:
         self.global_coordinates=np.empty((entities,nq,2))
         self.normals=np.empty((entities,nq,2))
         self.parent_elements=np.empty(entities,dtype=np.int64)
+        self.facet_ids=(
+            selected_ids.copy() if selected_ids is not None
+            else np.full(entities,-1,dtype=np.int64)
+        )
+        self.facet_sides=facet_sides.copy()
+        self.normal_signs=facet_signs.copy()
         self.local_faces=[]
         for facet,facet_nodes in enumerate(facets.T):
             key=tuple(sorted(map(int,facet_nodes[:2])))
             adjacent=lookup[key]
-            if side>=len(adjacent):
-                raise ValueError(
-                    f"facet {key} does not have side {side}"
+            local_side=int(facet_sides[facet])
+            if selected_ids is not None:
+                parent=int(mesh.f2t[local_side,selected_ids[facet]])
+                matching=[item for item in adjacent if item[1]==parent]
+            else:
+                matching=(
+                    [adjacent[local_side]]
+                    if local_side<len(adjacent) else []
                 )
-            _,entity,edge=adjacent[side]
+            if not matching:
+                raise ValueError(
+                    f"facet {key} does not have side {local_side}"
+                )
+            _,entity,edge=matching[0]
             self.parent_elements[facet]=entity
             self.local_faces.append(tuple(edge))
             self.element_dofs[:,facet]=volume.element_dofs[:,entity]
@@ -2543,8 +2669,9 @@ class FacetBasis:
                 normal/=length
                 if np.dot(normal,point-centroid)<0.:
                     normal=-normal
-                if interior and side==1:
+                if interior and local_side==1:
                     normal=-normal
+                normal*=facet_signs[facet]
                 self.tabulated_shape[facet,q]=shape[0]
                 self.tabulated_gradients[facet,q]=physical
                 self.global_coordinates[facet,q]=point
