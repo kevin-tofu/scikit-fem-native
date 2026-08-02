@@ -85,6 +85,50 @@ def test_levelset_result_selects_basis_without_renumbering():
     assert basis.N==mesh.p.shape[1]
 
 
+def test_levelset_extracts_active_topology_and_global_dofs():
+    mesh=skfemntv.MeshQuad.init_tensor(
+        np.array([-1.,0.,1.,2.]),np.array([0.,1.])
+    )
+    result=skfemntv.LevelSet(lambda x:x[0]-.5).classify(mesh)
+    active=set(map(int,result.active))
+
+    active_facets=result.active_facets(mesh)
+    boundary=result.active_boundary_facets(mesh)
+    interior=result.active_interior_facets(mesh)
+    ghost=result.ghost_facets(mesh)
+    assert set(active_facets)==set(boundary)|set(interior)
+    assert set(boundary).isdisjoint(interior)
+    assert len(ghost)>0
+    assert set(ghost)<=set(interior)
+    for facet,side in zip(boundary,boundary.sides):
+        assert int(mesh.f2t[side,facet]) in active
+        other=1-int(side)
+        assert (
+            mesh.f2t[other,facet]<0
+            or int(mesh.f2t[other,facet]) not in active
+        )
+
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementQuad1(),dim=2)
+    )
+    dofs=result.active_dofs(basis)
+    expected=basis.get_dofs(elements=result.active)
+    np.testing.assert_array_equal(dofs.all(),expected.all())
+    np.testing.assert_array_equal(
+        result.active_dofs(basis,components=0).all(),
+        expected.all("u^1"),
+    )
+
+
+def test_active_topology_rejects_a_different_cell_count():
+    result=skfemntv.LevelSet(lambda x:x[0]).classify(skfemntv.MeshTri())
+    other=skfemntv.MeshTri.init_tensor(
+        np.linspace(0.,1.,3),np.linspace(0.,1.,3)
+    )
+    with pytest.raises(ValueError,match="different cell counts"):
+        result.active_facets(other)
+
+
 @pytest.mark.parametrize("field,match",[
     (np.ones((2,2)),"one-dimensional"),
     (np.ones(2),"expected"),

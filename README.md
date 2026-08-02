@@ -484,13 +484,19 @@ classification = level_set.classify(mesh)
 active_basis = skfem.Basis(
     mesh, element, elements=classification.active,
 )
+active_dofs = classification.active_dofs(active_basis)
+background_facets = classification.active_facets(mesh)
+active_boundary = classification.active_boundary_facets(mesh)
+ghost_candidates = classification.ghost_facets(mesh)
 ```
 
 The convention is negative-inside.  Every connectivity node is sampled, so
 high-order edge, face, and interior nodes participate in classification.
 `CUT` means that both signs were sampled; `TOUCHING` means at least one value
 is within tolerance without a sampled sign crossing.  This API does not yet
-construct cut-volume or implicit-interface quadrature.
+construct cut-volume or implicit-interface quadrature.  `ghost_facets` is only
+the active-interior candidate set incident to cut cells; stabilization layers,
+penalty parameters, and the weak form remain user choices.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 

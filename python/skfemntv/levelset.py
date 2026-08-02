@@ -5,7 +5,7 @@ from enum import IntEnum
 
 import numpy as np
 
-from .regions import CellRegion
+from .regions import CellRegion,FacetRegion
 
 
 class CellClassification(IntEnum):
@@ -66,6 +66,84 @@ class CellClassificationResult:
     def active(self) -> CellRegion:
         """Cells intersecting or lying on the non-positive side."""
         return self.inside|self.cut|self.touching
+
+    def _cell_mask(self,mesh,cells: CellRegion) -> np.ndarray:
+        if int(mesh.nelements)!=len(self.labels):
+            raise ValueError(
+                "classification and mesh have different cell counts"
+            )
+        mask=np.zeros(mesh.nelements,dtype=bool)
+        mask[np.asarray(cells,dtype=np.int64)]=True
+        return mask
+
+    def _facet_region(self,mesh,selection,sides=None) -> FacetRegion:
+        ids=np.flatnonzero(selection)
+        return FacetRegion(
+            ids,mesh.facets.shape[1],
+            sides=(None if sides is None else np.asarray(sides)[ids]),
+        )
+
+    def active_facets(self,mesh) -> FacetRegion:
+        """All background facets incident to at least one active cell."""
+        active=self._cell_mask(mesh,self.active)
+        parents=mesh.f2t
+        selected=active[parents[0]]
+        second=parents[1]>=0
+        selected[second]|=active[parents[1,second]]
+        return self._facet_region(mesh,selected)
+
+    def active_boundary_facets(self,mesh) -> FacetRegion:
+        """Facets separating the active mesh from its inactive exterior.
+
+        The facet side identifies the active parent, including side one for an
+        interior background facet whose second parent is active.
+        """
+        active=self._cell_mask(mesh,self.active)
+        parents=mesh.f2t
+        first=active[parents[0]]
+        second=np.zeros(parents.shape[1],dtype=bool)
+        has_second=parents[1]>=0
+        second[has_second]=active[parents[1,has_second]]
+        selected=first^second
+        sides=np.where(first,0,1).astype(np.int8)
+        return self._facet_region(mesh,selected,sides)
+
+    def active_interior_facets(self,mesh) -> FacetRegion:
+        """Background facets with an active cell on both sides."""
+        active=self._cell_mask(mesh,self.active)
+        parents=mesh.f2t
+        has_second=parents[1]>=0
+        selected=np.zeros(parents.shape[1],dtype=bool)
+        selected[has_second]=(
+            active[parents[0,has_second]]&active[parents[1,has_second]]
+        )
+        return self._facet_region(mesh,selected)
+
+    def ghost_facets(self,mesh) -> FacetRegion:
+        """Active interior facets incident to at least one cut cell.
+
+        This is a formulation-neutral candidate set for ghost penalties; the
+        package does not choose the penalty form or stabilization layers.
+        """
+        active=self._cell_mask(mesh,self.active)
+        cut=self._cell_mask(mesh,self.cut)
+        parents=mesh.f2t
+        has_second=parents[1]>=0
+        selected=np.zeros(parents.shape[1],dtype=bool)
+        first=parents[0,has_second]
+        second=parents[1,has_second]
+        selected[has_second]=(
+            active[first]&active[second]&(cut[first]|cut[second])
+        )
+        return self._facet_region(mesh,selected)
+
+    def active_dofs(self,basis,*,components=None,fields=None):
+        """Global DOFs supported by active cells in ``basis``."""
+        if basis.mesh is not None:
+            self._cell_mask(basis.mesh,self.active)
+        return basis.get_dofs(
+            elements=self.active,components=components,fields=fields
+        )
 
 
 class LevelSet:

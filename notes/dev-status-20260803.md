@@ -204,8 +204,11 @@ Level-set classification metadata is implemented by `LevelSet`,
 fields produce immutable global labels plus inside, outside, cut, touching,
 and active `CellRegion` values.  All mesh topologies use every connectivity
 node, including high-order nodes.  Field-scale-aware tolerance, non-finite
-value diagnostics, and direct restricted-Basis use are tested.  Cut-volume
-and implicit-interface quadrature remain separate future stages.
+value diagnostics, and direct restricted-Basis use are tested.  Active facets,
+active-boundary facets with parent-side metadata, active-interior facets,
+cut-adjacent ghost-penalty candidates, and component-aware active global DOFs
+are available without imposing a CutFEM formulation.  Cut-volume and
+implicit-interface quadrature remain separate future stages.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -288,11 +291,10 @@ case requires them:
 
 ## Recommended next work
 
-1. Add active-facet and active-DOF extraction from level-set classification.
-2. Add arbitrary-point value/gradient evaluation.
-3. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-4. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
-5. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
+1. Add arbitrary-point value/gradient evaluation.
+2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
+3. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
+4. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
 
 ## Branch checkpoints
 
