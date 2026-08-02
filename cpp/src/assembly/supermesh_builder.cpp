@@ -29,6 +29,19 @@ struct BuildOutput {
     double area_total{},maximum_gap{};
 };
 
+struct MasterFrame {
+    std::array<V3,3>xyz;
+    std::array<V2,3>projected;
+    V3 tangent0{},tangent1{},normal{};
+    bool valid{};
+};
+
+struct SlaveFrame {
+    std::array<V3,3>xyz;
+    V3 normal{};
+    bool valid{};
+};
+
 V2 add(V2 a, V2 b) { return {a[0] + b[0], a[1] + b[1]}; }
 V2 sub(V2 a, V2 b) { return {a[0] - b[0], a[1] - b[1]}; }
 V2 scale(V2 a, double s) { return {s * a[0], s * a[1]}; }
@@ -261,6 +274,60 @@ py::dict build_triangle_supermesh(
             }
         }
     }
+    std::vector<MasterFrame>master_frames(master_count);
+    std::vector<SlaveFrame>slave_frames(slave_count);
+    {
+        py::gil_scoped_release release;
+        native_fem::parallel_for_workers(
+            master_frames.size(),requested_threads,
+            [&](std::size_t,std::size_t begin,std::size_t end){
+            for(std::size_t index=begin;index<end;++index){
+                auto&frame=master_frames[index];
+                for(int local=0;local<3;++local)frame.xyz[local]=point(
+                    master_point,mp.shape[1],triangle_node(
+                        master_node,master_count,local,index
+                    )
+                );
+                frame.tangent0=sub(frame.xyz[1],frame.xyz[0]);
+                frame.normal=cross(
+                    frame.tangent0,sub(frame.xyz[2],frame.xyz[0])
+                );
+                const double tangent_norm=norm(frame.tangent0);
+                const double normal_norm=norm(frame.normal);
+                if(tangent_norm<=tolerance||normal_norm<=tolerance)continue;
+                frame.tangent0=scale(frame.tangent0,1./tangent_norm);
+                frame.normal=scale(frame.normal,1./normal_norm);
+                frame.tangent1=cross(frame.normal,frame.tangent0);
+                for(int local=0;local<3;++local){
+                    const auto delta=sub(frame.xyz[local],frame.xyz[0]);
+                    frame.projected[local]={
+                        dot(delta,frame.tangent0),dot(delta,frame.tangent1)
+                    };
+                }
+                frame.valid=true;
+            }
+        });
+        native_fem::parallel_for_workers(
+            slave_frames.size(),requested_threads,
+            [&](std::size_t,std::size_t begin,std::size_t end){
+            for(std::size_t index=begin;index<end;++index){
+                auto&frame=slave_frames[index];
+                for(int local=0;local<3;++local)frame.xyz[local]=point(
+                    slave_point,sp.shape[1],triangle_node(
+                        slave_node,slave_count,local,index
+                    )
+                );
+                frame.normal=cross(
+                    sub(frame.xyz[1],frame.xyz[0]),
+                    sub(frame.xyz[2],frame.xyz[0])
+                );
+                const double normal_norm=norm(frame.normal);
+                if(normal_norm<=tolerance)continue;
+                frame.normal=scale(frame.normal,1./normal_norm);
+                frame.valid=true;
+            }
+        });
+    }
     const auto worker_count=std::max<std::size_t>(
         1,native_fem::effective_threads(candidates.size(),requested_threads)
     );
@@ -289,34 +356,19 @@ py::dict build_triangle_supermesh(
             for(std::size_t candidate=begin;candidate<end;++candidate){
                 const auto [master,slave]=candidates[candidate];
 
-                std::array<V3, 3> master_xyz, slave_xyz;
-                for (int local = 0; local < 3; ++local) {
-                    master_xyz[local] = point(
-                        master_point, mp.shape[1],
-                        triangle_node(master_node, master_count, local, master)
-                    );
-                    slave_xyz[local] = point(
-                        slave_point, sp.shape[1],
-                        triangle_node(slave_node, slave_count, local, slave)
-                    );
-                }
-                V3 tangent0 = sub(master_xyz[1], master_xyz[0]);
-                V3 normal = cross(tangent0, sub(master_xyz[2], master_xyz[0]));
-                const double normal_norm = norm(normal);
-                const double tangent_norm = norm(tangent0);
-                if (normal_norm <= tolerance || tangent_norm <= tolerance) continue;
-                normal = scale(normal, 1.0 / normal_norm);
-                tangent0 = scale(tangent0, 1.0 / tangent_norm);
-                const V3 tangent1 = cross(normal, tangent0);
-
-                std::array<V2, 3> master_2d, slave_2d;
+                const auto&master_frame=master_frames[master];
+                const auto&slave_frame=slave_frames[slave];
+                if(!master_frame.valid||!slave_frame.valid)continue;
+                const auto&master_xyz=master_frame.xyz;
+                const auto&slave_xyz=slave_frame.xyz;
+                const auto&tangent0=master_frame.tangent0;
+                const auto&tangent1=master_frame.tangent1;
+                const auto&normal=master_frame.normal;
+                const auto&master_2d=master_frame.projected;
+                std::array<V2,3>slave_2d;
                 double plane_gap = 0.0;
                 for (int local = 0; local < 3; ++local) {
-                    const V3 master_delta = sub(master_xyz[local], master_xyz[0]);
                     const V3 slave_delta = sub(slave_xyz[local], master_xyz[0]);
-                    master_2d[local] = {
-                        dot(master_delta, tangent0), dot(master_delta, tangent1)
-                    };
                     slave_2d[local] = {
                         dot(slave_delta, tangent0), dot(slave_delta, tangent1)
                     };
@@ -324,11 +376,36 @@ py::dict build_triangle_supermesh(
                         plane_gap, std::abs(dot(slave_delta, normal))
                     );
                 }
-                maximum_gap = std::max(maximum_gap, plane_gap);
-                if (plane_gap > projection_tolerance) {
+                maximum_gap=std::max(maximum_gap,plane_gap);
+                if(plane_gap>projection_tolerance){
                     ++noncoplanar_count;
                     continue;
                 }
+                V2 master_lower=master_2d[0],master_upper=master_2d[0];
+                V2 slave_lower=slave_2d[0],slave_upper=slave_2d[0];
+                for(int local=1;local<3;++local)for(int d=0;d<2;++d){
+                    master_lower[d]=std::min(
+                        master_lower[d],master_2d[local][d]
+                    );
+                    master_upper[d]=std::max(
+                        master_upper[d],master_2d[local][d]
+                    );
+                    slave_lower[d]=std::min(
+                        slave_lower[d],slave_2d[local][d]
+                    );
+                    slave_upper[d]=std::max(
+                        slave_upper[d],slave_2d[local][d]
+                    );
+                }
+                const double overlap_width=std::max(
+                    0.,std::min(master_upper[0],slave_upper[0])-
+                       std::max(master_lower[0],slave_lower[0])
+                );
+                const double overlap_height=std::max(
+                    0.,std::min(master_upper[1],slave_upper[1])-
+                       std::max(master_lower[1],slave_lower[1])
+                );
+                if(overlap_width*overlap_height<=tolerance)continue;
                 std::vector<V2> polygon{
                     master_2d[0], master_2d[1], master_2d[2]
                 };
@@ -349,11 +426,7 @@ py::dict build_triangle_supermesh(
                     master_indices.push_back(master);
                     slave_indices.push_back(slave);
 
-                    V3 slave_normal = cross(
-                        sub(slave_xyz[1], slave_xyz[0]),
-                        sub(slave_xyz[2], slave_xyz[0])
-                    );
-                    slave_normal = scale(slave_normal, 1.0 / norm(slave_normal));
+                    V3 slave_normal=slave_frame.normal;
                     if (dot(slave_normal, normal) > 0.0) {
                         slave_normal = scale(slave_normal, -1.0);
                     }
