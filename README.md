@@ -583,6 +583,34 @@ matrix = skfem.asm(
 )
 ```
 
+Vector linear-elasticity fluxes use a quadrature-local constitutive tensor;
+the package still leaves consistency signs, averaging, and penalty selection
+to the user:
+
+```python
+from skfemntv.helpers import (
+    avg, dot, grad, isotropic_traction_tensor, jump,
+)
+
+@skfem.BilinearForm
+def consistency(u, v, w):
+    traction = isotropic_traction_tensor(
+        w.n_master, w.lame_lambda, w.lame_mu
+    )
+    return dot(jump(v), dot(traction, avg(grad(u))))
+
+@skfem.BilinearForm
+def adjoint_consistency(u, v, w):
+    traction = isotropic_traction_tensor(
+        w.n_master, w.lame_lambda, w.lame_mu
+    )
+    return dot(jump(u), dot(traction, avg(grad(v))))
+```
+
+Both value-gradient and gradient-value terms use the native CSR scatter.  The
+second matrix is the transpose of the first for matching coefficients, which
+allows symmetric or nonsymmetric Nitsche variants to be composed explicitly.
+
 Interface `LinearForm` uses the same reusable supermesh quadrature and returns
 one vector containing the master DOFs followed by the slave DOFs:
 

@@ -1468,18 +1468,40 @@ def dot(left, right):
     if isinstance(left,_InterfaceTrace) and isinstance(
         right,_InterfaceCoefficientTrace
     ):
-        if left.role!="test":
-            raise UnsupportedNativeForm("interface dot requires a test field")
-        return _InterfaceBilinearTerm(
-            left,right.trace,right.coefficient
+        if left.role=="test" and right.trace.role=="trial":
+            return _InterfaceBilinearTerm(
+                left,right.trace,right.coefficient
+            )
+        if left.role=="trial" and right.trace.role=="test":
+            if isinstance(right.coefficient,str):
+                raise UnsupportedNativeForm(
+                    "test-gradient coefficients must be evaluated in the form"
+                )
+            coefficient=np.moveaxis(np.asarray(right.coefficient),-3,-1)
+            return _InterfaceBilinearTerm(
+                right.trace,left,coefficient
+            )
+        raise UnsupportedNativeForm(
+            "interface coefficient contraction requires trial and test fields"
         )
     if isinstance(right,_InterfaceTrace) and isinstance(
         left,_InterfaceCoefficientTrace
     ):
-        if right.role!="test":
-            raise UnsupportedNativeForm("interface dot requires a test field")
-        return _InterfaceBilinearTerm(
-            right,left.trace,left.coefficient
+        if right.role=="test" and left.trace.role=="trial":
+            return _InterfaceBilinearTerm(
+                right,left.trace,left.coefficient
+            )
+        if right.role=="trial" and left.trace.role=="test":
+            if isinstance(left.coefficient,str):
+                raise UnsupportedNativeForm(
+                    "test-gradient coefficients must be evaluated in the form"
+                )
+            coefficient=np.moveaxis(np.asarray(left.coefficient),-3,-1)
+            return _InterfaceBilinearTerm(
+                left.trace,right,coefficient
+            )
+        raise UnsupportedNativeForm(
+            "interface coefficient contraction requires trial and test fields"
         )
     if isinstance(left,_InterfaceTrace) and isinstance(right,_InterfaceTrace):
         if left.role=="test":

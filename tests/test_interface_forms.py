@@ -1,7 +1,9 @@
 import numpy as np
 
 import skfemntv
-from skfemntv.helpers import avg, ddot, dot, grad, jump, normal_grad
+from skfemntv.helpers import (
+    avg,ddot,dot,grad,isotropic_traction_tensor,jump,normal_grad,
+)
 
 
 def interface():
@@ -119,6 +121,46 @@ def test_direction_tensor_mixed_form_dispatches_to_cross_kernel():
     )
     np.testing.assert_allclose(
         actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
+    )
+
+
+def test_isotropic_nitsche_flux_and_adjoint_are_transposes():
+    master,slave,integration=interface()
+
+    @skfemntv.BilinearForm
+    def consistency(u,v,w):
+        traction=isotropic_traction_tensor(
+            w.n_master,w.lame_lambda,w.lame_mu
+        )
+        return dot(jump(v),dot(traction,avg(grad(u))))
+
+    @skfemntv.BilinearForm
+    def adjoint_consistency(u,v,w):
+        traction=isotropic_traction_tensor(
+            w.n_master,w.lame_lambda,w.lame_mu
+        )
+        return dot(jump(u),dot(traction,avg(grad(v))))
+
+    consistency_matrix=consistency.assemble(
+        master,slave,integration=integration,lame_lambda=2.3,lame_mu=.8
+    )
+    adjoint_matrix=adjoint_consistency.assemble(
+        master,slave,integration=integration,lame_lambda=2.3,lame_mu=.8
+    )
+    np.testing.assert_allclose(
+        adjoint_matrix.toarray(),consistency_matrix.toarray().T,
+        rtol=3e-14,atol=3e-14,
+    )
+
+
+def test_isotropic_traction_tensor_maps_identity_gradient_to_pressure():
+    normal=np.array([1.,2.,-2.])/3.
+    lame_lambda=2.5;lame_mu=.75
+    traction=isotropic_traction_tensor(normal,lame_lambda,lame_mu)
+    actual=np.einsum("ikl,kl->i",traction,np.eye(3))
+    np.testing.assert_allclose(
+        actual,(3*lame_lambda+2*lame_mu)*normal,
+        rtol=2e-15,atol=2e-15,
     )
 
 
