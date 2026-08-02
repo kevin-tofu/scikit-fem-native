@@ -626,6 +626,23 @@ matrix = skfem.asm(
 result = supermesh.assemble_mortar("dual", num_threads=4)
 ```
 
+Direct planar supermesh construction and retained-coordinate updates also
+accept `num_threads`.  AABB candidates are generated deterministically, then
+their clipping and quadrature records are processed in contiguous thread-local
+chunks and concatenated in original candidate order:
+
+```python
+supermesh = skfem.TriangleSupermesh(
+    master_points, master_triangles,
+    slave_points, slave_triangles,
+    num_threads=4,
+)
+supermesh.update(moved_master, moved_slave, num_threads=4)
+```
+
+Search/build scaling is available through
+`python benchmarks/supermesh_builder.py 32 64 128 --threads 1,2,4`.
+
 The cross assembler colors overlap entities by row DOFs.  Entities within a
 color own disjoint CSR rows, allowing lock-free scatter while preserving a
 bitwise-stable result.  Requested thread counts are capped by the CPUs visible

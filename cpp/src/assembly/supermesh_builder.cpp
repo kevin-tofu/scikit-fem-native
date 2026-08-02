@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "native_fem/python_bindings.hpp"
+#include "native_fem/parallel.hpp"
 
 namespace py = pybind11;
 
@@ -19,6 +20,14 @@ namespace {
 
 using V2 = std::array<double, 2>;
 using V3 = std::array<double, 3>;
+
+struct BuildOutput {
+    std::vector<std::int64_t> master_indices,slave_indices;
+    std::vector<double> row_shape,column_shape,weights,coordinates;
+    std::vector<double> master_normals,slave_normals,gaps;
+    std::size_t overlap_count{},noncoplanar_count{};
+    double area_total{},maximum_gap{};
+};
 
 V2 add(V2 a, V2 b) { return {a[0] + b[0], a[1] + b[1]}; }
 V2 sub(V2 a, V2 b) { return {a[0] - b[0], a[1] - b[1]}; }
@@ -122,7 +131,8 @@ py::dict build_triangle_supermesh(
     py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
         slave_triangles,
     double tolerance,
-    double projection_tolerance
+    double projection_tolerance,
+    int requested_threads
 ) {
     const auto mp = master_points.request();
     const auto mt = master_triangles.request();
@@ -218,31 +228,13 @@ py::dict build_triangle_supermesh(
         .109951743655322, .109951743655322, .109951743655322,
     }};
 
-    std::vector<std::int64_t> master_indices, slave_indices;
-    std::vector<double> row_shape, column_shape, weights, coordinates;
-    std::vector<double> master_normals, slave_normals, gaps;
-    const std::size_t initial = static_cast<std::size_t>(
-        std::max(master_count, slave_count)
-    );
-    master_indices.reserve(initial);
-    slave_indices.reserve(initial);
-    row_shape.reserve(initial * 18);
-    column_shape.reserve(initial * 18);
-    weights.reserve(initial * 6);
-    coordinates.reserve(initial * 18);
-    master_normals.reserve(initial * 18);
-    slave_normals.reserve(initial * 18);
-    gaps.reserve(initial * 6);
-
-    std::size_t candidate_count = 0;
-    std::size_t overlap_count = 0;
-    std::size_t noncoplanar_count = 0;
-    double area_total = 0.0;
-    double maximum_gap = 0.0;
+    std::vector<std::pair<int,int>>candidates;
+    candidates.reserve(static_cast<std::size_t>(
+        std::max(master_count,slave_count)
+    ));
     std::vector<int> active;
     active.reserve(slave_count);
     std::size_t slave_start = 0;
-
     {
         py::gil_scoped_release release;
         for (const int master : master_order) {
@@ -265,7 +257,37 @@ py::dict build_triangle_supermesh(
                         slave_min[slave][d] <= master_max[master][d];
                 }
                 if (!intersects) continue;
-                ++candidate_count;
+                candidates.emplace_back(master,slave);
+            }
+        }
+    }
+    const auto worker_count=std::max<std::size_t>(
+        1,native_fem::effective_threads(candidates.size(),requested_threads)
+    );
+    std::vector<BuildOutput>thread_outputs(worker_count);
+    {
+        py::gil_scoped_release release;
+        native_fem::parallel_for_workers(
+            candidates.size(),requested_threads,
+            [&](std::size_t worker,std::size_t begin,std::size_t end){
+            auto&output=thread_outputs[worker];
+            auto&master_indices=output.master_indices;
+            auto&slave_indices=output.slave_indices;
+            auto&row_shape=output.row_shape;
+            auto&column_shape=output.column_shape;
+            auto&weights=output.weights;
+            auto&coordinates=output.coordinates;
+            auto&master_normals=output.master_normals;
+            auto&slave_normals=output.slave_normals;
+            auto&gaps=output.gaps;
+            auto&overlap_count=output.overlap_count;
+            auto&noncoplanar_count=output.noncoplanar_count;
+            auto&area_total=output.area_total;
+            auto&maximum_gap=output.maximum_gap;
+            master_indices.reserve(end-begin);
+            slave_indices.reserve(end-begin);
+            for(std::size_t candidate=begin;candidate<end;++candidate){
+                const auto [master,slave]=candidates[candidate];
 
                 std::array<V3, 3> master_xyz, slave_xyz;
                 for (int local = 0; local < 3; ++local) {
@@ -366,8 +388,45 @@ py::dict build_triangle_supermesh(
                 }
                 overlap_count += has_area ? 1 : 0;
             }
-        }
+        });
     }
+    BuildOutput combined;
+    for(auto&output:thread_outputs){
+        auto append=[](auto&destination,auto&source){
+            destination.insert(
+                destination.end(),source.begin(),source.end()
+            );
+        };
+        append(combined.master_indices,output.master_indices);
+        append(combined.slave_indices,output.slave_indices);
+        append(combined.row_shape,output.row_shape);
+        append(combined.column_shape,output.column_shape);
+        append(combined.weights,output.weights);
+        append(combined.coordinates,output.coordinates);
+        append(combined.master_normals,output.master_normals);
+        append(combined.slave_normals,output.slave_normals);
+        append(combined.gaps,output.gaps);
+        combined.overlap_count+=output.overlap_count;
+        combined.noncoplanar_count+=output.noncoplanar_count;
+        combined.area_total+=output.area_total;
+        combined.maximum_gap=std::max(
+            combined.maximum_gap,output.maximum_gap
+        );
+    }
+    auto&master_indices=combined.master_indices;
+    auto&slave_indices=combined.slave_indices;
+    auto&row_shape=combined.row_shape;
+    auto&column_shape=combined.column_shape;
+    auto&weights=combined.weights;
+    auto&coordinates=combined.coordinates;
+    auto&master_normals=combined.master_normals;
+    auto&slave_normals=combined.slave_normals;
+    auto&gaps=combined.gaps;
+    const auto candidate_count=candidates.size();
+    const auto overlap_count=combined.overlap_count;
+    const auto noncoplanar_count=combined.noncoplanar_count;
+    const auto area_total=combined.area_total;
+    const auto maximum_gap=combined.maximum_gap;
     const py::ssize_t count = static_cast<py::ssize_t>(master_indices.size());
     py::dict result;
     result["master_indices"] = array_from(master_indices, {count});
@@ -399,6 +458,7 @@ void native_fem::bind_supermesh_builder(py::module_& module) {
         py::arg("slave_points"),
         py::arg("slave_triangles"),
         py::arg("tolerance") = 1e-10,
-        py::arg("projection_tolerance") = 1e-10
+        py::arg("projection_tolerance") = 1e-10,
+        py::arg("num_threads") = 0
     );
 }

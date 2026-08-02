@@ -26,13 +26,14 @@ def grid(cells: int,flip: bool):
     return points,np.asarray(triangles,dtype=np.int64).T
 
 
-def run(cells):
+def run(cells,threads):
     master_points,master_triangles=grid(cells,False)
     slave_points,slave_triangles=grid(cells,True)
     start=perf_counter()
     supermesh=skfemntv.TriangleSupermesh(
         master_points,master_triangles,
         slave_points,slave_triangles,
+        num_threads=threads,
     )
     seconds=perf_counter()-start
     arrays=(
@@ -49,6 +50,7 @@ def run(cells):
         "all_pairs":diagnostics.total_pair_count,
         "aabb_candidates":diagnostics.candidate_pair_count,
         "integration_triangles":diagnostics.integration_triangle_count,
+        "threads":threads,
         "build_seconds":seconds,
         "output_megabytes":sum(array.nbytes for array in arrays)/1e6,
     }
@@ -59,14 +61,17 @@ def main():
     parser.add_argument(
         "cells",nargs="*",type=int,default=[16,32,64,128]
     )
+    parser.add_argument("--threads",default="1,2,4")
     args=parser.parse_args()
+    threads=[int(value) for value in args.threads.split(",")]
     for cells in args.cells:
-        result=run(cells)
-        print(" ".join(
-            f"{key}={value:.6g}" if isinstance(value,float)
-            else f"{key}={value}"
-            for key,value in result.items()
-        ))
+        for count in threads:
+            result=run(cells,count)
+            print(" ".join(
+                f"{key}={value:.6g}" if isinstance(value,float)
+                else f"{key}={value}"
+                for key,value in result.items()
+            ))
 
 
 if __name__=="__main__":

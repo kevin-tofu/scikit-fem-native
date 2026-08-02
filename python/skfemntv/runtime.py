@@ -19,6 +19,7 @@ CAPABILITIES = frozenset({
     "parallel_cross_assembly",
     "parallel_interface_assembly",
     "parallel_mortar_assembly",
+    "parallel_supermesh_search",
     "parallel_fused_assembly",
 })
 

@@ -275,7 +275,7 @@ class SupermeshSearch:
 
     def __init__(
         self,master_triangles,slave_triangles,*,components=1,
-        tolerance=1e-10,projection_tolerance=None,
+        tolerance=1e-10,projection_tolerance=None,num_threads=None,
     ):
         master_triangles=np.asarray(master_triangles,dtype=np.int64)
         slave_triangles=np.asarray(slave_triangles,dtype=np.int64)
@@ -288,6 +288,7 @@ class SupermeshSearch:
         self.components=components
         self.tolerance=float(tolerance)
         self.projection_tolerance=projection_tolerance
+        self.num_threads=num_threads
         self.integration=None
 
     def build(self,master_points,slave_points):
@@ -296,13 +297,17 @@ class SupermeshSearch:
             slave_points,self.slave_triangles,
             components=self.components,tolerance=self.tolerance,
             projection_tolerance=self.projection_tolerance,
+            num_threads=self.num_threads,
         )
         return self.integration
 
-    def update(self,master_points,slave_points):
+    def update(self,master_points,slave_points,*,num_threads=None):
         if self.integration is None:
             return self.build(master_points,slave_points)
-        return self.integration.update(master_points,slave_points)
+        return self.integration.update(
+            master_points,slave_points,
+            num_threads=self.num_threads if num_threads is None else num_threads,
+        )
 
 
 class TriangleSupermesh:
@@ -311,17 +316,19 @@ class TriangleSupermesh:
     def __init__(
         self, master_points, master_triangles, slave_points, slave_triangles,
         *, components=1, tolerance=1e-10, projection_tolerance=None,
+        num_threads=None,
     ):
         self._initialize(
             master_points,master_triangles,slave_points,slave_triangles,
             components=components,tolerance=tolerance,
             projection_tolerance=projection_tolerance,
+            num_threads=num_threads,
         )
 
     def _initialize(
         self,master_points,master_triangles,slave_points,slave_triangles,
         *,components,tolerance,projection_tolerance,
-        master_surface=None,slave_surface=None,
+        master_surface=None,slave_surface=None,num_threads=None,
     ):
         if np.isscalar(components):
             row_components=column_components=int(components)
@@ -355,6 +362,7 @@ class TriangleSupermesh:
                 column_components=column_components,
                 tolerance=tolerance,
                 projection_tolerance=projection_tolerance,
+                num_threads=num_threads,
             )
         a=.445948490915965;b=.091576213509771
         quadrature_bary=np.array([
@@ -545,7 +553,7 @@ class TriangleSupermesh:
     def _initialize_planar_native(
         self,master_points,master_triangles,
         slave_points,slave_triangles,*,row_components,
-        column_components,tolerance,projection_tolerance,
+        column_components,tolerance,projection_tolerance,num_threads=None,
     ):
         old_native=getattr(self,"_native",None)
         old_matrix=getattr(self,"_matrix",None)
@@ -559,6 +567,7 @@ class TriangleSupermesh:
             np.ascontiguousarray(slave_points,dtype=np.float64),
             np.ascontiguousarray(slave_triangles,dtype=np.int64),
             tolerance,projection_tolerance,
+            _native_num_threads(num_threads),
         )
         master_indices=np.asarray(built["master_indices"])
         slave_indices=np.asarray(built["slave_indices"])
@@ -606,14 +615,22 @@ class TriangleSupermesh:
         self._column_shape=column_shape
         self._weights=weights
         def triangle_gradients(points,triangles,indices):
-            result=[]
-            for index in indices:
-                xyz=points[:,triangles[:,index]]
-                edges=np.column_stack((xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]))
-                rs=edges@np.linalg.inv(edges.T@edges)
-                gradient=np.vstack((-rs.sum(axis=1),rs.T))
-                result.append(np.broadcast_to(gradient,(weights.shape[1],3,3)))
-            return np.asarray(result,dtype=np.float64)
+            xyz=points[:,triangles[:,indices]].transpose(2,1,0)
+            edges=np.stack((
+                xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]
+            ),axis=2)
+            metric=np.einsum("edi,edj->eij",edges,edges)
+            reference_gradients=np.einsum(
+                "edi,eij->edj",edges,np.linalg.inv(metric)
+            )
+            gradients=np.stack((
+                -reference_gradients.sum(axis=2),
+                reference_gradients[:,:,0],reference_gradients[:,:,1],
+            ),axis=1)
+            return np.broadcast_to(
+                gradients[:,None,:,:],
+                (len(indices),weights.shape[1],3,3),
+            )
         self._row_physical_gradients=triangle_gradients(
             master_points,master_triangles,master_indices
         )
@@ -666,6 +683,7 @@ class TriangleSupermesh:
         self._components=(row_components,column_components)
         self._tolerance=float(tolerance)
         self._projection_tolerance=float(projection_tolerance)
+        self._build_num_threads=num_threads
         self._pair_set=pair_set
         self._update_count=update_count
         self.diagnostics=SupermeshDiagnostics(
@@ -688,7 +706,7 @@ class TriangleSupermesh:
             ),
         )
 
-    def update(self,master_points,slave_points):
+    def update(self,master_points,slave_points,*,num_threads=None):
         """Update planar coordinates and reuse the CSR pattern when possible."""
         if not hasattr(self,"_master_triangles"):
             raise NotImplementedError(
@@ -714,6 +732,10 @@ class TriangleSupermesh:
                 column_components=self._components[1],
                 tolerance=self._tolerance,
                 projection_tolerance=self._projection_tolerance,
+                num_threads=(
+                    self._build_num_threads
+                    if num_threads is None else num_threads
+                ),
             )
         except Exception:
             self._update_count-=1

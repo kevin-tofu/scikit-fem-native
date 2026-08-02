@@ -5,7 +5,7 @@ import skfemntv
 from skfemntv.helpers import dot,jump
 
 
-def _disjoint_interfaces(count=200):
+def _disjoint_interfaces(count=200,num_threads=None):
     points=[];triangles=[]
     for entity in range(count):
         x=2.*entity
@@ -15,8 +15,23 @@ def _disjoint_interfaces(count=200):
     points=np.asarray(points,dtype=float).T
     triangles=np.asarray(triangles,dtype=np.int64).T
     return skfemntv.TriangleSupermesh(
-        points,triangles,points,triangles
+        points,triangles,points,triangles,num_threads=num_threads
     )
+
+
+def test_parallel_search_preserves_quadrature_and_csr_pattern_bitwise():
+    serial=_disjoint_interfaces(num_threads=1)
+    parallel=_disjoint_interfaces(num_threads=4)
+    for name in (
+        "_row_dofs","_column_dofs","_row_shape","_column_shape",
+        "_weights","global_coordinates","master_normals","slave_normals",
+        "gap",
+    ):
+        assert np.array_equal(getattr(serial,name),getattr(parallel,name))
+    serial_matrix=serial.assemble(num_threads=1)
+    parallel_matrix=parallel.assemble(num_threads=1)
+    assert np.array_equal(serial_matrix.indptr,parallel_matrix.indptr)
+    assert np.array_equal(serial_matrix.indices,parallel_matrix.indices)
 
 
 def test_parallel_cross_scatter_is_bitwise_deterministic():
