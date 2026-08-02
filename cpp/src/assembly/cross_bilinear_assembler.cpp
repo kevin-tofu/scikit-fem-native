@@ -10,6 +10,7 @@
 
 #include "native_fem/continuum_kernel.hpp"
 #include "native_fem/cross_contraction.hpp"
+#include "native_fem/parallel.hpp"
 #include "native_fem/python_bindings.hpp"
 
 namespace py=pybind11;
@@ -50,12 +51,13 @@ public:
         );
         for(auto d:row_dofs_)rows_=std::max(rows_,std::size_t(d+1));
         for(auto d:column_dofs_)columns_=std::max(columns_,std::size_t(d+1));
-        build_pattern();
+        build_pattern();build_coloring();
     }
     py::tuple assemble(
         py::object coefficient_object,
         const std::string&row_kind="value",
-        const std::string&column_kind="value"){
+        const std::string&column_kind="value",
+        int requested_threads=0){
         const bool row_gradient=kind_is_gradient(row_kind);
         const bool column_gradient=kind_is_gradient(column_kind);
         const double*coefficient=nullptr;bool tensor_coefficient=false;
@@ -82,35 +84,25 @@ public:
         };
         auto start=std::chrono::steady_clock::now();std::fill(values_.begin(),values_.end(),0.);
         {py::gil_scoped_release release;
-        for(int e=0;e<entities_;++e)for(int q=0;q<quadrature_;++q){
-            int eq=e*quadrature_+q;double scale=weights_[eq];
-            for(int a=0;a<row_nodes_;++a)for(int b=0;b<column_nodes_;++b){
-                if(!tensor_coefficient){
-                    const double material=coefficient?coefficient[eq]:1.;
-                    const double entry=scale*material*
-                        native_fem::contract_scalar_cross_basis(
-                            row_basis,column_basis,eq,a,b
+        if(native_fem::effective_threads(
+               static_cast<std::size_t>(entities_),requested_threads)<=1){
+            for(int e=0;e<entities_;++e)assemble_entity(
+                e,coefficient,tensor_coefficient,row_basis,column_basis,
+                coefficient_view
+            );
+        }else{
+            for(const auto&color:colors_){
+                native_fem::parallel_for_workers(
+                    color.size(),requested_threads,
+                    [&](std::size_t,std::size_t begin,std::size_t end){
+                    for(std::size_t index=begin;index<end;++index)
+                        assemble_entity(
+                            color[index],coefficient,tensor_coefficient,
+                            row_basis,column_basis,coefficient_view
                         );
-                    for(int r=0;r<row_components_;++r){
-                        const int i=a*row_components_+r;
-                        const int j=b*column_components_+r;
-                        values_[scatter_[(e*row_local_+i)*column_local_+j]]+=entry;
-                    }
-                }else{
-                    for(int r=0;r<row_components_;++r)
-                        for(int c=0;c<column_components_;++c){
-                            const double entry=native_fem::contract_cross_basis(
-                                row_basis,column_basis,coefficient_view,
-                                eq,a,b,r,c
-                            );
-                            const int i=a*row_components_+r;
-                            const int j=b*column_components_+c;
-                            values_[scatter_[(e*row_local_+i)*column_local_+j]]
-                                +=scale*entry;
-                        }
-                }
-            }}
-        }
+                });
+            }
+        }}
         double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
         return py::make_tuple(view(values_),seconds);
     }
@@ -213,6 +205,47 @@ public:
     py::array values(){return view(values_);}std::size_t rows()const{return rows_;}
     std::size_t columns()const{return columns_;}
 private:
+    void assemble_entity(
+        int e,const double*coefficient,bool tensor_coefficient,
+        const native_fem::CrossBasisView&row_basis,
+        const native_fem::CrossBasisView&column_basis,
+        const native_fem::CrossCoefficientView&coefficient_view){
+        for(int q=0;q<quadrature_;++q){
+            const int eq=e*quadrature_+q;
+            const double scale=weights_[eq];
+            for(int a=0;a<row_nodes_;++a)
+                for(int b=0;b<column_nodes_;++b){
+                    if(!tensor_coefficient){
+                        const double material=coefficient?coefficient[eq]:1.;
+                        const double entry=scale*material*
+                            native_fem::contract_scalar_cross_basis(
+                                row_basis,column_basis,eq,a,b
+                            );
+                        for(int r=0;r<row_components_;++r){
+                            const int i=a*row_components_+r;
+                            const int j=b*column_components_+r;
+                            values_[scatter_[
+                                (e*row_local_+i)*column_local_+j
+                            ]]+=entry;
+                        }
+                    }else{
+                        for(int r=0;r<row_components_;++r)
+                            for(int c=0;c<column_components_;++c){
+                                const double entry=
+                                    native_fem::contract_cross_basis(
+                                        row_basis,column_basis,
+                                        coefficient_view,eq,a,b,r,c
+                                    );
+                                const int i=a*row_components_+r;
+                                const int j=b*column_components_+c;
+                                values_[scatter_[
+                                    (e*row_local_+i)*column_local_+j
+                                ]]+=scale*entry;
+                            }
+                    }
+                }
+        }
+    }
     static native_fem::CrossBasisView basis_view(
         const std::vector<double>&shape,const std::vector<double>&gradient,
         int nodes,int dimension,bool use_gradient){
@@ -286,11 +319,33 @@ private:
         for(int e=0;e<entities_;++e)for(int i=0;i<row_local_;++i){auto row=row_dofs_[e*row_local_+i];
             for(int j=0;j<column_local_;++j){auto begin=indices_.begin()+indptr_[row],end=indices_.begin()+indptr_[row+1];
                 scatter_[(e*row_local_+i)*column_local_+j]=std::lower_bound(begin,end,column_dofs_[e*column_local_+j])-indices_.begin();}}}
+    void build_coloring(){
+        std::vector<std::vector<int>>dof_colors(rows_);
+        std::vector<int>marks;
+        int generation=0;
+        for(int e=0;e<entities_;++e){
+            ++generation;
+            for(int i=0;i<row_local_;++i)
+                for(const int color:dof_colors[row_dofs_[e*row_local_+i]]){
+                    if(color>=static_cast<int>(marks.size()))
+                        marks.resize(color+1);
+                    marks[color]=generation;
+                }
+            int color=0;
+            while(color<static_cast<int>(marks.size())&&
+                  marks[color]==generation)++color;
+            if(color==static_cast<int>(colors_.size()))colors_.emplace_back();
+            colors_[color].push_back(e);
+            for(int i=0;i<row_local_;++i)
+                dof_colors[row_dofs_[e*row_local_+i]].push_back(color);
+        }
+    }
     int entities_,row_nodes_,column_nodes_,row_components_,column_components_;
     int row_local_,column_local_,quadrature_;
     int row_dimension_{},column_dimension_{};
     std::size_t rows_{},columns_{};std::vector<std::int64_t>row_dofs_,column_dofs_,indptr_,indices_,scatter_;
     std::vector<double>row_shape_,column_shape_,row_gradients_,column_gradients_,weights_,values_;
+    std::vector<std::vector<int>>colors_;
 };
 
 void native_fem::bind_cross_bilinear_assembler(py::module_&m){py::class_<CrossBilinearAssembler>(m,"CrossBilinearAssembler")
@@ -306,7 +361,7 @@ void native_fem::bind_cross_bilinear_assembler(py::module_&m){py::class_<CrossBi
         py::arg("column_gradients")=py::none())
     .def("assemble",&CrossBilinearAssembler::assemble,
         py::arg("coefficient")=py::none(),py::arg("row_kind")="value",
-        py::arg("column_kind")="value")
+        py::arg("column_kind")="value",py::arg("num_threads")=0)
     .def("contract_only",&CrossBilinearAssembler::contract_only,
         py::arg("coefficient")=py::none(),py::arg("row_kind")="value",
         py::arg("column_kind")="value")

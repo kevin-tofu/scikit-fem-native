@@ -13,6 +13,15 @@ from ._skfn import (
 )
 
 
+def _native_num_threads(value):
+    if value is None:
+        return 0
+    if isinstance(value,bool) or not isinstance(value,int) or value<1:
+        raise ValueError("num_threads must be a positive integer")
+    from .runtime import available_num_threads
+    return min(value,available_num_threads())
+
+
 class BoundarySurface:
     """Triangulated search geometry backed by parent high-order facet shapes."""
 
@@ -756,11 +765,13 @@ class TriangleSupermesh:
         )
         return instance
 
-    def assemble(self, coefficient=1.):
+    def assemble(self, coefficient=1., *, num_threads=None):
         coefficient=np.ascontiguousarray(np.broadcast_to(
             np.asarray(coefficient,dtype=np.float64),self._coefficient_shape
         ))
-        self._native.assemble(coefficient)
+        self._native.assemble(
+            coefficient,"value","value",_native_num_threads(num_threads)
+        )
         return self._matrix
 
     def trace_data(self,side):
@@ -788,7 +799,9 @@ class TriangleSupermesh:
     def slave_trace(self):
         return self.trace_data("slave")
 
-    def assemble_mortar(self,multiplier="slave",*,dual_side="slave"):
+    def assemble_mortar(
+        self,multiplier="slave",*,dual_side="slave",num_threads=None,
+    ):
         """Assemble sparse mortar blocks for one of four multiplier spaces.
 
         ``multiplier`` accepts ``"slave"``, ``"master"``,
@@ -850,11 +863,11 @@ class TriangleSupermesh:
                     )
         master_matrix=self._assemble_mortar_block(
             multiplier_dofs,self._row_dofs,multiplier_shape,self._row_shape,
-            multiplier_size,self.master_size,
+            multiplier_size,self.master_size,num_threads,
         )
         slave_matrix=self._assemble_mortar_block(
             multiplier_dofs,self._column_dofs,multiplier_shape,self._column_shape,
-            multiplier_size,self.slave_size,
+            multiplier_size,self.slave_size,num_threads,
         )
         coupling=csr_matrix(hstack((master_matrix,-slave_matrix),format="csr"))
         return MortarCouplingResult(
@@ -864,6 +877,7 @@ class TriangleSupermesh:
 
     def _assemble_mortar_block(
         self,row_dofs,column_dofs,row_shape,column_shape,rows,columns,
+        num_threads,
     ):
         native=CrossBilinearAssembler(
             np.ascontiguousarray(row_dofs,dtype=np.int64),
@@ -872,7 +886,10 @@ class TriangleSupermesh:
             np.ascontiguousarray(column_shape,dtype=np.float64),
             np.ascontiguousarray(self._weights,dtype=np.float64),
         )
-        native.assemble(np.ones(self._coefficient_shape,dtype=np.float64))
+        native.assemble(
+            np.ones(self._coefficient_shape,dtype=np.float64),
+            "value","value",_native_num_threads(num_threads),
+        )
         matrix=csr_matrix(
             (native.values,native.indices,native.indptr),
             shape=(native.rows,native.columns),copy=True,
@@ -912,19 +929,22 @@ class TriangleSupermesh:
                 gradient=gradient[0]
         return DiscreteField(value,gradient)
 
-    def assemble_tensor(self, coefficient):
+    def assemble_tensor(self, coefficient, *, num_threads=None):
         """Assemble master-by-slave coupling with a component tensor."""
         coefficient=np.asarray(coefficient,dtype=np.float64)
         target=self._coefficient_shape+(
             self._row_dofs.shape[2],self._column_dofs.shape[2]
         )
         coefficient=np.ascontiguousarray(np.broadcast_to(coefficient,target))
-        self._native.assemble(coefficient,"value","value")
+        self._native.assemble(
+            coefficient,"value","value",_native_num_threads(num_threads)
+        )
         self._matrix.resize((self.master_size,self.slave_size))
         return self._matrix
 
     def assemble_cross(
         self, coefficient=1., *, row_kind="value", column_kind="value",
+        num_threads=None,
     ):
         """Assemble a value/gradient master-by-slave contraction.
 
@@ -962,13 +982,16 @@ class TriangleSupermesh:
         else:
             target=self._coefficient_shape+tuple(tensor_axes)
         coefficient=np.ascontiguousarray(np.broadcast_to(coefficient,target))
-        self._native.assemble(coefficient,row_kind,column_kind)
+        self._native.assemble(
+            coefficient,row_kind,column_kind,_native_num_threads(num_threads)
+        )
         self._matrix.resize((self.master_size,self.slave_size))
         return self._matrix
 
     def assemble_traces(
         self, row_weights, column_weights, *,
         row_kind="value", column_kind="value", coefficient=1.,
+        num_threads=None,
     ):
         """Assemble a 2-by-2 interface block from arbitrary trace weights."""
         valid={"value","gradient","normal_gradient"}
@@ -983,10 +1006,10 @@ class TriangleSupermesh:
                 "full gradients require a supermesh created from FacetBasis"
             )
         blocks=[
-            [self._cross("mm",row_kind,column_kind,coefficient,self.master_size,self.master_size),
-             self._cross("ms",row_kind,column_kind,coefficient,self.master_size,self.slave_size)],
-            [self._cross("sm",row_kind,column_kind,coefficient,self.slave_size,self.master_size),
-             self._cross("ss",row_kind,column_kind,coefficient,self.slave_size,self.slave_size)],
+            [self._cross("mm",row_kind,column_kind,coefficient,self.master_size,self.master_size,num_threads),
+             self._cross("ms",row_kind,column_kind,coefficient,self.master_size,self.slave_size,num_threads)],
+            [self._cross("sm",row_kind,column_kind,coefficient,self.slave_size,self.master_size,num_threads),
+             self._cross("ss",row_kind,column_kind,coefficient,self.slave_size,self.slave_size,num_threads)],
         ]
         rw=np.asarray(row_weights,dtype=float);cw=np.asarray(column_weights,dtype=float)
         return bmat([
@@ -996,6 +1019,7 @@ class TriangleSupermesh:
 
     def assemble_linear_trace(
         self, trace_weights, *, trace_kind="value", coefficient=1.,
+        num_threads=None,
     ):
         """Assemble master/slave interface test traces into one vector."""
         if trace_kind not in {"value","gradient","normal_gradient"}:
@@ -1005,14 +1029,18 @@ class TriangleSupermesh:
         weights=np.asarray(trace_weights,dtype=float)
         if weights.shape!=(2,):
             raise ValueError("interface trace weights must contain two values")
-        master=self._linear_trace("master",trace_kind,coefficient)
-        slave=self._linear_trace("slave",trace_kind,coefficient)
+        master=self._linear_trace(
+            "master",trace_kind,coefficient,num_threads
+        )
+        slave=self._linear_trace(
+            "slave",trace_kind,coefficient,num_threads
+        )
         result=np.zeros(self.master_size+self.slave_size,dtype=np.float64)
         result[:len(master)]=weights[0]*master
         result[self.master_size:self.master_size+len(slave)]=weights[1]*slave
         return result
 
-    def _linear_trace(self,side,kind,coefficient):
+    def _linear_trace(self,side,kind,coefficient,num_threads=None):
         cache=getattr(self,"_linear_trace_assemblers",None)
         if cache is None:
             cache={};self._linear_trace_assemblers=cache
@@ -1042,7 +1070,9 @@ class TriangleSupermesh:
                 coefficient=np.moveaxis(coefficient,0,-1)
             target=self._coefficient_shape+(components,)
             value=np.ascontiguousarray(np.broadcast_to(coefficient,target))
-            result,_=native.assemble(value,None)
+            result,_=native.assemble(
+                value,None,_native_num_threads(num_threads)
+            )
         else:
             dimension=gradients.shape[3]
             if (
@@ -1054,7 +1084,9 @@ class TriangleSupermesh:
             gradient=np.ascontiguousarray(
                 np.broadcast_to(coefficient,target)
             )
-            result,_=native.assemble(None,gradient)
+            result,_=native.assemble(
+                None,gradient,_native_num_threads(num_threads)
+            )
         return np.asarray(result)
 
     def _trace(self,side,kind):
@@ -1075,7 +1107,9 @@ class TriangleSupermesh:
             )
         return trace
 
-    def _cross(self,key,row_kind,column_kind,coefficient,rows,columns):
+    def _cross(
+        self,key,row_kind,column_kind,coefficient,rows,columns,num_threads=None,
+    ):
         cache=getattr(self,"_trace_assemblers",None)
         if cache is None:
             cache={};self._trace_assemblers=cache
@@ -1135,7 +1169,8 @@ class TriangleSupermesh:
             target=self._coefficient_shape+tuple(axes)
         coefficient=np.ascontiguousarray(np.broadcast_to(coefficient,target))
         native.assemble(
-            coefficient,native_row_kind,native_column_kind
+            coefficient,native_row_kind,native_column_kind,
+            _native_num_threads(num_threads),
         )
         matrix=csr_matrix(
             (native.values,native.indices,native.indptr),

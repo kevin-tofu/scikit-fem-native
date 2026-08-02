@@ -35,6 +35,9 @@ NATIVE_PARALLEL_SCRIPT=(
     Path(__file__).parents[1]
     /"benchmarks"/"nonlinear-assembly"/"native_parallel_scaling.py"
 )
+SUPERMESH_PARALLEL_SCRIPT=(
+    Path(__file__).parents[1]/"benchmarks"/"supermesh_parallel.py"
+)
 
 
 def test_poisson_benchmark_smoke(tmp_path):
@@ -178,3 +181,20 @@ def test_standard_linear_solid_benchmark_smoke(tmp_path):
     assert "skfem/skfemntv Nt" in result.stdout
     assert "| 81 |" in result.stdout
     assert len(output.read_text().splitlines())==2
+
+
+def test_supermesh_parallel_benchmark_smoke(tmp_path):
+    output=tmp_path/"supermesh-parallel.csv"
+    result=subprocess.run(
+        [
+            sys.executable,str(SUPERMESH_PARALLEL_SCRIPT),
+            "--cells","4","--threads","1,2","--repeat","1",
+            "--output",str(output),
+        ],
+        cwd=SUPERMESH_PARALLEL_SCRIPT.parents[1],
+        capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    assert "overlap_cells" in result.stdout
+    assert "| coupling | 2 |" in result.stdout
+    assert len(output.read_text().splitlines())==3

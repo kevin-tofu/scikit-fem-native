@@ -16,6 +16,9 @@ CAPABILITIES = frozenset({
     "parallel_basis_geometry",
     "parallel_linear_assembly",
     "parallel_bilinear_assembly",
+    "parallel_cross_assembly",
+    "parallel_interface_assembly",
+    "parallel_mortar_assembly",
     "parallel_fused_assembly",
 })
 

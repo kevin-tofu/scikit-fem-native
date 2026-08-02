@@ -1132,7 +1132,7 @@ def _native_interface_functional_assemble(form,integration,kwargs):
     )
 
 
-def _native_interface_assemble(form,integration,kwargs):
+def _native_interface_assemble(form,integration,kwargs,num_threads=0):
     try:
         expression=form.function(
             _InterfaceTrace("trial"),_InterfaceTrace("test"),
@@ -1175,13 +1175,15 @@ def _native_interface_assemble(form,integration,kwargs):
         matrix=integration.assemble_traces(
             term.row.weights,term.column.weights,
             row_kind=term.row.kind,column_kind=term.column.kind,
-            coefficient=coefficient,
+            coefficient=coefficient,num_threads=num_threads or None,
         )
         result=matrix if result is None else result+matrix
     return result
 
 
-def _native_interface_linear_assemble(form,integration,kwargs):
+def _native_interface_linear_assemble(
+    form,integration,kwargs,num_threads=0,
+):
     try:
         expression=form.function(
             _InterfaceTrace("test"),
@@ -1221,6 +1223,7 @@ def _native_interface_linear_assemble(form,integration,kwargs):
             coefficient=term.factor*np.asarray(
                 coefficient,dtype=np.float64
             ),
+            num_threads=num_threads or None,
         )
         result=vector if result is None else result+vector
     return result
@@ -1266,7 +1269,7 @@ def asm(form,*bases,num_threads=None,**kwargs):
                     "interface LinearForm requires master and slave bases"
                 )
             return _native_interface_linear_assemble(
-                form,integration,kwargs
+                form,integration,kwargs,requested_threads
             )
         if len(bases)==1:
             if hasattr(bases[0],"subbases"):
@@ -1288,16 +1291,13 @@ def asm(form,*bases,num_threads=None,**kwargs):
     if isinstance(form, _BilinearForm):
         integration=kwargs.pop("integration",None)
         if integration is not None:
-            if num_threads is not None:
-                raise UnsupportedNativeForm(
-                    "per-call threads are not yet supported for "
-                    "interface BilinearForm"
-                )
             if len(bases)!=2:
                 raise UnsupportedNativeForm(
                     "interface assembly requires master and slave bases"
                 )
-            return _native_interface_assemble(form,integration,kwargs)
+            return _native_interface_assemble(
+                form,integration,kwargs,requested_threads
+            )
         if (
             len(bases)==2
             and isinstance(bases[0],(list,tuple))

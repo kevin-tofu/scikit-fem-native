@@ -615,6 +615,28 @@ interface matrices against scikit-fem facet integrals.  It also checks equal
 and opposite elastic resultants and quadratic-field convergence on successively
 refined nonmatching P1 traces.
 
+Interface and mortar assembly accept the same bounded per-call thread control
+as volume assembly:
+
+```python
+matrix = skfem.asm(
+    interface_form, master_basis, slave_basis,
+    integration=supermesh, num_threads=4,
+)
+result = supermesh.assemble_mortar("dual", num_threads=4)
+```
+
+The cross assembler colors overlap entities by row DOFs.  Entities within a
+color own disjoint CSR rows, allowing lock-free scatter while preserving a
+bitwise-stable result.  Requested thread counts are capped by the CPUs visible
+to the process.  Scaling can be measured locally with:
+
+```sh
+python benchmarks/supermesh_parallel.py \
+  --cells 32,64,128 --threads 1,2,4 --repeat 3 \
+  --multiplier dual --output benchmarks/supermesh-parallel.csv
+```
+
 Interface `LinearForm` uses the same reusable supermesh quadrature and returns
 one vector containing the master DOFs followed by the slave DOFs:
 
