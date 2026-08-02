@@ -53,6 +53,9 @@ from .interface import InterfaceField
 from .regions import (
     CellRegion,EntityRegion,FacetRegion,NodeRegion,RegionDiagnostics,
 )
+from .levelset import (
+    CellClassification,CellClassificationResult,LevelSet,LevelSetDiagnostics,
+)
 from .forms import (
     BilinearForm,
     Functional,
@@ -165,6 +168,10 @@ __all__ = [
     "FacetRegion",
     "NodeRegion",
     "RegionDiagnostics",
+    "CellClassification",
+    "CellClassificationResult",
+    "LevelSet",
+    "LevelSetDiagnostics",
     "NeoHookeanTet4",
     "NeoHookeanHex8",
     "NeoHookean",

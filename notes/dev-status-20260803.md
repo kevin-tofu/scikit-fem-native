@@ -197,8 +197,15 @@ facets.  Each `FacetRegion` carries immutable parent-side and normal-sign
 metadata, and every FacetBasis topology path consumes mixed orientations.  The
 Component-aware DOF selection is implemented through `DofsView` groups,
 scikit-fem-style `all/keep/drop`, numeric vector components, and composite
-field/component selectors.  The next region addition is classification
-metadata needed by level sets.
+field/component selectors.
+
+Level-set classification metadata is implemented by `LevelSet`,
+`CellClassificationResult`, and `CellClassification`.  Callable and nodal
+fields produce immutable global labels plus inside, outside, cut, touching,
+and active `CellRegion` values.  All mesh topologies use every connectivity
+node, including high-order nodes.  Field-scale-aware tolerance, non-finite
+value diagnostics, and direct restricted-Basis use are tested.  Cut-volume
+and implicit-interface quadrature remain separate future stages.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -281,16 +288,16 @@ case requires them:
 
 ## Recommended next work
 
-1. Add classification metadata needed by level-set regions.
+1. Add active-facet and active-DOF extraction from level-set classification.
 2. Add arbitrary-point value/gradient evaluation.
 3. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-4. Add level-set classification independently of integration.
-5. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
-6. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
+4. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
+5. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
 
 ## Branch checkpoints
 
 - `fae02db`: geometry validation and initial development-status documents;
 - `57adef0`: first-class regions and named subdomains;
 - `e99d17d`: normal-oriented facet regions;
-- component-aware DOF selection follows as the next branch checkpoint.
+- `2efecb7`: component-aware DOF selection;
+- level-set classification is implemented on `feature/levelset`.

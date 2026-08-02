@@ -473,6 +473,25 @@ The cached `mesh.facets`, `mesh.t2f`, and `mesh.f2t` arrays are shared by
 repeated Basis construction.  `mesh.interior_facets()` is a small skfemntv
 convenience returning `np.flatnonzero(mesh.f2t[1] != -1)`.
 
+Level-set sign classification is separate from cut-cell integration.  A
+callable or one scalar per global mesh node classifies every cell as inside,
+outside, cut, or touching.  The returned regions preserve global cell IDs and
+can be passed directly to `Basis`:
+
+```python
+level_set = skfem.LevelSet(lambda x: x[0] ** 2 + x[1] ** 2 - .25)
+classification = level_set.classify(mesh)
+active_basis = skfem.Basis(
+    mesh, element, elements=classification.active,
+)
+```
+
+The convention is negative-inside.  Every connectivity node is sampled, so
+high-order edge, face, and interior nodes participate in classification.
+`CUT` means that both signs were sampled; `TOUCHING` means at least one value
+is within tolerance without a sampled sign crossing.  This API does not yet
+construct cut-volume or implicit-interface quadrature.
+
 The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python
