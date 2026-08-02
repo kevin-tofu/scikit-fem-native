@@ -508,6 +508,12 @@ for cell in classification.cut:
     local = inside.cell_slice(cell)
     x = inside.points[local]
     weight = inside.weights[local]
+
+cut_basis = skfem.CutCellBasis(
+    skfem.Basis(mesh, element), inside,
+)
+field = cut_basis.interpolate(solution)
+integral = cut_basis.integrate(field.value)
 ```
 
 `cell_offsets` stores variable quadrature counts without per-cell padding.
@@ -516,7 +522,11 @@ and consistently oriented level-set normals are immutable local arrays.  The
 Order one integrates constant and linear physical fields exactly.  Order two
 uses positive standard simplex rules, and higher orders use positive
 Duffy-transformed Gauss rules.  Curved/high-order cuts and implicit-interface
-quadrature are not yet supported.
+quadrature are not yet supported.  `CutCellBasis` tabulates affine TriP1/TetP1
+shape values and physical gradients directly on the flattened rule, maps every
+point to global element DOFs, and interpolates scalar or vector coefficients
+without constructing padded element-by-quadrature arrays.  General form
+assembly on this provider is the next stage.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 

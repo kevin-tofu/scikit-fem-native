@@ -220,6 +220,13 @@ higher-order Duffy rules cover polynomial volume integration without changing
 the CSR storage.  High-order/curved reconstruction and the implicit interface
 remain intentionally unsupported rather than silently approximated.
 
+`CutCellBasis` is implemented as the first variable-quadrature assembly
+geometry provider.  It tabulates affine TriP1/TetP1 shape values and physical
+gradients at flattened cut points, maps each point to global parent-element
+DOFs, supports restricted parent bases, and interpolates scalar/vector fields.
+It deliberately does not emulate the rectangular `Basis.dx` contract; native
+form assembly must consume its CSR offsets and flattened arrays explicitly.
+
 ### P1 — Arbitrary-point field evaluation
 
 `Basis.interpolate` evaluates at existing quadrature points.  Probes, transfer,
@@ -303,8 +310,10 @@ case requires them:
 
 1. Add arbitrary-point value/gradient evaluation.
 2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-3. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
-4. Add curved/high-order interface reconstruction with convergence tests.
+3. Connect LinearForm, BilinearForm, and Functional assembly to the flattened
+   `CutCellBasis` contract without padding.
+4. Build `ImplicitFacetBasis` as an assembly geometry provider.
+5. Add curved/high-order interface reconstruction with convergence tests.
 
 ## Branch checkpoints
 
