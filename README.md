@@ -164,6 +164,17 @@ The requested limit is capped by the CPU affinity visible to the process.
 
 ### Package and release checks
 
+Update the single project-version source before creating a GitHub Release:
+
+```bash
+./scripts/upgrade_version.py 0.1.1 --dry-run
+./scripts/upgrade_version.py 0.1.1
+```
+
+The script accepts normalized PEP 440 releases, updates only
+`[project].version` in `pyproject.toml`, and rejects invalid or unchanged
+versions.  The release tag must then be `v0.1.1`.
+
 The same distribution check used by GitHub Actions can be run locally.  It
 builds an sdist and a native wheel, validates their metadata, installs the
 wheel into a clean temporary environment, and runs the full test suite against
