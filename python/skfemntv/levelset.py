@@ -40,6 +40,7 @@ class CutQuadratureDiagnostics:
     total_measure: float
     minimum_weight: float
     maximum_weight: float
+    integration_order: int
 
 
 @dataclass(frozen=True)
@@ -277,6 +278,7 @@ class LevelSet:
     def cut_quadrature(
         self,mesh,*,side: str="inside",
         classification: CellClassificationResult | None=None,
+        intorder: int=1,
     ) -> CutCellQuadrature:
         """Integrate a linear level-set side on affine Tri3 or Tet4 cells.
 
@@ -287,6 +289,11 @@ class LevelSet:
         """
         if side not in ("inside","outside"):
             raise ValueError("cut-quadrature side must be 'inside' or 'outside'")
+        if isinstance(intorder,bool) or not isinstance(intorder,(int,np.integer)):
+            raise TypeError("cut-quadrature intorder must be an integer")
+        intorder=int(intorder)
+        if intorder<1:
+            raise ValueError("cut-quadrature intorder must be positive")
         dimension=int(mesh.dim())
         expected=dimension+1
         if dimension not in (2,3) or mesh.t.shape[0]!=expected:
@@ -317,8 +324,8 @@ class LevelSet:
             length=float(np.linalg.norm(normal))
             if length>0.: normal=normal/length
             else: normal=np.zeros(dimension,dtype=np.float64)
-            local_reference,local_weights=_polytope_centroid_rule(
-                vertices,physical_nodes
+            local_reference,local_weights=_polytope_quadrature(
+                vertices,physical_nodes,intorder
             )
             if len(local_weights):
                 local_points=_map_reference(physical_nodes,local_reference)
@@ -348,6 +355,7 @@ class LevelSet:
             total_measure=float(np.sum(weights)),
             minimum_weight=(float(np.min(weights)) if len(weights) else 0.),
             maximum_weight=float(np.max(weights,initial=0.)),
+            integration_order=intorder,
         )
         return CutCellQuadrature(
             cell_offsets,points,reference_points,weights,cells,normals,
@@ -394,7 +402,7 @@ def _linear_simplex_gradient(physical_nodes,values):
     return np.linalg.solve(jacobian.T,values[1:]-values[0])
 
 
-def _polytope_centroid_rule(vertices,physical_nodes):
+def _polytope_quadrature(vertices,physical_nodes,intorder):
     dimension=physical_nodes.shape[0]
     if len(vertices)<dimension+1:
         return (
@@ -409,28 +417,76 @@ def _polytope_centroid_rule(vertices,physical_nodes):
         vertices=vertices[order];physical=physical[order]
         reference_points=[];weights=[]
         for index in range(1,len(vertices)-1):
-            triangle=physical[[0,index,index+1]]
-            weight=.5*abs(np.linalg.det(
-                np.column_stack((triangle[1]-triangle[0],triangle[2]-triangle[0]))
-            ))
-            if weight>0.:
-                reference_points.append(vertices[[0,index,index+1]].mean(axis=0))
-                weights.append(weight)
+            points,local_weights=_simplex_quadrature_rule(
+                vertices[[0,index,index+1]],
+                physical[[0,index,index+1]],intorder,
+            )
+            reference_points.extend(points)
+            weights.extend(local_weights)
         return np.asarray(reference_points),np.asarray(weights)
     center_reference=vertices.mean(axis=0)
     center_physical=physical.mean(axis=0)
     hull=ConvexHull(vertices)
     reference_points=[];weights=[]
     for face in hull.simplices:
-        tetrahedron=np.vstack((center_physical,physical[face]))
-        weight=abs(np.linalg.det(
-            np.column_stack(tuple(
-                tetrahedron[index]-tetrahedron[0] for index in range(1,4)
-            ))
-        ))/6.
-        if weight>0.:
-            reference_points.append(
-                np.vstack((center_reference,vertices[face])).mean(axis=0)
-            )
-            weights.append(weight)
+        points,local_weights=_simplex_quadrature_rule(
+            np.vstack((center_reference,vertices[face])),
+            np.vstack((center_physical,physical[face])),intorder,
+        )
+        reference_points.extend(points)
+        weights.extend(local_weights)
     return np.asarray(reference_points),np.asarray(weights)
+
+
+def _simplex_quadrature_rule(reference,physical,intorder):
+    dimension=physical.shape[1]
+    barycentric,canonical_weights=_canonical_simplex_rule(
+        dimension,intorder
+    )
+    jacobian=np.column_stack(tuple(
+        physical[index]-physical[0] for index in range(1,dimension+1)
+    ))
+    scale=abs(float(np.linalg.det(jacobian)))
+    if scale==0.:
+        return [],[]
+    return barycentric@reference,canonical_weights*scale
+
+
+def _canonical_simplex_rule(dimension,intorder):
+    if intorder==1:
+        return (
+            np.full((1,dimension+1),1./(dimension+1)),
+            np.array([1./(2 if dimension==2 else 6)]),
+        )
+    if dimension==2 and intorder==2:
+        barycentric=np.array([
+            [2./3.,1./6.,1./6.],
+            [1./6.,2./3.,1./6.],
+            [1./6.,1./6.,2./3.],
+        ])
+        return barycentric,np.full(3,1./6.)
+    if dimension==3 and intorder==2:
+        a=.5854101966249685;b=.1381966011250105
+        barycentric=np.full((4,4),b)
+        np.fill_diagonal(barycentric,a)
+        return barycentric,np.full(4,1./24.)
+    count=max(2,int(np.ceil((intorder+dimension)/2.)))
+    points,weights=np.polynomial.legendre.leggauss(count)
+    points=(points+1.)/2.;weights=weights/2.
+    barycentric=[];quadrature_weights=[]
+    if dimension==2:
+        for u,wu in zip(points,weights):
+            for v,wv in zip(points,weights):
+                x=u;y=(1.-u)*v
+                barycentric.append((1.-x-y,x,y))
+                quadrature_weights.append(wu*wv*(1.-u))
+    else:
+        for u,wu in zip(points,weights):
+            for v,wv in zip(points,weights):
+                for w,ww in zip(points,weights):
+                    x=u;y=(1.-u)*v;z=(1.-u)*(1.-v)*w
+                    barycentric.append((1.-x-y-z,x,y,z))
+                    quadrature_weights.append(
+                        wu*wv*ww*(1.-u)**2*(1.-v)
+                    )
+    return np.asarray(barycentric),np.asarray(quadrature_weights)

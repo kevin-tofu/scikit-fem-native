@@ -78,3 +78,49 @@ def test_cut_quadrature_validates_side_and_classification():
     )
     with pytest.raises(ValueError,match="different cell counts"):
         level_set.cut_quadrature(other,classification=classification)
+
+
+@pytest.mark.parametrize("mesh,field,exact",[
+    (
+        skfemntv.MeshTri(),
+        lambda x:x[:,0]**2+2.*x[:,0]*x[:,1]+3.*x[:,1]**2,
+        5./12.,
+    ),
+    (
+        skfemntv.MeshTet(),
+        lambda x:x[:,0]**2+x[:,1]**2+x[:,2]**2,
+        1./20.,
+    ),
+])
+def test_order_two_integrates_quadratics_on_full_simplex(mesh,field,exact):
+    quadrature=skfemntv.LevelSet(
+        -np.ones(mesh.p.shape[1]),tolerance=0.
+    ).cut_quadrature(mesh,intorder=2)
+
+    assert quadrature.diagnostics.integration_order==2
+    assert quadrature.weights@field(quadrature.points)==pytest.approx(exact)
+    assert np.all(quadrature.weights>0.)
+
+
+def test_higher_order_duffy_rule_integrates_cubic_on_cut_triangle():
+    mesh=skfemntv.MeshTri()
+    level_set=skfemntv.LevelSet(lambda x:x[0]+x[1]-.5,tolerance=0.)
+    order_one=level_set.cut_quadrature(mesh,intorder=1)
+    order_three=level_set.cut_quadrature(mesh,intorder=3)
+    field=lambda x:(x[:,0]+x[:,1])**3
+    # Integral on x+y <= a is a^5 / 5 for a=.5.
+    exact=.5**5/5.
+
+    assert abs(order_three.weights@field(order_three.points)-exact)<1.e-14
+    assert abs(order_one.weights@field(order_one.points)-exact)>1.e-4
+    assert len(order_three.weights)>len(order_one.weights)
+
+
+@pytest.mark.parametrize("intorder,error",[
+    (0,ValueError),(1.5,TypeError),(True,TypeError),
+])
+def test_cut_quadrature_validates_integration_order(intorder,error):
+    with pytest.raises(error,match="intorder"):
+        skfemntv.LevelSet(lambda x:x[0]).cut_quadrature(
+            skfemntv.MeshTri(),intorder=intorder
+        )

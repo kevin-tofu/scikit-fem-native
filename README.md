@@ -501,8 +501,8 @@ and the weak form remain user choices.
 Affine Tri3 and Tet4 meshes also provide the first cut-volume quadrature stage:
 
 ```python
-inside = level_set.cut_quadrature(mesh, side="inside")
-outside = level_set.cut_quadrature(mesh, side="outside")
+inside = level_set.cut_quadrature(mesh, side="inside", intorder=2)
+outside = level_set.cut_quadrature(mesh, side="outside", intorder=2)
 
 for cell in classification.cut:
     local = inside.cell_slice(cell)
@@ -513,9 +513,10 @@ for cell in classification.cut:
 `cell_offsets` stores variable quadrature counts without per-cell padding.
 Physical and reference points, positive physical weights, background cell IDs,
 and consistently oriented level-set normals are immutable local arrays.  The
-current centroid-per-sub-simplex rule integrates constant and linear physical
-fields exactly.  Curved/high-order cuts and implicit-interface quadrature are
-not yet supported.
+Order one integrates constant and linear physical fields exactly.  Order two
+uses positive standard simplex rules, and higher orders use positive
+Duffy-transformed Gauss rules.  Curved/high-order cuts and implicit-interface
+quadrature are not yet supported.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 

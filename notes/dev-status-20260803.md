@@ -215,9 +215,10 @@ The first cut-volume stage is implemented for affine Tri3 and Tet4 cells.
 positive physical weights, background cell IDs, and oriented level-set normals
 with memory proportional to generated quadrature points.  Inside and outside
 rules partition the parent-cell measure, and analytic tests cover exact
-constant/linear integration.  High-order/curved reconstruction and the
-implicit interface remain intentionally unsupported rather than silently
-approximated.
+constant/linear integration.  Positive order-two simplex rules and general
+higher-order Duffy rules cover polynomial volume integration without changing
+the CSR storage.  High-order/curved reconstruction and the implicit interface
+remain intentionally unsupported rather than silently approximated.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -302,9 +303,8 @@ case requires them:
 
 1. Add arbitrary-point value/gradient evaluation.
 2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-3. Extend cut-cell quadrature to integration orders above one and convergence
-   tests before adding curved/high-order reconstruction.
-4. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
+3. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
+4. Add curved/high-order interface reconstruction with convergence tests.
 
 ## Branch checkpoints
 
