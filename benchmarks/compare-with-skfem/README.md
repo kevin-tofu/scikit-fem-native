@@ -94,10 +94,13 @@ threads.  Speedup is always `scikit-fem time / skfemntv time`, so values greater
 than one mean that `skfemntv` is faster.
 
 Basis construction is kept separate because it is one-time setup.  Native
-geometry tabulation reduced the 1,050,625-DoF `skfemntv` setup time from 154.8 s to
-1.18 s (0.98 s with four threads).  The reference scikit-fem setup took 0.64 s,
-so this path remains an optimization target even though the former Python-loop
-bottleneck is gone.
+geometry tabulation removed the former Python-loop bottleneck.  The current
+path also uses a linear-time active-node mask instead of sorting connectivity
+and creates scikit-fem-compatible per-node field arrays lazily.  A local
+post-change run on 263,169 DoFs measured 87.7 ms with one native thread and
+43.4 ms with four threads versus 164.2 ms for scikit-fem.  The checked-in plot
+predates this optimization; rerun the command above when comparing current
+versions on a target machine.
 
 The constant right-hand side is intentionally shown separately.  Its dedicated
 native kernel keeps constant coefficients compact and accumulates quadrature

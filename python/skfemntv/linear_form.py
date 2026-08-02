@@ -26,23 +26,17 @@ class NativeLinearForm:
         if basis.element_dofs.shape[0] != nodes * components:
             raise ValueError("only nodal vector H1 elements are supported")
         entity_count, quadrature_count = basis.dx.shape
-        shape = np.empty((entity_count, quadrature_count, nodes))
-        gradients = np.empty(
-            (entity_count, quadrature_count, nodes, basis.mesh.dim())
+        shape=np.asarray(basis.tabulated_shape,dtype=np.float64,order="C")
+        gradients=np.asarray(
+            basis.tabulated_gradients,dtype=np.float64,order="C"
         )
-        for node in range(nodes):
-            # CellBasis and FacetBasis already contain correctly mapped vector
-            # basis fields; using them also handles facet reference coordinates.
-            field = basis.basis[node * components][0]
-            shape[:, :, node] = np.asarray(field)[0]
-            gradients[:, :, node, :] = field.grad[0].transpose(1, 2, 0)
         dofs = basis.element_dofs.T.reshape(
             entity_count, nodes, components
         )
         self._native = LinearFormAssembler(
             np.asarray(dofs, dtype=np.int64, order="C"),
-            np.asarray(shape, dtype=np.float64, order="C"),
-            np.asarray(gradients, dtype=np.float64, order="C"),
+            shape,
+            gradients,
             np.asarray(basis.dx, dtype=np.float64, order="C"),
         )
         self._shape = (entity_count, quadrature_count, components)

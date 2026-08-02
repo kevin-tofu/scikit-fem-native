@@ -864,6 +864,39 @@ class _Field:
         return np.asarray(self.value, dtype=dtype)
 
 
+class _LazyVectorFields:
+    """scikit-fem-compatible field sequence without eager global copies."""
+
+    def __init__(self,basis):
+        self._basis=basis
+
+    def __len__(self):
+        return self._basis.tabulated_shape.shape[2]*self._basis.elem._dim
+
+    def __getitem__(self,index):
+        size=len(self)
+        if index<0:
+            index+=size
+        if index<0 or index>=size:
+            raise IndexError("basis field index is out of range")
+        basis=self._basis
+        components=basis.elem._dim
+        node,component=divmod(index,components)
+        entities,quadrature=basis.dx.shape
+        value=np.zeros((components,entities,quadrature))
+        gradient=np.zeros((
+            components,basis.mesh.dim(),entities,quadrature
+        ))
+        value[component]=basis.tabulated_shape[:,:,node]
+        gradient[component]=basis.tabulated_gradients[
+            :,:,node
+        ].transpose(2,0,1)
+        return (_Field(value,gradient),)
+
+    def __iter__(self):
+        return (self[index] for index in range(len(self)))
+
+
 class DiscreteField:
     """Values and physical gradients evaluated at basis quadrature points."""
 
@@ -1405,7 +1438,14 @@ class Basis:
             connectivity=base_connectivity
         nodes=connectivity.shape[0]
         components=element._dim
-        active_nodes=np.unique(connectivity)
+        if self._discontinuous:
+            active_nodes=np.arange(
+                connectivity.max(initial=-1)+1,dtype=np.int64
+            )
+        else:
+            used_nodes=np.zeros(mesh.p.shape[1],dtype=bool)
+            used_nodes[connectivity]=True
+            active_nodes=np.flatnonzero(used_nodes)
         self.N=len(active_nodes)*components
         self.nodal_dofs = np.arange(self.N).reshape(-1, components).T
         if self._discontinuous:
@@ -1909,20 +1949,7 @@ class Basis:
             self.X = old_points
 
     def _vector_fields(self):
-        fields = []
-        nodes=self.tabulated_shape.shape[2];nq=self.X.shape[1]
-        components=self.elem._dim
-        entities=self.dx.shape[0]
-        for node in range(nodes):
-            for component in range(components):
-                value=np.zeros((components,entities,nq))
-                grad=np.zeros((
-                    components,self.mesh.dim(),entities,nq
-                ))
-                value[component] = self.tabulated_shape[:, :, node]
-                grad[component] = self.tabulated_gradients[:, :, node].transpose(2, 0, 1)
-                fields.append((_Field(value, grad),))
-        return fields
+        return _LazyVectorFields(self)
 
 
 class FacetBasis:
@@ -2382,19 +2409,7 @@ class FacetBasis:
         return Basis._interpolate(self,coefficients)
 
     def _vector_fields(self):
-        fields = []
-        components=self.elem._dim
-        for node in range(self.tabulated_shape.shape[2]):
-            for component in range(components):
-                value = np.zeros((components, self.dx.shape[0], self.dx.shape[1]))
-                grad = np.zeros((
-                    components,self.mesh.dim(),
-                    self.dx.shape[0],self.dx.shape[1]
-                ))
-                value[component] = self.tabulated_shape[:, :, node]
-                grad[component] = self.tabulated_gradients[:, :, node].transpose(2, 0, 1)
-                fields.append((_Field(value, grad),))
-        return fields
+        return _LazyVectorFields(self)
 
 
 class InteriorFacetBasis(FacetBasis):

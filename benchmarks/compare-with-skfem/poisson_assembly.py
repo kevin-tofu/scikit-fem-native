@@ -134,20 +134,24 @@ def benchmark(
     mesh=skfemntv.MeshTri.init_tensor(coordinates,coordinates)
     reference_mesh=skfem.MeshTri(mesh.p,mesh.t)
 
-    basis,skfn_basis_ms=elapsed(lambda:skfemntv.Basis(
+    native_basis=lambda:skfemntv.Basis(
         mesh,skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1),
         intorder=2,
-    ))
+    )
+    basis=native_basis()
     def parallel_basis():
         with skfemntv.thread_limit(native_threads):
             return skfemntv.Basis(
                 mesh,skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1),
                 intorder=2,
             )
-    _,skfn_parallel_basis_ms=elapsed(parallel_basis)
-    reference_basis,skfem_basis_ms=elapsed(lambda:skfem.Basis(
+    reference_constructor=lambda:skfem.Basis(
         reference_mesh,skfem.ElementTriP1(),intorder=2
-    ))
+    )
+    reference_basis=reference_constructor()
+    skfn_basis_ms=median_time(native_basis,repeat)
+    skfn_parallel_basis_ms=median_time(parallel_basis,repeat)
+    skfem_basis_ms=median_time(reference_constructor,repeat)
     source=np.array([1.])
     native_matrix=skfemntv.asm(skfn_laplace,basis)
     native_rhs=skfemntv.asm(skfn_load,basis,source=source)
