@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.sparse import bmat, csr_matrix
+from scipy.sparse import bmat, csr_matrix, hstack
 
 from .basis import DiscreteField
 from ._skfn import (
@@ -209,6 +209,33 @@ class SupermeshDiagnostics:
     disappeared_overlap_pair_count: int = 0
     pattern_reused: bool = False
     update_count: int = 0
+    orientation_mismatch_count: int = 0
+    maximum_normal_opposition_error: float = 0.0
+
+
+@dataclass(frozen=True)
+class MortarTraceData:
+    """One side of an interface evaluated at shared physical quadrature points."""
+
+    shape_values: np.ndarray
+    physical_gradients: np.ndarray | None
+    outward_normals: np.ndarray
+    quadrature_weights: np.ndarray
+    parent_facets: np.ndarray
+    parent_elements: np.ndarray
+    dofs: np.ndarray
+    coordinates: np.ndarray
+
+
+@dataclass(frozen=True)
+class MortarCouplingResult:
+    """Sparse mortar constraint blocks, ``[master, -slave]``."""
+
+    master_matrix: csr_matrix
+    slave_matrix: csr_matrix
+    coupling_matrix: csr_matrix
+    overlap_area: float
+    diagnostics: SupermeshDiagnostics
 
 
 def _aabb_candidates(master_xyz, slave_xyz, tolerance):
@@ -303,6 +330,9 @@ class TriangleSupermesh:
         row_gradients=[];column_gradients=[]
         row_normal_gradient=[];column_normal_gradient=[]
         quadrature_coordinates=[];master_normals=[];slave_normals=[];gaps=[]
+        master_parent_facets=[];slave_parent_facets=[]
+        master_parent_elements=[];slave_parent_elements=[]
+        orientation_errors=[]
         candidates=0;overlaps=0;area_total=0.;noncoplanar=0;maximum_gap=0.
         projection_tolerance=(
             tolerance if projection_tolerance is None
@@ -396,7 +426,29 @@ class TriangleSupermesh:
                         slave_search_normal,physical_points.shape
                     )
                 master_normals.append(master_q_normals)
+                opposition=np.linalg.norm(master_q_normals+slave_q_normals,axis=1)
+                orientation_errors.extend(opposition)
+                # A mortar interface has one geometric normal convention.  Keep
+                # the independently evaluated outward normal in the diagnostic,
+                # then expose an exactly opposing pair to flux kernels.
+                slave_q_normals=-master_q_normals
                 slave_normals.append(slave_q_normals)
+                master_parent_facets.append(
+                    master_surface.search_faces[master_index]
+                    if master_surface is not None else master_index
+                )
+                slave_parent_facets.append(
+                    slave_surface.search_faces[slave_index]
+                    if slave_surface is not None else slave_index
+                )
+                master_parent_elements.append(
+                    master_surface.parents[master_index]
+                    if master_surface is not None else master_index
+                )
+                slave_parent_elements.append(
+                    slave_surface.parents[slave_index]
+                    if slave_surface is not None else slave_index
+                )
                 slave_physical=slave_search_values@slave_xyz
                 gaps.append(np.einsum(
                     "qi,qi->q",slave_physical-physical_points,
@@ -429,6 +481,8 @@ class TriangleSupermesh:
             np.asarray(column_gradients,dtype=np.float64)
             if column_gradients else None
         )
+        self._row_physical_gradients=self._row_gradients
+        self._column_physical_gradients=self._column_gradients
         self._native=CrossBilinearAssembler(
             np.asarray(row_dofs,dtype=np.int64),
             np.asarray(column_dofs,dtype=np.int64),
@@ -454,6 +508,10 @@ class TriangleSupermesh:
         self.master_normals=np.asarray(master_normals,dtype=np.float64)
         self.slave_normals=np.asarray(slave_normals,dtype=np.float64)
         self.gap=np.asarray(gaps,dtype=np.float64)
+        self._master_parent_facets=np.asarray(master_parent_facets,dtype=np.int64)
+        self._slave_parent_facets=np.asarray(slave_parent_facets,dtype=np.int64)
+        self._master_parent_elements=np.asarray(master_parent_elements,dtype=np.int64)
+        self._slave_parent_elements=np.asarray(slave_parent_elements,dtype=np.int64)
         self._row_normal_gradient=(
             np.asarray(row_normal_gradient,dtype=np.float64)
             if row_normal_gradient else None
@@ -464,10 +522,15 @@ class TriangleSupermesh:
         )
         self.master_size=self._native.rows
         self.slave_size=self._native.columns
+        orientation_error=float(np.max(orientation_errors,initial=0.))
         self.diagnostics=SupermeshDiagnostics(
             master_triangles.shape[1]*slave_triangles.shape[1],
             candidates,overlaps,len(weights),area_total,
             noncoplanar,maximum_gap,
+            orientation_mismatch_count=int(np.count_nonzero(
+                np.asarray(orientation_errors)>1e-8
+            )),
+            maximum_normal_opposition_error=orientation_error,
         )
 
     def _initialize_planar_native(
@@ -533,6 +596,21 @@ class TriangleSupermesh:
         self._row_shape=row_shape
         self._column_shape=column_shape
         self._weights=weights
+        def triangle_gradients(points,triangles,indices):
+            result=[]
+            for index in indices:
+                xyz=points[:,triangles[:,index]]
+                edges=np.column_stack((xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]))
+                rs=edges@np.linalg.inv(edges.T@edges)
+                gradient=np.vstack((-rs.sum(axis=1),rs.T))
+                result.append(np.broadcast_to(gradient,(weights.shape[1],3,3)))
+            return np.asarray(result,dtype=np.float64)
+        self._row_physical_gradients=triangle_gradients(
+            master_points,master_triangles,master_indices
+        )
+        self._column_physical_gradients=triangle_gradients(
+            slave_points,slave_triangles,slave_indices
+        )
         self._row_gradients=None
         self._column_gradients=None
         self._row_normal_gradient=None
@@ -543,10 +621,18 @@ class TriangleSupermesh:
         self.master_normals=np.asarray(
             built["master_normals"],dtype=np.float64
         )
-        self.slave_normals=np.asarray(
+        raw_slave_normals=np.asarray(
             built["slave_normals"],dtype=np.float64
         )
+        orientation_errors=np.linalg.norm(
+            self.master_normals+raw_slave_normals,axis=2
+        )
+        self.slave_normals=-self.master_normals
         self.gap=np.asarray(built["gaps"],dtype=np.float64)
+        self._master_parent_facets=np.asarray(master_indices,dtype=np.int64)
+        self._slave_parent_facets=np.asarray(slave_indices,dtype=np.int64)
+        self._master_parent_elements=np.asarray(master_indices,dtype=np.int64)
+        self._slave_parent_elements=np.asarray(slave_indices,dtype=np.int64)
         self._native=native
         self._matrix=(
             old_matrix if pattern_reused else
@@ -585,6 +671,12 @@ class TriangleSupermesh:
             disappeared_overlap_pair_count=disappeared,
             pattern_reused=pattern_reused,
             update_count=update_count,
+            orientation_mismatch_count=int(np.count_nonzero(
+                orientation_errors>1e-8
+            )),
+            maximum_normal_opposition_error=float(
+                np.max(orientation_errors,initial=0.)
+            ),
         )
 
     def update(self,master_points,slave_points):
@@ -659,6 +751,8 @@ class TriangleSupermesh:
             old.maximum_plane_gap,
             master.triangles.shape[1],slave.triangles.shape[1],
             max(master.maximum_subdivision_level,slave.maximum_subdivision_level),
+            orientation_mismatch_count=old.orientation_mismatch_count,
+            maximum_normal_opposition_error=old.maximum_normal_opposition_error,
         )
         return instance
 
@@ -668,6 +762,123 @@ class TriangleSupermesh:
         ))
         self._native.assemble(coefficient)
         return self._matrix
+
+    def trace_data(self,side):
+        """Return immutable-view data for a side at the shared mortar points."""
+        if side not in {"master","slave"}:
+            raise ValueError("side must be master or slave")
+        master=side=="master"
+        return MortarTraceData(
+            self._row_shape if master else self._column_shape,
+            self._row_physical_gradients if master
+            else self._column_physical_gradients,
+            self.master_normals if master else self.slave_normals,
+            self._weights,
+            self._master_parent_facets if master else self._slave_parent_facets,
+            self._master_parent_elements if master else self._slave_parent_elements,
+            self._row_dofs if master else self._column_dofs,
+            self.global_coordinates,
+        )
+
+    @property
+    def master_trace(self):
+        return self.trace_data("master")
+
+    @property
+    def slave_trace(self):
+        return self.trace_data("slave")
+
+    def assemble_mortar(self,multiplier="slave",*,dual_side="slave"):
+        """Assemble sparse mortar blocks for one of four multiplier spaces.
+
+        ``multiplier`` accepts ``"slave"``, ``"master"``,
+        ``"overlap_p0"``, or ``"dual"``.  The dual basis is formed from
+        facet-local Gram matrices; no multiplier-sized dense matrix is formed.
+        """
+        aliases={
+            "slave_p1":"slave","master_p1":"master","p0":"overlap_p0",
+            "biorthogonal":"dual",
+        }
+        multiplier=aliases.get(multiplier,multiplier)
+        if multiplier not in {"slave","master","overlap_p0","dual"}:
+            raise ValueError(
+                "multiplier must be slave, master, overlap_p0, or dual"
+            )
+        if dual_side not in {"slave","master"}:
+            raise ValueError("dual_side must be slave or master")
+        master_components=self._row_dofs.shape[2]
+        slave_components=self._column_dofs.shape[2]
+        if master_components!=slave_components:
+            raise ValueError(
+                "mortar coupling currently requires equal trace component counts"
+            )
+        components=master_components
+        if multiplier=="overlap_p0":
+            entities=len(self._weights)
+            multiplier_dofs=(
+                components*np.arange(entities)[:,None,None]
+                +np.arange(components)[None,None,:]
+            )
+            multiplier_shape=np.ones((entities,self._weights.shape[1],1))
+            multiplier_size=entities*components
+        else:
+            side=dual_side if multiplier=="dual" else multiplier
+            multiplier_dofs=(
+                self._row_dofs if side=="master" else self._column_dofs
+            )
+            multiplier_shape=np.array(
+                self._row_shape if side=="master" else self._column_shape,
+                copy=True,
+            )
+            multiplier_size=self.master_size if side=="master" else self.slave_size
+            if multiplier=="dual":
+                parents=(
+                    self._master_parent_facets if side=="master"
+                    else self._slave_parent_facets
+                )
+                for parent in np.unique(parents):
+                    selected=np.flatnonzero(parents==parent)
+                    local=multiplier_shape[selected]
+                    weights=self._weights[selected]
+                    gram=np.einsum("eq,eqi,eqj->ij",weights,local,local)
+                    active=np.flatnonzero(np.max(np.abs(local),axis=(0,1))>1e-13)
+                    local_gram=gram[np.ix_(active,active)]
+                    lump=np.einsum("eq,eqi->i",weights,local) [active]
+                    transform=np.diag(lump)@np.linalg.pinv(local_gram,rcond=1e-13)
+                    multiplier_shape[np.ix_(selected,np.arange(local.shape[1]),active)]=(
+                        local[:,:,active]@transform.T
+                    )
+        master_matrix=self._assemble_mortar_block(
+            multiplier_dofs,self._row_dofs,multiplier_shape,self._row_shape,
+            multiplier_size,self.master_size,
+        )
+        slave_matrix=self._assemble_mortar_block(
+            multiplier_dofs,self._column_dofs,multiplier_shape,self._column_shape,
+            multiplier_size,self.slave_size,
+        )
+        coupling=csr_matrix(hstack((master_matrix,-slave_matrix),format="csr"))
+        return MortarCouplingResult(
+            master_matrix,slave_matrix,coupling,
+            self.diagnostics.overlap_area,self.diagnostics,
+        )
+
+    def _assemble_mortar_block(
+        self,row_dofs,column_dofs,row_shape,column_shape,rows,columns,
+    ):
+        native=CrossBilinearAssembler(
+            np.ascontiguousarray(row_dofs,dtype=np.int64),
+            np.ascontiguousarray(column_dofs,dtype=np.int64),
+            np.ascontiguousarray(row_shape,dtype=np.float64),
+            np.ascontiguousarray(column_shape,dtype=np.float64),
+            np.ascontiguousarray(self._weights,dtype=np.float64),
+        )
+        native.assemble(np.ones(self._coefficient_shape,dtype=np.float64))
+        matrix=csr_matrix(
+            (native.values,native.indices,native.indptr),
+            shape=(native.rows,native.columns),copy=True,
+        )
+        matrix.resize((rows,columns))
+        return matrix
 
     def interpolate(self,master_coefficients,slave_coefficients):
         """Interpolate both interface fields at overlap quadrature points."""

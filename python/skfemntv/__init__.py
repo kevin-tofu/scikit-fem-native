@@ -42,6 +42,8 @@ from .evaluation import EvaluationDiagnostics, NativeEvaluation
 from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
 from .supermesh import (
+    MortarCouplingResult,
+    MortarTraceData,
     SupermeshDiagnostics,
     SupermeshSearch,
     TriangleSupermesh,
@@ -148,6 +150,8 @@ __all__ = [
     "asm",
     "UnsupportedNativeForm",
     "TriangleSupermesh",
+    "MortarCouplingResult",
+    "MortarTraceData",
     "SupermeshDiagnostics",
     "SupermeshSearch",
     "InterfaceField",

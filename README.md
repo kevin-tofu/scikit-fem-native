@@ -647,10 +647,36 @@ def gap_weighted_penalty(u, v, w):
     return (1.0 + w.gap ** 2) * dot(jump(u), jump(v))
 ```
 
-`w.n_master` and `w.n_slave` are the independent outward unit normals;
+`w.n_master` is the master outward unit normal and `w.n_slave` is the exactly
+opposing interface convention.  The independently evaluated slave outward
+normal is checked before pairing; `orientation_mismatch_count` and
+`maximum_normal_opposition_error` report surfaces whose raw normals are not
+opposed.  Thus flux kernels always receive `n_master == -n_slave` while bad
+component orientation remains visible in diagnostics.
 `w.gap` is the signed search-geometry separation measured along the master
 normal.  Curved Tet10 and Hex27 normals are evaluated from the original
 isoparametric facets rather than copied from the tessellated search triangles.
+
+Mortar constraints have a dedicated sparse result:
+
+```python
+result = supermesh.assemble_mortar("slave")
+
+Bm = result.master_matrix
+Bs = result.slave_matrix
+B = result.coupling_matrix  # [Bm, -Bs]
+```
+
+The multiplier selector accepts `"slave"` and `"master"` P1 traces,
+`"overlap_p0"`, and a facet-local `"dual"`/biorthogonal trace.  The latter
+uses only small parent-facet Gram matrices.  All global outputs are CSR blocks;
+the implementation does not form a multiplier-sized dense matrix.
+
+`supermesh.master_trace` and `supermesh.slave_trace` expose shape values,
+physical gradients, paired outward normals, quadrature weights, physical
+coordinates, DOF maps, and parent facet/element indices at the same physical
+quadrature points.  These quadrature-local arrays are suitable for custom
+Nitsche stress-flux kernels such as `sigma(u) @ normal`.
 
 User parameters, callables, and geometry values share one numerical
 quadrature-expression context:
