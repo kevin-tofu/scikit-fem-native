@@ -583,10 +583,20 @@ class _InterfaceBilinearTerm:
 
     __rmul__=__mul__
 
+    def __neg__(self):
+        return _InterfaceBilinearTerm(
+            self.row,self.column,self.coefficient,-self.factor
+        )
+
     def __add__(self,other):
         if isinstance(other,_InterfaceBilinearTerm):
             return _InterfaceSum((self,other))
         return NotImplemented
+
+    __radd__=__add__
+
+    def __sub__(self,other):
+        return self+(-other)
 
 
 @dataclass(frozen=True)
@@ -599,6 +609,14 @@ class _InterfaceSum:
         if isinstance(other,_InterfaceSum):
             return _InterfaceSum(self.terms+other.terms)
         return NotImplemented
+
+    __radd__=__add__
+
+    def __neg__(self):
+        return _InterfaceSum(tuple(-term for term in self.terms))
+
+    def __sub__(self,other):
+        return self+(-other)
 
 
 class _Parameters:

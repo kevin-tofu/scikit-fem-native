@@ -610,6 +610,10 @@ def adjoint_consistency(u, v, w):
 Both value-gradient and gradient-value terms use the native CSR scatter.  The
 second matrix is the transpose of the first for matching coefficients, which
 allows symmetric or nonsymmetric Nitsche variants to be composed explicitly.
+The regression suite compares complete symmetric Poisson and linear-elastic
+interface matrices against scikit-fem facet integrals.  It also checks equal
+and opposite elastic resultants and quadratic-field convergence on successively
+refined nonmatching P1 traces.
 
 Interface `LinearForm` uses the same reusable supermesh quadrature and returns
 one vector containing the master DOFs followed by the slave DOFs:
