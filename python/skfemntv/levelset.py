@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 import numpy as np
+from scipy.spatial import ConvexHull
 
 from .regions import CellRegion,FacetRegion
 
@@ -28,6 +29,36 @@ class LevelSetDiagnostics:
     tolerance: float
     minimum_value: float
     maximum_value: float
+
+
+@dataclass(frozen=True)
+class CutQuadratureDiagnostics:
+    cell_count: int
+    cut_cell_count: int
+    nonempty_cell_count: int
+    quadrature_point_count: int
+    total_measure: float
+    minimum_weight: float
+    maximum_weight: float
+
+
+@dataclass(frozen=True)
+class CutCellQuadrature:
+    """Allocation-linear quadrature for one side of a level-set interface."""
+
+    cell_offsets: np.ndarray
+    points: np.ndarray
+    reference_points: np.ndarray
+    weights: np.ndarray
+    cells: np.ndarray
+    normals: np.ndarray
+    side: str
+    diagnostics: CutQuadratureDiagnostics
+
+    def cell_slice(self,cell: int) -> slice:
+        if cell<0 or cell+1>=len(self.cell_offsets):
+            raise IndexError("cut-quadrature cell index is out of bounds")
+        return slice(int(self.cell_offsets[cell]),int(self.cell_offsets[cell+1]))
 
 
 @dataclass(frozen=True)
@@ -242,3 +273,164 @@ class LevelSet:
         return CellClassificationResult(
             labels,inside,outside,cut,touching_region,diagnostics
         )
+
+    def cut_quadrature(
+        self,mesh,*,side: str="inside",
+        classification: CellClassificationResult | None=None,
+    ) -> CutCellQuadrature:
+        """Integrate a linear level-set side on affine Tri3 or Tet4 cells.
+
+        One centroid rule is used per clipped simplex and therefore integrates
+        physical constant and linear fields exactly.  Higher-order geometry,
+        nonlinear interface reconstruction, and interface quadrature are
+        deliberately separate future stages.
+        """
+        if side not in ("inside","outside"):
+            raise ValueError("cut-quadrature side must be 'inside' or 'outside'")
+        dimension=int(mesh.dim())
+        expected=dimension+1
+        if dimension not in (2,3) or mesh.t.shape[0]!=expected:
+            raise NotImplementedError(
+                "cut quadrature currently supports affine Tri3 and Tet4 meshes"
+            )
+        values=self.values(mesh)
+        if classification is None:
+            classification=self.classify(mesh)
+        elif len(classification.labels)!=mesh.nelements:
+            raise ValueError(
+                "classification and mesh have different cell counts"
+            )
+        tolerance=float(classification.diagnostics.tolerance)
+        reference=np.vstack((
+            np.zeros((1,dimension)),np.eye(dimension)
+        ))
+        point_blocks=[];reference_blocks=[];weight_blocks=[]
+        cell_blocks=[];normal_blocks=[]
+        offsets=[0]
+        sign=1. if side=="inside" else -1.
+        for cell,nodes in enumerate(mesh.t.T):
+            node_values=sign*values[nodes]
+            vertices=_clip_simplex(reference,node_values,tolerance)
+            physical_nodes=mesh.p[:,nodes]
+            gradient=_linear_simplex_gradient(physical_nodes,values[nodes])
+            normal=sign*gradient
+            length=float(np.linalg.norm(normal))
+            if length>0.: normal=normal/length
+            else: normal=np.zeros(dimension,dtype=np.float64)
+            local_reference,local_weights=_polytope_centroid_rule(
+                vertices,physical_nodes
+            )
+            if len(local_weights):
+                local_points=_map_reference(physical_nodes,local_reference)
+                point_blocks.append(local_points)
+                reference_blocks.append(local_reference)
+                weight_blocks.append(local_weights)
+                cell_blocks.append(np.full(len(local_weights),cell,dtype=np.int64))
+                normal_blocks.append(np.broadcast_to(
+                    normal,(len(local_weights),dimension)
+                ).copy())
+            offsets.append(offsets[-1]+len(local_weights))
+        points=_stack(point_blocks,(0,dimension),np.float64)
+        reference_points=_stack(reference_blocks,(0,dimension),np.float64)
+        weights=_stack(weight_blocks,(0,),np.float64)
+        cells=_stack(cell_blocks,(0,),np.int64)
+        normals=_stack(normal_blocks,(0,dimension),np.float64)
+        cell_offsets=np.asarray(offsets,dtype=np.int64)
+        for array in (
+            cell_offsets,points,reference_points,weights,cells,normals
+        ):
+            array.flags.writeable=False
+        diagnostics=CutQuadratureDiagnostics(
+            cell_count=int(mesh.nelements),
+            cut_cell_count=len(classification.cut),
+            nonempty_cell_count=int(np.count_nonzero(np.diff(cell_offsets))),
+            quadrature_point_count=len(weights),
+            total_measure=float(np.sum(weights)),
+            minimum_weight=(float(np.min(weights)) if len(weights) else 0.),
+            maximum_weight=float(np.max(weights,initial=0.)),
+        )
+        return CutCellQuadrature(
+            cell_offsets,points,reference_points,weights,cells,normals,
+            side,diagnostics,
+        )
+
+
+def _stack(blocks,empty_shape,dtype):
+    return (
+        np.concatenate(blocks,axis=0)
+        if blocks else np.empty(empty_shape,dtype=dtype)
+    )
+
+
+def _clip_simplex(vertices,values,tolerance):
+    kept=[vertices[index] for index,value in enumerate(values) if value<=tolerance]
+    for first,second in (
+        (i,j) for i in range(len(vertices)) for j in range(i+1,len(vertices))
+    ):
+        a=float(values[first]);b=float(values[second])
+        if (a < -tolerance and b > tolerance) or (
+            b < -tolerance and a > tolerance
+        ):
+            fraction=a/(a-b)
+            kept.append(vertices[first]+fraction*(vertices[second]-vertices[first]))
+    if not kept:
+        return np.empty((0,vertices.shape[1]),dtype=np.float64)
+    unique=[]
+    for point in kept:
+        if not any(np.linalg.norm(point-other)<=1.e-13 for other in unique):
+            unique.append(np.asarray(point,dtype=np.float64))
+    return np.asarray(unique,dtype=np.float64)
+
+
+def _map_reference(physical_nodes,reference_points):
+    return (
+        physical_nodes[:,0]
+        +reference_points@(physical_nodes[:,1:]-physical_nodes[:,[0]]).T
+    )
+
+
+def _linear_simplex_gradient(physical_nodes,values):
+    jacobian=physical_nodes[:,1:]-physical_nodes[:,[0]]
+    return np.linalg.solve(jacobian.T,values[1:]-values[0])
+
+
+def _polytope_centroid_rule(vertices,physical_nodes):
+    dimension=physical_nodes.shape[0]
+    if len(vertices)<dimension+1:
+        return (
+            np.empty((0,dimension),dtype=np.float64),
+            np.empty(0,dtype=np.float64),
+        )
+    physical=_map_reference(physical_nodes,vertices)
+    if dimension==2:
+        center=physical.mean(axis=0)
+        angles=np.arctan2(physical[:,1]-center[1],physical[:,0]-center[0])
+        order=np.argsort(angles)
+        vertices=vertices[order];physical=physical[order]
+        reference_points=[];weights=[]
+        for index in range(1,len(vertices)-1):
+            triangle=physical[[0,index,index+1]]
+            weight=.5*abs(np.linalg.det(
+                np.column_stack((triangle[1]-triangle[0],triangle[2]-triangle[0]))
+            ))
+            if weight>0.:
+                reference_points.append(vertices[[0,index,index+1]].mean(axis=0))
+                weights.append(weight)
+        return np.asarray(reference_points),np.asarray(weights)
+    center_reference=vertices.mean(axis=0)
+    center_physical=physical.mean(axis=0)
+    hull=ConvexHull(vertices)
+    reference_points=[];weights=[]
+    for face in hull.simplices:
+        tetrahedron=np.vstack((center_physical,physical[face]))
+        weight=abs(np.linalg.det(
+            np.column_stack(tuple(
+                tetrahedron[index]-tetrahedron[0] for index in range(1,4)
+            ))
+        ))/6.
+        if weight>0.:
+            reference_points.append(
+                np.vstack((center_reference,vertices[face])).mean(axis=0)
+            )
+            weights.append(weight)
+    return np.asarray(reference_points),np.asarray(weights)

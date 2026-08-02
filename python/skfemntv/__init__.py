@@ -54,7 +54,8 @@ from .regions import (
     CellRegion,EntityRegion,FacetRegion,NodeRegion,RegionDiagnostics,
 )
 from .levelset import (
-    CellClassification,CellClassificationResult,LevelSet,LevelSetDiagnostics,
+    CellClassification,CellClassificationResult,CutCellQuadrature,
+    CutQuadratureDiagnostics,LevelSet,LevelSetDiagnostics,
 )
 from .forms import (
     BilinearForm,
@@ -170,6 +171,8 @@ __all__ = [
     "RegionDiagnostics",
     "CellClassification",
     "CellClassificationResult",
+    "CutCellQuadrature",
+    "CutQuadratureDiagnostics",
     "LevelSet",
     "LevelSetDiagnostics",
     "NeoHookeanTet4",

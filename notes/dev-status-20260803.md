@@ -208,7 +208,16 @@ value diagnostics, and direct restricted-Basis use are tested.  Active facets,
 active-boundary facets with parent-side metadata, active-interior facets,
 cut-adjacent ghost-penalty candidates, and component-aware active global DOFs
 are available without imposing a CutFEM formulation.  Cut-volume and
-implicit-interface quadrature remain separate future stages.
+implicit-interface quadrature remain separate stages.
+
+The first cut-volume stage is implemented for affine Tri3 and Tet4 cells.
+`CutCellQuadrature` stores CSR-like cell offsets, physical/reference points,
+positive physical weights, background cell IDs, and oriented level-set normals
+with memory proportional to generated quadrature points.  Inside and outside
+rules partition the parent-cell measure, and analytic tests cover exact
+constant/linear integration.  High-order/curved reconstruction and the
+implicit interface remain intentionally unsupported rather than silently
+approximated.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -293,7 +302,8 @@ case requires them:
 
 1. Add arbitrary-point value/gradient evaluation.
 2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-3. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
+3. Extend cut-cell quadrature to integration orders above one and convergence
+   tests before adding curved/high-order reconstruction.
 4. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
 
 ## Branch checkpoints

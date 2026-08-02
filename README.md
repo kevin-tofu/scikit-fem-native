@@ -493,10 +493,29 @@ ghost_candidates = classification.ghost_facets(mesh)
 The convention is negative-inside.  Every connectivity node is sampled, so
 high-order edge, face, and interior nodes participate in classification.
 `CUT` means that both signs were sampled; `TOUCHING` means at least one value
-is within tolerance without a sampled sign crossing.  This API does not yet
-construct cut-volume or implicit-interface quadrature.  `ghost_facets` is only
-the active-interior candidate set incident to cut cells; stabilization layers,
-penalty parameters, and the weak form remain user choices.
+is within tolerance without a sampled sign crossing.  Classification itself
+does not construct quadrature.  `ghost_facets` is only the active-interior
+candidate set incident to cut cells; stabilization layers, penalty parameters,
+and the weak form remain user choices.
+
+Affine Tri3 and Tet4 meshes also provide the first cut-volume quadrature stage:
+
+```python
+inside = level_set.cut_quadrature(mesh, side="inside")
+outside = level_set.cut_quadrature(mesh, side="outside")
+
+for cell in classification.cut:
+    local = inside.cell_slice(cell)
+    x = inside.points[local]
+    weight = inside.weights[local]
+```
+
+`cell_offsets` stores variable quadrature counts without per-cell padding.
+Physical and reference points, positive physical weights, background cell IDs,
+and consistently oriented level-set normals are immutable local arrays.  The
+current centroid-per-sub-simplex rule integrates constant and linear physical
+fields exactly.  Curved/high-order cuts and implicit-interface quadrature are
+not yet supported.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 
