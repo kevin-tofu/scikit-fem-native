@@ -50,7 +50,7 @@ class CutCellBasis:
         self.quadrature=quadrature
         self.cell_offsets=quadrature.cell_offsets
         self.cells=quadrature.cells
-        self.global_coordinates=quadrature.points
+        self.points=quadrature.points
         self.reference_coordinates=quadrature.reference_points
         self.weights=quadrature.weights
         self.normals=quadrature.normals
@@ -76,7 +76,20 @@ class CutCellBasis:
             if len(local_cells) else
             np.empty((0,basis.element_dofs.shape[0]),dtype=np.int64)
         )
-        for array in (self.shape,self.gradients,self.quadrature_dofs,self.tind):
+        # Native form assemblers can consume each flattened point as an entity
+        # with one quadrature point.  This is a zero-padding adapter: storage
+        # remains proportional to actual cut points and assembly stays in C++.
+        self.dx=self.weights[:,None]
+        self.tabulated_shape=self.shape[:,None,:]
+        self.tabulated_gradients=self.gradients[:,None,:,:]
+        self.global_coordinates=self.points[:,None,:]
+        self.element_dofs=self.quadrature_dofs.T
+        self.basis=()
+        for array in (
+            self.shape,self.gradients,self.quadrature_dofs,self.tind,
+            self.dx,self.tabulated_shape,self.tabulated_gradients,
+            self.global_coordinates,self.element_dofs,
+        ):
             array.flags.writeable=False
 
     @property

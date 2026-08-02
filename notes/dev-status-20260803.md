@@ -224,8 +224,14 @@ remain intentionally unsupported rather than silently approximated.
 geometry provider.  It tabulates affine TriP1/TetP1 shape values and physical
 gradients at flattened cut points, maps each point to global parent-element
 DOFs, supports restricted parent bases, and interpolates scalar/vector fields.
-It deliberately does not emulate the rectangular `Basis.dx` contract; native
-form assembly must consume its CSR offsets and flattened arrays explicitly.
+It does not pad cells to a common point count; native form assembly consumes a
+zero-padding flattened adapter with one real point per native entity.  Functional,
+LinearForm, and BilinearForm execution stays in the existing C++ assemblers and
+supports per-call thread selection.  Full-domain regression tests match regular
+Basis assembly, and cut-domain serial/parallel matrices agree.  A dedicated
+cell-offset C++ kernel remains a performance optimization: the current adapter
+repeats a cell's DOF tuple once per real quadrature point when building the CSR
+scatter pattern, while never allocating nonexistent quadrature entries.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -310,8 +316,8 @@ case requires them:
 
 1. Add arbitrary-point value/gradient evaluation.
 2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-3. Connect LinearForm, BilinearForm, and Functional assembly to the flattened
-   `CutCellBasis` contract without padding.
+3. Add a segmented C++ cut assembler that consumes `cell_offsets` directly and
+   benchmarks it against the zero-padding flattened adapter.
 4. Build `ImplicitFacetBasis` as an assembly geometry provider.
 5. Add curved/high-order interface reconstruction with convergence tests.
 

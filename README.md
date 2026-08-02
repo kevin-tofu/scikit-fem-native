@@ -525,8 +525,11 @@ Duffy-transformed Gauss rules.  Curved/high-order cuts and implicit-interface
 quadrature are not yet supported.  `CutCellBasis` tabulates affine TriP1/TetP1
 shape values and physical gradients directly on the flattened rule, maps every
 point to global element DOFs, and interpolates scalar or vector coefficients
-without constructing padded element-by-quadrature arrays.  General form
-assembly on this provider is the next stage.
+without constructing padded element-by-quadrature arrays.  `Functional`,
+`LinearForm`, and `BilinearForm` use the same public form syntax and execute in
+the native C++ assemblers, including `num_threads=`.  Each real cut point is
+presented as a one-point native entity; there is no Python assembly fallback or
+zero-weight padding.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 
