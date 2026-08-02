@@ -411,6 +411,28 @@ fbasis = skfem.FacetBasis(mesh, element, facets=left)
 boundary_dofs = basis.get_dofs(facets=left)
 ```
 
+Selections are immutable first-class regions while remaining accepted anywhere
+an integer ID array is accepted.  Regions support union, intersection,
+difference, and complement:
+
+```python
+mesh = mesh.with_subdomains({
+    "left": lambda x: x[0] < 0.5,
+    "loaded": [3, 4, 7],
+}).with_boundaries({
+    "wall": lambda x: np.isclose(x[0], 0.0),
+})
+
+active = mesh.subdomains["left"] | mesh.subdomains["loaded"]
+volume_basis = skfem.Basis(mesh, element, elements=active)
+wall_basis = skfem.FacetBasis(mesh, element, facets="wall")
+```
+
+`CellRegion`, `FacetRegion`, and `NodeRegion` preserve sorted global IDs,
+selection diagnostics, and the entity count needed for complement.  Named
+subdomains can also be selected directly using `elements="left"`; restricting
+a Basis does not renumber its global DOFs.
+
 The cached `mesh.facets`, `mesh.t2f`, and `mesh.f2t` arrays are shared by
 repeated Basis construction.  `mesh.interior_facets()` is a small skfemntv
 convenience returning `np.flatnonzero(mesh.f2t[1] != -1)`.

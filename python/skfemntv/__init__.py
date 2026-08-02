@@ -50,6 +50,9 @@ from .supermesh import (
     TriangleSupermesh,
 )
 from .interface import InterfaceField
+from .regions import (
+    CellRegion,EntityRegion,FacetRegion,NodeRegion,RegionDiagnostics,
+)
 from .forms import (
     BilinearForm,
     Functional,
@@ -157,6 +160,11 @@ __all__ = [
     "SupermeshDiagnostics",
     "SupermeshSearch",
     "InterfaceField",
+    "EntityRegion",
+    "CellRegion",
+    "FacetRegion",
+    "NodeRegion",
+    "RegionDiagnostics",
     "NeoHookeanTet4",
     "NeoHookeanHex8",
     "NeoHookean",

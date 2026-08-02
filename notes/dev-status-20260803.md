@@ -184,18 +184,17 @@ negative local orientation remains valid and is counted in
 `GeometryDiagnostics`.  Tet10/Hex27 internal inversions and the maximum
 Jacobian condition number are covered.
 
-### P0 — First-class geometric regions
+### Geometric regions
 
-Current cell/facet predicates evaluate entity centers.  This handles common
-coordinate boundaries but does not represent richer selections robustly.
-Needed additions are:
+The first region layer is implemented: immutable `CellRegion`, `FacetRegion`,
+and `NodeRegion` values, union/intersection/difference/complement, selection and
+empty-region diagnostics, named cell subdomains, named boundary regions, and
+direct use by Basis, FacetBasis, and DOF selection.  Global IDs are preserved
+and restricted bases do not renumber global DOFs.
 
-- named cell subdomains;
-- immutable cell/facet/node region results;
-- union, intersection, difference, and complement;
-- normal-oriented facet selection;
-- component-aware DOF selection for vector/composite spaces;
-- explicit tolerance and empty-selection diagnostics.
+The next selection additions are normal-oriented facet queries,
+component-aware DOF selection for vector/composite spaces, and classification
+metadata needed by level sets.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -278,8 +277,8 @@ case requires them:
 
 ## Recommended next work
 
-1. Add named cell subdomains and first-class region algebra.
-2. Add normal-oriented facet and component-aware DOF selection.
+1. Add normal-oriented facet and component-aware DOF selection.
+2. Add classification metadata needed by level-set regions.
 3. Add arbitrary-point value/gradient evaluation.
 4. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
 5. Add level-set classification independently of integration.

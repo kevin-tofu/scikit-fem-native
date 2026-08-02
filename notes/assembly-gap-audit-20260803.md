@@ -62,29 +62,31 @@ problems and needs trustworthy diagnostics.
 
 ### P0 — Promote selection from predicates to explicit regions
 
-Current geometric selection evaluates cell or facet centers.  This is useful
-for axis-aligned boundaries but cannot express whether an entity is crossed by
-an implicit surface.  `facets_satisfying(..., normal=...)` is explicitly not
-implemented, named cell subdomains do not exist, and `get_dofs(skip=...)` does
-not support named component filtering.
+The first region layer is implemented.  Geometric predicates now return
+immutable region values; named cell subdomains and named boundary regions can
+be passed directly to Basis, FacetBasis, and DOF selection.  Region algebra
+provides union, intersection, difference, and complement without renumbering
+global entities.  `facets_satisfying(..., normal=...)` and
+`get_dofs(skip=...)` remain the next gaps.
 
-Add small immutable region results rather than passing bare arrays everywhere:
+The public region results are:
 
 ```python
-CellRegion(ids, classification=None, diagnostics=None)
-FacetRegion(ids, orientation=None, diagnostics=None)
-NodeRegion(ids, diagnostics=None)
+CellRegion(ids, entity_count=None)
+FacetRegion(ids, entity_count=None)
+NodeRegion(ids, entity_count=None)
 ```
 
 Region objects should remain accepted anywhere an ID array is accepted.  They
 must preserve global entity IDs and be cheap views; they must not copy meshes or
 renumber global DOFs.  First implement:
 
-1. named cell subdomains (`mesh.with_subdomains`);
-2. normal-oriented exterior-facet selection;
-3. union, intersection, difference, and complement;
-4. deterministic tolerance and empty-region diagnostics;
-5. component-aware DOF selection for vector/composite spaces.
+1. [x] named cell subdomains (`mesh.with_subdomains`);
+2. [x] union, intersection, difference, and complement;
+3. [x] deterministic selection and empty-region diagnostics;
+4. [ ] normal-oriented exterior-facet selection;
+5. [ ] component-aware DOF selection for vector/composite spaces;
+6. [ ] classification/orientation metadata for level-set results.
 
 These operations are useful in ordinary multi-material and load-selection
 workflows even if CutFEM is never used.
@@ -235,8 +237,8 @@ solutions cover the genuinely CutFEM-specific parts.
 
 ## Recommended execution order
 
-1. Add named cell subdomains and first-class region algebra.
-2. Implement normal-oriented facet selection and component-aware DOF queries.
+1. Implement normal-oriented facet selection and component-aware DOF queries.
+2. Add classification metadata needed by level-set regions.
 3. Add arbitrary-point value/gradient evaluation.
 4. Close form-algebra gaps required by anisotropic and multi-coefficient forms.
 5. Introduce level-set classification without cut integration.

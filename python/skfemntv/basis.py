@@ -7,6 +7,7 @@ from itertools import combinations
 import numpy as np
 
 from ._skfn import tabulate_basis_geometry
+from .regions import CellRegion,FacetRegion,NodeRegion
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,7 @@ class _TopologyMesh:
         mask=np.asarray(test(centers),dtype=bool)
         if mask.shape!=(self.nelements,):
             raise ValueError("element predicate must return one boolean per cell")
-        return np.flatnonzero(mask)
+        return CellRegion(np.flatnonzero(mask),self.nelements)
 
     def facets_satisfying(self,test,boundaries_only=False,normal=None):
         if normal is not None:
@@ -173,7 +174,14 @@ class _TopologyMesh:
         mask=np.asarray(test(centers),dtype=bool)
         if mask.shape!=(len(candidates),):
             raise ValueError("facet predicate must return one boolean per facet")
-        return candidates[mask]
+        return FacetRegion(candidates[mask],self.facets.shape[1])
+
+    @property
+    def subdomains(self):
+        return dict(getattr(self,"_subdomains",{}))
+
+    def with_subdomains(self,subdomains):
+        return _with_subdomains(self,subdomains)
 
     def _facet_connectivity(self,facets,full=True):
         ids=np.asarray(facets,dtype=np.int64).reshape(-1)
@@ -219,10 +227,49 @@ def _with_boundaries(mesh,boundaries):
                     f"boundary selector {name!r} must return one "
                     "boolean per boundary facet"
                 )
-            result._boundaries[name]=facets[mask]
+            result._boundaries[name]=FacetRegion(
+                facets[mask],mesh.facets.shape[1]
+            )
         else:
-            selected=np.asarray(selector,dtype=np.int64)
-            result._boundaries[name]=selected.reshape(-1)
+            selected=np.asarray(selector)
+            if selected.dtype==bool:
+                if selected.shape!=(len(facets),):
+                    raise ValueError(
+                        f"boundary selector {name!r} mask must contain one "
+                        "value per boundary facet"
+                    )
+                selected=facets[selected]
+            selected=np.asarray(selected,dtype=np.int64).reshape(-1)
+            result._boundaries[name]=FacetRegion(
+                selected,mesh.facets.shape[1]
+            )
+    return result
+
+
+def _with_subdomains(mesh,subdomains):
+    result=copy(mesh)
+    centers=mesh.p[:,mesh.t[:_corner_count(mesh)]].mean(axis=1)
+    result._subdomains={}
+    for name,selector in subdomains.items():
+        if callable(selector):
+            mask=np.asarray(selector(centers),dtype=bool)
+            if mask.shape!=(mesh.nelements,):
+                raise ValueError(
+                    f"subdomain selector {name!r} must return one "
+                    "boolean per cell"
+                )
+            selected=np.flatnonzero(mask)
+        else:
+            selected=np.asarray(selector)
+            if selected.dtype==bool:
+                if selected.shape!=(mesh.nelements,):
+                    raise ValueError(
+                        f"subdomain selector {name!r} mask must contain one "
+                        "value per cell"
+                    )
+                selected=np.flatnonzero(selected)
+            selected=np.asarray(selected,dtype=np.int64).reshape(-1)
+        result._subdomains[name]=CellRegion(selected,mesh.nelements)
     return result
 
 
@@ -1504,7 +1551,14 @@ class Basis:
         return self.dx.shape[0]
 
     def _element_ids(self,elements):
-        if callable(elements):
+        if isinstance(elements,str):
+            try:
+                selected=np.asarray(self.mesh.subdomains[elements])
+            except KeyError as error:
+                raise KeyError(
+                    f"unknown subdomain {elements!r}"
+                ) from error
+        elif callable(elements):
             centers=self.mesh.p[
                 :,self.mesh.t[:_corner_count(self.mesh)]
             ].mean(axis=1)
@@ -2052,6 +2106,11 @@ class FacetBasis:
         *,_side=0,_interior=False
     ):
         intorder=2 if intorder is None else int(intorder)
+        if isinstance(facets,str):
+            try:
+                facets=mesh.boundaries[facets]
+            except KeyError as error:
+                raise KeyError(f"unknown boundary {facets!r}") from error
         if mesh.dim()==2:
             self._init_2d(
                 mesh,element,facets,intorder,
