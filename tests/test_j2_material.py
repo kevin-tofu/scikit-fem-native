@@ -1,10 +1,10 @@
 import numpy as np
 
-import skfn
+import skfemntv
 
 
 def material():
-    return skfn.J2Plasticity(young_modulus=210.,poisson_ratio=.3,
+    return skfemntv.J2Plasticity(young_modulus=210.,poisson_ratio=.3,
                             yield_stress=.25,hardening_modulus=1.5)
 
 
@@ -46,11 +46,11 @@ def test_j2_consistent_tangent_matches_stress_difference():
 
 def test_j2_global_assembler_tangent_and_trial_state():
     axis=np.linspace(0.,1.,3)
-    mesh=skfn.MeshTet.init_tensor(axis,axis,axis)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
-    assembler=skfn.J2Assembler(basis,material())
+    assembler=skfemntv.J2Assembler(basis,material())
     state=assembler.initial_state()
     coordinates=basis.doflocs
     u=np.zeros(basis.N)
@@ -80,11 +80,11 @@ def test_j2_global_assembler_tangent_and_trial_state():
 
 def test_j2_hex8_global_assembler_parallel_matches_serial():
     axis=np.linspace(0.,1.,3)
-    mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementHex1(),dim=3),intorder=2
+    mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementHex1(),dim=3),intorder=2
     )
-    assembler=skfn.J2Assembler(basis,material())
+    assembler=skfemntv.J2Assembler(basis,material())
     state=assembler.initial_state()
     u=np.zeros(basis.N)
     u[0::3]=.003*basis.doflocs[0,0::3]
@@ -103,12 +103,12 @@ def test_j2_hex8_global_assembler_parallel_matches_serial():
 
 
 def test_common_material_assembler_entry_point_preserves_j2_api():
-    mesh=skfn.MeshTet()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet()
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
-    common=skfn.MaterialAssembler(basis,material())
-    legacy=skfn.J2Assembler(basis,material())
+    common=skfemntv.MaterialAssembler(basis,material())
+    legacy=skfemntv.J2Assembler(basis,material())
     assert type(common) is type(legacy)
     assert common.material.state_size==7
     assert common.material.state_fields==(
@@ -120,12 +120,12 @@ def test_common_material_assembler_entry_point_preserves_j2_api():
 
 
 def test_material_assembler_rejects_non_native_material_before_setup():
-    mesh=skfn.MeshTet()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet()
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
     with np.testing.assert_raises_regex(TypeError,"unsupported material kernel"):
-        skfn.MaterialAssembler(basis,object())
+        skfemntv.MaterialAssembler(basis,object())
 
 
 def test_j2_named_fields_share_contiguous_generic_state_storage():
@@ -144,13 +144,13 @@ def test_j2_named_fields_share_contiguous_generic_state_storage():
 
 def test_zero_state_material_uses_same_generic_assembler():
     axis=np.linspace(0.,1.,3)
-    mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementHex1(),dim=3),intorder=2
+    mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementHex1(),dim=3),intorder=2
     )
-    kernel=skfn.LinearElasticity(120.,.27)
-    common=skfn.MaterialAssembler(basis,kernel)
-    established=skfn.NativeAssembler.from_basis(basis,kernel)
+    kernel=skfemntv.LinearElasticity(120.,.27)
+    common=skfemntv.MaterialAssembler(basis,kernel)
+    established=skfemntv.NativeAssembler.from_basis(basis,kernel)
     state=common.initial_state()
     assert state.storage.shape==(common.state_count,0)
     assert state.storage.flags.c_contiguous

@@ -14,7 +14,7 @@ import time
 import numpy as np
 import skfem
 
-import skfn
+import skfemntv
 
 import sys
 sys.path.insert(0,str(Path(__file__).parents[1]))
@@ -52,23 +52,23 @@ def median_time(function,repeat):
 def benchmark(topology,points,intorder,repeat,native_threads,check):
     axis=np.linspace(0.,1.,points)
     if topology=="tet":
-        mesh=skfn.MeshTet.init_tensor(axis,axis,axis)
-        element=skfn.ElementTetP1()
+        mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementTetP1()
         reference_mesh_type=skfem.MeshTet
         reference_element=skfem.ElementTetP1()
     else:
-        mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-        element=skfn.ElementHex1()
+        mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementHex1()
         reference_mesh_type=skfem.MeshHex
         reference_element=skfem.ElementHex1()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=3),intorder=intorder
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=3),intorder=intorder
     )
-    material=skfn.J2Plasticity(
+    material=skfemntv.J2Plasticity(
         young_modulus=210.,poisson_ratio=.3,
         yield_stress=.25,hardening_modulus=2.,
     )
-    assembler=skfn.J2Assembler(basis,material)
+    assembler=skfemntv.J2Assembler(basis,material)
     reference_basis=skfem.Basis(
         reference_mesh_type(mesh.p,mesh.t),
         skfem.ElementVector(reference_element),quadrature=(basis.X,basis.W),
@@ -84,7 +84,7 @@ def benchmark(topology,points,intorder,repeat,native_threads,check):
         np.array([.004,-.002,-.002,.0004,0.,0.]),
         (assembler.state_count,1),
     )
-    effective=min(native_threads,skfn.available_num_threads())
+    effective=min(native_threads,skfemntv.available_num_threads())
 
     def reference():
         field=reference_basis.interpolate(displacement)
@@ -177,7 +177,7 @@ def markdown(results):
     lines=[
         "| Mesh | Order | DoFs | Elements | IPs | Material 1t/Nt [ms] | "
         "R 1t/Nt [ms] | R+K 1t/Nt [ms] | skfem R+K [ms] | threads | "
-        "skfem/skfn Nt |",
+        "skfem/skfemntv Nt |",
         "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for result in results:
@@ -205,7 +205,7 @@ def write_csv(path,results):
 
 def write_plot(path,results,repeat):
     os.environ.setdefault(
-        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfn-matplotlib")
+        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfemntv-matplotlib")
     )
     import matplotlib.pyplot as plt
 
@@ -233,8 +233,8 @@ def write_plot(path,results,repeat):
     axes[0].grid(True,which="both",alpha=.3);axes[0].legend()
     for numerator,denominator,label,style in (
         ("tangent_1t_ms","tangent_parallel_ms","native parallel scaling","o--"),
-        ("skfem_tangent_ms","tangent_1t_ms","skfem / skfn 1 thread","s-"),
-        ("skfem_tangent_ms","tangent_parallel_ms",f"skfem / skfn {threads} threads","^-"),
+        ("skfem_tangent_ms","tangent_1t_ms","skfem / skfemntv 1 thread","s-"),
+        ("skfem_tangent_ms","tangent_parallel_ms",f"skfem / skfemntv {threads} threads","^-"),
     ):
         axes[1].semilogx(
             dofs,[getattr(result,numerator)/getattr(result,denominator)

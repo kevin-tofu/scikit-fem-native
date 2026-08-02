@@ -5,16 +5,16 @@ from skfem.helpers import ddot as reference_ddot
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,dot,grad
 
 
 def _reference_mesh(mesh):
-    if isinstance(mesh,skfn.MeshHex2):
+    if isinstance(mesh,skfemntv.MeshHex2):
         return skfem.MeshHex2.from_mesh(skfem.MeshHex())
-    if isinstance(mesh,skfn.MeshHex):
+    if isinstance(mesh,skfemntv.MeshHex):
         return skfem.MeshHex(mesh.p,mesh.t)
-    if isinstance(mesh,skfn.MeshTet2):
+    if isinstance(mesh,skfemntv.MeshTet2):
         return skfem.MeshTet2(mesh.p,mesh.t)
     return skfem.MeshTet(mesh.p,mesh.t)
 
@@ -40,17 +40,17 @@ def _quadrature_order(coordinates):
 @pytest.mark.parametrize(
     "mesh,element,reference_element,intorder",
     [
-        (skfn.MeshTet(),skfn.ElementTetP1(),skfem.ElementTetP1(),2),
-        (skfn.MeshTet2(),skfn.ElementTetP2(),skfem.ElementTetP2(),4),
-        (skfn.MeshHex(),skfn.ElementHex1(),skfem.ElementHex1(),2),
-        (skfn.MeshHex2(),skfn.ElementHex2(),skfem.ElementHex2(),4),
+        (skfemntv.MeshTet(),skfemntv.ElementTetP1(),skfem.ElementTetP1(),2),
+        (skfemntv.MeshTet2(),skfemntv.ElementTetP2(),skfem.ElementTetP2(),4),
+        (skfemntv.MeshHex(),skfemntv.ElementHex1(),skfem.ElementHex1(),2),
+        (skfemntv.MeshHex2(),skfemntv.ElementHex2(),skfem.ElementHex2(),4),
     ],
 )
 def test_vector_interpolation_matches_skfem(
     mesh,element,reference_element,intorder
 ):
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element),intorder=intorder
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element),intorder=intorder
     )
     coefficients=_coefficients(basis,3)
     actual=basis.interpolate(coefficients)
@@ -97,16 +97,16 @@ def test_vector_interpolation_matches_skfem(
 
 
 def test_composite_interpolation_and_form_parameter_match_skfem():
-    linear=skfn.MeshTet.init_tensor(
+    linear=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,2),
         np.linspace(0.,1.,2),
     )
-    mesh=skfn.MeshTet2.from_mesh(linear)
-    basis=skfn.Basis(
+    mesh=skfemntv.MeshTet2.from_mesh(linear)
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(skfn.ElementTetP2())
-        *skfn.ElementTetP1(),
+        skfemntv.ElementVector(skfemntv.ElementTetP2())
+        *skfemntv.ElementTetP1(),
         intorder=4,
     )
     velocity_indices,pressure_indices=basis.split_indices()
@@ -122,11 +122,11 @@ def test_composite_interpolation_and_form_parameter_match_skfem():
     assert velocity.value.shape[0]==3
     assert pressure.value.shape==basis.dx.shape
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def residual(v,q,w):
         return ddot(grad(w.velocity),grad(v))+w.pressure*q
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         residual,basis,velocity=velocity,pressure=pressure
     )
 
@@ -187,23 +187,23 @@ def test_composite_interpolation_and_form_parameter_match_skfem():
 
 
 def test_interpolated_scalar_coefficient_in_bilinear_form():
-    mesh=skfn.MeshTet.init_tensor(
+    mesh=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,2),
         np.linspace(0.,1.,2),
     )
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=1)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=1)
     )
     coefficient=basis.interpolate(
         1.+basis.doflocs[0]+.5*basis.doflocs[1]
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def mass(u,v,w):
         return w.coefficient*dot(u,v)
 
-    actual=skfn.asm(mass,basis,coefficient=coefficient)
+    actual=skfemntv.asm(mass,basis,coefficient=coefficient)
 
     reference_mesh=skfem.MeshTet(mesh.p,mesh.t)
     reference_basis=skfem.Basis(

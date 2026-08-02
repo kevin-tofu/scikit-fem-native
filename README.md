@@ -1,14 +1,14 @@
 # skfem-native
 
-`skfem-native` (`import skfn`) is a compact C++ finite-element assembly engine
+`skfem-native` (`import skfemntv`) is a compact C++ finite-element assembly engine
 with a scikit-fem-compatible Python API.
 
-> `skfn` is an independent project.  It is not part of, maintained by, or
+> `skfemntv` is an independent project.  It is not part of, maintained by, or
 > affiliated with the scikit-fem project.  scikit-fem is used only by the test
 > suite as a numerical and API reference; it is never a runtime dependency.
 
 Compatibility applies to the documented subset, not to every scikit-fem API.
-Unsupported forms and operations raise `skfn.UnsupportedNativeForm`; there is
+Unsupported forms and operations raise `skfemntv.UnsupportedNativeForm`; there is
 no runtime fallback to scikit-fem or Python element assembly.
 
 ## API contract
@@ -28,7 +28,7 @@ no runtime fallback to scikit-fem or Python element assembly.
 | Rectangular forms | `asm(form, trial_basis, test_basis)` across different orders or components |
 | Interfaces | `jump`, `avg`, `normal_grad`, value and gradient contractions |
 
-### skfn extensions
+### skfemntv extensions
 
 These APIs are useful native-assembly features but are not expected to run
 unchanged with upstream scikit-fem.
@@ -63,7 +63,7 @@ The topology-independent Neo-Hookean kernel is also regression-tested with
 native Tet10, Hex27, Wedge6, and Pyramid5 bases.  Tet10, Hex27, and Wedge6
 residuals and consistent tangents are compared with equivalent scikit-fem
 forms at integration orders 2, 4, and 6; Pyramid5 uses finite-difference
-consistent-tangent checks because it is an skfn extension.  Every topology
+consistent-tangent checks because it is an skfemntv extension.  Every topology
 checks serial/parallel agreement, inverted deformation, and singular geometry.
 
 Stateful small-strain J2 plasticity uses the same fused assembly shape.  The
@@ -71,13 +71,13 @@ input state remains committed until the caller accepts the returned trial
 state, so a failed Newton step can be rolled back by retaining the old object:
 
 ```python
-material = skfn.J2Plasticity(
+material = skfemntv.J2Plasticity(
     young_modulus=210e3,
     poisson_ratio=.3,
     yield_stress=250.,
     hardening_modulus=1e3,
 )
-assembler = skfn.MaterialAssembler(basis, material)
+assembler = skfemntv.MaterialAssembler(basis, material)
 state = assembler.initial_state()
 
 result = assembler.assemble(u, state, num_threads=4)
@@ -95,14 +95,14 @@ One-branch Standard Linear Solid viscoelasticity uses six viscous-strain state
 components and a backward-Euler material update:
 
 ```python
-material = skfn.StandardLinearSolid(
+material = skfemntv.StandardLinearSolid(
     equilibrium_modulus=1000.,
     branch_modulus=500.,
     poisson_ratio=.3,
     relaxation_time=2.,
     time_step=.1,
 )
-assembler = skfn.MaterialAssembler(basis, material)
+assembler = skfemntv.MaterialAssembler(basis, material)
 state = assembler.initial_state()
 result = assembler.assemble(u, state, num_threads=4)
 state = result.trial_state
@@ -120,7 +120,7 @@ trial = assembler.assemble(u, state, time_step=dt, num_threads=4)
 The fused call returns the internal-force residual, a consistent CSR tangent,
 and integration-point plastic strain history.  It supports any three-component
 H1 `Basis` whose tabulated gradients fit the native element-size limit,
-including the Tet and Hex orders implemented by skfn.
+including the Tet and Hex orders implemented by skfemntv.
 
 Stateful material assembly is regression-tested on Tet4, Tet10, Wedge6,
 Pyramid5, Hex8, and Hex27.  Tet10, Wedge6, Pyramid5, and Hex27 coverage includes distorted geometry,
@@ -132,7 +132,7 @@ interior facets in one `FacetBasis`.  A common collapsed-square quadrature
 keeps the per-facet arrays rectangular; `mesh._facet_sizes` identifies the
 three- or four-node topology represented by each padded `mesh.facets` column.
 
-Pyramid5 is an explicit skfn extension rather than part of the
+Pyramid5 is an explicit skfemntv extension rather than part of the
 scikit-fem-compatible subset;
 its rational shape functions are tested by volume, partition-of-unity,
 constant-strain, material-tangent, and serial/parallel checks.
@@ -141,15 +141,15 @@ Native element loops use one thread by default.  Geometry tabulation can use
 the shared native thread pool explicitly:
 
 ```python
-skfn.set_num_threads(4)
-basis = skfn.Basis(mesh, element)
+skfemntv.set_num_threads(4)
+basis = skfemntv.Basis(mesh, element)
 ```
 
-Use `skfn.get_num_threads()` to inspect the current setting.  Explicit thread
+Use `skfemntv.get_num_threads()` to inspect the current setting.  Explicit thread
 selection keeps benchmarks reproducible and avoids oversubscription when a
 surrounding application already uses parallel workers.
 
-When an application supports both scikit-fem and skfn, branch explicitly for
+When an application supports both scikit-fem and skfemntv, branch explicitly for
 native-only controls:
 
 ```python
@@ -174,32 +174,54 @@ python -m pip install --upgrade build twine
 python tools/package_check.py
 ```
 
+Use `--smoke-only` for the faster PR check that installs and imports the wheel
+without repeating the full test suite; `--skip-tests` validates only build
+metadata.
+
 To build the complete Linux wheel matrix locally, install Docker and
 `cibuildwheel`, then run:
 
 ```bash
 python -m pip install --upgrade cibuildwheel
-python tools/build_wheels.py --platform linux
+python tools/build_wheels.py --platform linux --arch x86_64
 ```
 
 The same wrapper runs natively on macOS and Windows.  A single-version build is
 useful while iterating:
 
 ```bash
-python tools/build_wheels.py --platform linux --python 3.12
-python tools/build_wheels.py --platform macos --python 3.12
-python tools/build_wheels.py --platform windows --python 3.12
+python tools/build_wheels.py --platform linux --arch x86_64 --python 3.12
+python tools/build_wheels.py --platform macos --arch arm64 --python 3.12
+python tools/build_wheels.py --platform macos --arch x86_64 --python 3.12
+python tools/build_wheels.py --platform windows --arch AMD64 --python 3.12
 ```
 
 Linux uses Docker to produce repaired manylinux wheels.  macOS wheels must be
 built on macOS and Windows wheels on Windows; they cannot be produced by the
 Linux Docker build.
 
+`tools/local_ci.py` is the cross-platform entry point matching the GitHub
+stages.  `fast` installs the editable package and runs tests; `package` builds
+and installs a wheel in a clean environment; `wheel` invokes cibuildwheel for
+the detected native architecture; and `all` runs every stage:
+
+```bash
+python tools/local_ci.py fast
+python tools/local_ci.py package
+python tools/local_ci.py wheel --python 3.12
+python tools/local_ci.py all --python 3.12
+```
+
+The normal PR workflow intentionally tests only Python 3.10/3.14 on Linux and
+Python 3.14 on macOS arm64 and Windows AMD64.  The manually dispatched
+`Full validation` workflow covers every supported Python on Linux, macOS arm64
+and Intel, Windows AMD64, and a wheel-install smoke test on all four targets.
+
 GitHub Releases whose tag is `v<version>` trigger `.github/workflows/workflow.yml`.
 The workflow verifies the tag against `pyproject.toml`, builds CPython 3.10--3.14
-wheels for Linux, macOS, and Windows, and publishes through PyPI Trusted
-Publishing.  Configure a protected GitHub environment named `pypi` before the
-first release.
+wheels for Linux x86_64, macOS arm64, macOS x86_64, and Windows AMD64, and
+publishes through PyPI Trusted Publishing.  Configure a protected GitHub
+environment named `pypi` before the first release.
 
 ### License
 
@@ -208,7 +230,7 @@ same license family used by scikit-fem.  Commercial use, modification, and
 redistribution are permitted subject to the conditions in `LICENSE`.
 
 ```python
-from skfn import LinearElasticity, NativeAssembler
+from skfemntv import LinearElasticity, NativeAssembler
 
 assembler = NativeAssembler(
     coordinates, connectivity, element_dofs,
@@ -231,7 +253,7 @@ Compressible Neo-Hookean assembly uses Lamé parameters and returns an
 analytically consistent tangent:
 
 ```python
-from skfn import NeoHookean
+from skfemntv import NeoHookean
 
 kernel = NeoHookean.from_young_poisson(young_modulus=100.0, poisson_ratio=0.3)
 assembler = NativeAssembler.from_basis(basis, kernel)
@@ -355,15 +377,15 @@ boundary_dofs = basis.get_dofs(facets=left)
 ```
 
 The cached `mesh.facets`, `mesh.t2f`, and `mesh.f2t` arrays are shared by
-repeated Basis construction.  `mesh.interior_facets()` is a small skfn
+repeated Basis construction.  `mesh.interior_facets()` is a small skfemntv
 convenience returning `np.flatnonzero(mesh.f2t[1] != -1)`.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python
 import numpy as np
-import skfn as skfem
-from skfn.helpers import dot
+import skfemntv as skfem
+from skfemntv.helpers import dot
 
 basis = skfem.Basis(
     skfem.MeshTet(),
@@ -400,7 +422,7 @@ def weighted_mass(u, v, w):
 ```
 
 Supported value and gradient contractions are dispatched to native assembly.
-Unsupported forms raise `skfn.UnsupportedNativeForm`; `skfn.asm` never silently
+Unsupported forms raise `skfemntv.UnsupportedNativeForm`; `skfemntv.asm` never silently
 falls back to Python assembly.  Use upstream `skfem.asm` explicitly for an
 independent reference assembly.  The same native API works with `FacetBasis`
 for surface tractions.
@@ -468,7 +490,7 @@ gradient-gradient coefficient contracts matching component and spatial axes.
 The same contractions are available through interface forms:
 
 ```python
-from skfn.helpers import avg, ddot, dot, grad, jump
+from skfemntv.helpers import avg, ddot, dot, grad, jump
 
 @skfem.BilinearForm
 def gradient_jump(u, v, w):
@@ -542,7 +564,7 @@ directly to the original element DOFs.
 Interface forms remain formulation-neutral:
 
 ```python
-from skfn.helpers import avg, dot, jump, normal_grad
+from skfemntv.helpers import avg, dot, jump, normal_grad
 
 @skfem.BilinearForm
 def interface_form(u, v, w):
@@ -808,7 +830,7 @@ r = skfem.asm(
 
 Interpolated scalar fields can also be passed as quadrature coefficients to a
 `BilinearForm`, enabling solution-dependent native assembly without adding a
-nonlinear solver policy to `skfn`.
+nonlinear solver policy to `skfemntv`.
 
 The mixed APIs are tested together on a P2/P1 Taylor--Hood Stokes system:
 native bilinear and linear assembly, named velocity-boundary extraction,
@@ -839,7 +861,7 @@ interpolated directly on its quadrature points.  A functional expression is
 evaluated to one scalar per quadrature point and its weighted reduction runs
 in C++ with the GIL released.
 
-`skfn` only traces and assembles the requested jump, weighted average, value,
+`skfemntv` only traces and assembles the requested jump, weighted average, value,
 and outward-normal-gradient contractions; it does not select a Nitsche,
 mortar, or contact formulation.
 

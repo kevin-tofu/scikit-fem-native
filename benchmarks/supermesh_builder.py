@@ -7,7 +7,7 @@ from time import perf_counter
 
 import numpy as np
 
-import skfn
+import skfemntv
 
 
 def grid(cells: int,flip: bool):
@@ -30,7 +30,7 @@ def run(cells):
     master_points,master_triangles=grid(cells,False)
     slave_points,slave_triangles=grid(cells,True)
     start=perf_counter()
-    supermesh=skfn.TriangleSupermesh(
+    supermesh=skfemntv.TriangleSupermesh(
         master_points,master_triangles,
         slave_points,slave_triangles,
     )

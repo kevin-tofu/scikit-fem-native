@@ -4,8 +4,8 @@ import skfem
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import jump as reference_jump
 
-import skfn
-from skfn.helpers import dot,jump
+import skfemntv
+from skfemntv.helpers import dot,jump
 
 
 def _coordinate_permutation(native,reference,components):
@@ -28,39 +28,39 @@ def test_interior_facet_functional_and_linear_form_match_skfem(
 ):
     axis=np.linspace(0.,1.,4)
     if kind=="tri":
-        linear=skfn.MeshTri.init_tensor(axis,axis)
+        linear=skfemntv.MeshTri.init_tensor(axis,axis)
         reference_linear=skfem.MeshTri(linear.p,linear.t)
         if order==2:
-            mesh=skfn.MeshTri2.from_mesh(linear)
+            mesh=skfemntv.MeshTri2.from_mesh(linear)
             reference_mesh=skfem.MeshTri2.from_mesh(reference_linear)
-            element=skfn.ElementTriP2()
+            element=skfemntv.ElementTriP2()
             reference_element=skfem.ElementTriP2()
         else:
             mesh=linear;reference_mesh=reference_linear
-            element=skfn.ElementTriP1()
+            element=skfemntv.ElementTriP1()
             reference_element=skfem.ElementTriP1()
     else:
-        linear=skfn.MeshQuad.init_tensor(axis,axis)
+        linear=skfemntv.MeshQuad.init_tensor(axis,axis)
         reference_linear=skfem.MeshQuad(linear.p,linear.t)
         if order==2:
-            mesh=skfn.MeshQuad2.from_mesh(linear)
+            mesh=skfemntv.MeshQuad2.from_mesh(linear)
             reference_mesh=skfem.MeshQuad2.from_mesh(reference_linear)
-            element=skfn.ElementQuad2()
+            element=skfemntv.ElementQuad2()
             reference_element=skfem.ElementQuad2()
         else:
             mesh=linear;reference_mesh=reference_linear
-            element=skfn.ElementQuad1()
+            element=skfemntv.ElementQuad1()
             reference_element=skfem.ElementQuad1()
     intorder=4 if order==2 else 2
-    basis=skfn.InteriorFacetBasis(
-        mesh,skfn.ElementVector(element),side=side,intorder=intorder
+    basis=skfemntv.InteriorFacetBasis(
+        mesh,skfemntv.ElementVector(element),side=side,intorder=intorder
     )
     reference_basis=skfem.InteriorFacetBasis(
         reference_mesh,skfem.ElementVector(reference_element),
         side=side,intorder=intorder,
     )
 
-    @skfn.Functional
+    @skfemntv.Functional
     def measure(w):
         return 1.+w.x[0]+.2*w.n[0]-.1*w.n[1]
 
@@ -69,12 +69,12 @@ def test_interior_facet_functional_and_linear_form_match_skfem(
         return 1.+w.x[0]+.2*w.n[0]-.1*w.n[1]
 
     np.testing.assert_allclose(
-        skfn.asm(measure,basis),
+        skfemntv.asm(measure,basis),
         skfem.asm(reference_measure,reference_basis),
         rtol=3e-12,atol=3e-12,
     )
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def flux(v,w):
         return dot((1.+w.x[1])*w.n,v)
 
@@ -82,7 +82,7 @@ def test_interior_facet_functional_and_linear_form_match_skfem(
     def reference_flux(v,w):
         return reference_dot((1.+w.x[1])*w.n,v)
 
-    actual=skfn.asm(flux,basis)
+    actual=skfemntv.asm(flux,basis)
     expected=skfem.asm(reference_flux,reference_basis)
     permutation=_coordinate_permutation(basis,reference_basis,2)
     np.testing.assert_allclose(
@@ -94,14 +94,14 @@ def test_interior_facet_functional_and_linear_form_match_skfem(
 def test_interior_facet_sides_share_points_and_normals(kind):
     axis=np.linspace(0.,1.,5)
     if kind=="tri":
-        mesh=skfn.MeshTri.init_tensor(axis,axis)
-        element=skfn.ElementTriP1()
+        mesh=skfemntv.MeshTri.init_tensor(axis,axis)
+        element=skfemntv.ElementTriP1()
     else:
-        mesh=skfn.MeshQuad.init_tensor(axis,axis)
-        element=skfn.ElementQuad1()
+        mesh=skfemntv.MeshQuad.init_tensor(axis,axis)
+        element=skfemntv.ElementQuad1()
     bases=[
-        skfn.InteriorFacetBasis(
-            mesh,skfn.ElementVector(element,dim=1),side=side
+        skfemntv.InteriorFacetBasis(
+            mesh,skfemntv.ElementVector(element,dim=1),side=side
         )
         for side in (0,1)
     ]
@@ -126,33 +126,33 @@ def test_interior_facet_sides_share_points_and_normals(kind):
 def test_jump_penalty_assembly_matches_skfem(kind,order):
     axis=np.linspace(0.,1.,4)
     if kind=="tri":
-        linear=skfn.MeshTri.init_tensor(axis,axis)
+        linear=skfemntv.MeshTri.init_tensor(axis,axis)
         reference_linear=skfem.MeshTri(linear.p,linear.t)
         if order==2:
-            mesh=skfn.MeshTri2.from_mesh(linear)
+            mesh=skfemntv.MeshTri2.from_mesh(linear)
             reference_mesh=skfem.MeshTri2.from_mesh(reference_linear)
-            element=skfn.ElementTriP2()
+            element=skfemntv.ElementTriP2()
             reference_element=skfem.ElementTriP2()
         else:
             mesh=linear;reference_mesh=reference_linear
-            element=skfn.ElementTriP1()
+            element=skfemntv.ElementTriP1()
             reference_element=skfem.ElementTriP1()
     else:
-        linear=skfn.MeshQuad.init_tensor(axis,axis)
+        linear=skfemntv.MeshQuad.init_tensor(axis,axis)
         reference_linear=skfem.MeshQuad(linear.p,linear.t)
         if order==2:
-            mesh=skfn.MeshQuad2.from_mesh(linear)
+            mesh=skfemntv.MeshQuad2.from_mesh(linear)
             reference_mesh=skfem.MeshQuad2.from_mesh(reference_linear)
-            element=skfn.ElementQuad2()
+            element=skfemntv.ElementQuad2()
             reference_element=skfem.ElementQuad2()
         else:
             mesh=linear;reference_mesh=reference_linear
-            element=skfn.ElementQuad1()
+            element=skfemntv.ElementQuad1()
             reference_element=skfem.ElementQuad1()
     intorder=4 if order==2 else 2
     bases=[
-        skfn.InteriorFacetBasis(
-            mesh,skfn.ElementVector(element,dim=1),
+        skfemntv.InteriorFacetBasis(
+            mesh,skfemntv.ElementVector(element,dim=1),
             side=side,intorder=intorder,
         )
         for side in (0,1)
@@ -165,7 +165,7 @@ def test_jump_penalty_assembly_matches_skfem(kind,order):
         for side in (0,1)
     ]
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def penalty(u,v,w):
         return (1.+w.x[0])*dot(jump(w,u),jump(w,v))
 
@@ -178,7 +178,7 @@ def test_jump_penalty_assembly_matches_skfem(kind,order):
             )
         )
 
-    actual=skfn.asm(penalty,bases,bases)
+    actual=skfemntv.asm(penalty,bases,bases)
     expected=skfem.asm(
         reference_penalty,reference_bases,reference_bases
     )

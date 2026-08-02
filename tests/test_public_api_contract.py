@@ -3,15 +3,15 @@ import pytest
 import skfem as reference
 from skfem.helpers import dot as reference_dot
 
-import skfn
-import skfn as skfem
-from skfn.helpers import dot
+import skfemntv
+import skfemntv as skfem
+from skfemntv.helpers import dot
 
 
 def test_public_exports_are_unique_and_resolvable():
-    assert len(skfn.__all__)==len(set(skfn.__all__))
-    for name in skfn.__all__:
-        assert hasattr(skfn,name),name
+    assert len(skfemntv.__all__)==len(set(skfemntv.__all__))
+    for name in skfemntv.__all__:
+        assert hasattr(skfemntv,name),name
 
 
 def test_import_alias_documented_form_matches_skfem():
@@ -60,5 +60,5 @@ def test_unsupported_form_raises_without_fallback():
 
 
 def test_solver_policy_is_not_exported():
-    assert not hasattr(skfn,"solve")
-    assert not hasattr(skfn,"condense")
+    assert not hasattr(skfemntv,"solve")
+    assert not hasattr(skfemntv,"condense")

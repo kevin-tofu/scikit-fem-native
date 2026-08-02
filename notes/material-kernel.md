@@ -45,7 +45,7 @@ state layout.
 Python exposes the common construction shape:
 
 ```python
-assembler = skfn.MaterialAssembler(basis, material)
+assembler = skfemntv.MaterialAssembler(basis, material)
 state = assembler.initial_state()
 evaluation = assembler.assemble(u, state, num_threads=4)
 state = evaluation.trial_state  # explicit commit

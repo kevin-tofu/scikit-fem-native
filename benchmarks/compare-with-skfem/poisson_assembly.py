@@ -1,4 +1,4 @@
-"""Compare skfn and scikit-fem Poisson assembly as the DoF count grows."""
+"""Compare skfemntv and scikit-fem Poisson assembly as the DoF count grows."""
 
 from __future__ import annotations
 
@@ -20,16 +20,16 @@ import skfem
 from skfem.helpers import dot as skfem_dot
 from skfem.helpers import grad as skfem_grad
 
-import skfn
-from skfn.helpers import ddot,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,dot,grad
 
 
-@skfn.BilinearForm
+@skfemntv.BilinearForm
 def skfn_laplace(u,v,w):
     return ddot(grad(u),grad(v))
 
 
-@skfn.LinearForm
+@skfemntv.LinearForm
 def skfn_load(v,w):
     return dot(w.source,v)
 
@@ -94,7 +94,7 @@ class Result:
 def environment() -> str:
     return (
         f"Python {platform.python_version()}, NumPy {np.__version__}, "
-        f"SciPy {scipy.__version__}, skfn {skfn.__version__}, "
+        f"SciPy {scipy.__version__}, skfemntv {skfemntv.__version__}, "
         f"scikit-fem {skfem.__version__}, {platform.platform()}"
     )
 
@@ -131,17 +131,17 @@ def benchmark(
     resolution: int,repeat: int,warmup: int,native_threads: int
 ) -> Result:
     coordinates=np.linspace(0.,1.,resolution+1)
-    mesh=skfn.MeshTri.init_tensor(coordinates,coordinates)
+    mesh=skfemntv.MeshTri.init_tensor(coordinates,coordinates)
     reference_mesh=skfem.MeshTri(mesh.p,mesh.t)
 
-    basis,skfn_basis_ms=elapsed(lambda:skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTriP1(),dim=1),
+    basis,skfn_basis_ms=elapsed(lambda:skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1),
         intorder=2,
     ))
     def parallel_basis():
-        with skfn.thread_limit(native_threads):
-            return skfn.Basis(
-                mesh,skfn.ElementVector(skfn.ElementTriP1(),dim=1),
+        with skfemntv.thread_limit(native_threads):
+            return skfemntv.Basis(
+                mesh,skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1),
                 intorder=2,
             )
     _,skfn_parallel_basis_ms=elapsed(parallel_basis)
@@ -149,16 +149,16 @@ def benchmark(
         reference_mesh,skfem.ElementTriP1(),intorder=2
     ))
     source=np.array([1.])
-    native_matrix=skfn.asm(skfn_laplace,basis)
-    native_rhs=skfn.asm(skfn_load,basis,source=source)
+    native_matrix=skfemntv.asm(skfn_laplace,basis)
+    native_rhs=skfemntv.asm(skfn_load,basis,source=source)
     reference_matrix=skfem.asm(skfem_laplace,reference_basis)
     reference_rhs=skfem.asm(skfem_load,reference_basis)
     compare_outputs(
         native_matrix,reference_matrix,native_rhs,reference_rhs
     )
     for _ in range(max(0,warmup-1)):
-        skfn.asm(skfn_laplace,basis)
-        skfn.asm(skfn_load,basis,source=source)
+        skfemntv.asm(skfn_laplace,basis)
+        skfemntv.asm(skfn_load,basis,source=source)
         skfem.asm(skfem_laplace,reference_basis)
         skfem.asm(skfem_load,reference_basis)
 
@@ -167,10 +167,10 @@ def benchmark(
         skfn_basis_ms=skfn_basis_ms,skfem_basis_ms=skfem_basis_ms,
         skfn_parallel_basis_ms=skfn_parallel_basis_ms,
         skfn_matrix_ms=median_time(
-            lambda:skfn.asm(skfn_laplace,basis),repeat
+            lambda:skfemntv.asm(skfn_laplace,basis),repeat
         ),
         skfn_parallel_matrix_ms=median_time(
-            lambda:skfn.asm(
+            lambda:skfemntv.asm(
                 skfn_laplace,basis,num_threads=native_threads
             ),repeat
         ),
@@ -178,10 +178,10 @@ def benchmark(
             lambda:skfem.asm(skfem_laplace,reference_basis),repeat
         ),
         skfn_rhs_ms=median_time(
-            lambda:skfn.asm(skfn_load,basis,source=source),repeat
+            lambda:skfemntv.asm(skfn_load,basis,source=source),repeat
         ),
         skfn_parallel_rhs_ms=median_time(
-            lambda:skfn.asm(
+            lambda:skfemntv.asm(
                 skfn_load,basis,source=source,
                 num_threads=native_threads,
             ),repeat
@@ -189,7 +189,7 @@ def benchmark(
         skfem_rhs_ms=median_time(
             lambda:skfem.asm(skfem_load,reference_basis),repeat
         ),
-        native_threads=min(native_threads,skfn.available_num_threads()),
+        native_threads=min(native_threads,skfemntv.available_num_threads()),
     )
 
 
@@ -198,7 +198,7 @@ def markdown(
     repeat: int|None=None,warmup: int|None=None,
 ) -> str:
     lines=[
-        "# skfn vs. scikit-fem: Poisson assembly",
+        "# skfemntv vs. scikit-fem: Poisson assembly",
         "",
     ] if include_metadata else []
     if include_metadata:
@@ -212,10 +212,10 @@ def markdown(
             "",
         ])
     lines.extend([
-        "| DoFs | Elements | skfn K [ms] | skfn K parallel [ms] | "
+        "| DoFs | Elements | skfemntv K [ms] | skfemntv K parallel [ms] | "
         "threads | skfem K [ms] | K speedup | parallel K speedup | "
-        "skfn f [ms] | skfn f parallel [ms] | threads | skfem f [ms] | "
-        "skfn f speedup | parallel f speedup | skfn total speedup |",
+        "skfemntv f [ms] | skfemntv f parallel [ms] | threads | skfem f [ms] | "
+        "skfemntv f speedup | parallel f speedup | skfemntv total speedup |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
         "---:|---:|---:|",
     ])
@@ -240,7 +240,7 @@ def markdown(
         "",
         "Basis construction:",
         "",
-        "| DoFs | skfn 1 thread [ms] | skfn parallel [ms] | threads | "
+        "| DoFs | skfemntv 1 thread [ms] | skfemntv parallel [ms] | threads | "
         "skfem [ms] | speedup |",
         "|---:|---:|---:|---:|---:|---:|",
     ])
@@ -286,7 +286,7 @@ def write_plot(
     path: Path,results: list[Result],repeat: int,warmup: int
 ) -> None:
     if "MPLCONFIGDIR" not in os.environ:
-        cache=Path(tempfile.gettempdir())/"skfn-matplotlib"
+        cache=Path(tempfile.gettempdir())/"skfemntv-matplotlib"
         cache.mkdir(exist_ok=True)
         os.environ["MPLCONFIGDIR"]=str(cache)
     try:
@@ -308,7 +308,7 @@ def write_plot(
     for axis,title,native,reference in comparisons:
         axis.loglog(
             dofs,[getattr(result,native) for result in results],
-            "o-",label="skfn",linewidth=2,
+            "o-",label="skfemntv",linewidth=2,
         )
         axis.loglog(
             dofs,[getattr(result,reference) for result in results],
@@ -319,19 +319,19 @@ def write_plot(
         axis.legend()
     axes[0,1].loglog(
         dofs,[result.skfn_parallel_rhs_ms for result in results],
-        "^-",label=f"skfn ({results[0].native_threads} threads)",
+        "^-",label=f"skfemntv ({results[0].native_threads} threads)",
         linewidth=2,
     )
     axes[0,1].legend()
     axes[0,0].loglog(
         dofs,[result.skfn_parallel_matrix_ms for result in results],
-        "^-",label=f"skfn ({results[0].native_threads} threads)",
+        "^-",label=f"skfemntv ({results[0].native_threads} threads)",
         linewidth=2,
     )
     axes[0,0].legend()
     axes[1,0].loglog(
         dofs,[result.skfn_parallel_basis_ms for result in results],
-        "^-",label=f"skfn ({results[0].native_threads} threads)",
+        "^-",label=f"skfemntv ({results[0].native_threads} threads)",
         linewidth=2,
     )
     axes[1,0].legend()
@@ -371,7 +371,7 @@ def write_plot(
     )
     speedup.axhline(1.,color="black",linewidth=1,linestyle="--")
     speedup.set(
-        title="skfn speedup vs. scikit-fem (>1 is faster)",
+        title="skfemntv speedup vs. scikit-fem (>1 is faster)",
         xlabel="Degrees of freedom",ylabel="Speedup [x]",
     )
     speedup.grid(True,which="both",alpha=.3)

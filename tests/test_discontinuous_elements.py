@@ -4,27 +4,27 @@ import skfem
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import jump as reference_jump
 
-import skfn
-from skfn.helpers import dot,jump
+import skfemntv
+from skfemntv.helpers import dot,jump
 
 
 @pytest.mark.parametrize(
     "mesh,element,reference_mesh,reference_element",
     [
         (
-            skfn.MeshTri.init_tensor([0.,.4,1.],[0.,1.]),
-            skfn.ElementTriP0(),skfem.MeshTri,skfem.ElementTriP0,
+            skfemntv.MeshTri.init_tensor([0.,.4,1.],[0.,1.]),
+            skfemntv.ElementTriP0(),skfem.MeshTri,skfem.ElementTriP0,
         ),
         (
-            skfn.MeshQuad.init_tensor([0.,.4,1.],[0.,1.]),
-            skfn.ElementQuad0(),skfem.MeshQuad,skfem.ElementQuad0,
+            skfemntv.MeshQuad.init_tensor([0.,.4,1.],[0.,1.]),
+            skfemntv.ElementQuad0(),skfem.MeshQuad,skfem.ElementQuad0,
         ),
         (
-            skfn.MeshTet(),skfn.ElementTetP0(),
+            skfemntv.MeshTet(),skfemntv.ElementTetP0(),
             skfem.MeshTet,skfem.ElementTetP0,
         ),
         (
-            skfn.MeshHex(),skfn.ElementHex0(),
+            skfemntv.MeshHex(),skfemntv.ElementHex0(),
             skfem.MeshHex,skfem.ElementHex0,
         ),
     ],
@@ -32,14 +32,14 @@ from skfn.helpers import dot,jump
 def test_p0_volume_forms_and_interpolation_match_skfem(
     mesh,element,reference_mesh,reference_element
 ):
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=1),intorder=2
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=1),intorder=2
     )
     reference_basis=skfem.Basis(
         reference_mesh(mesh.p,mesh.t),reference_element(),intorder=2
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def mass(u,v,w):
         return (1.+w.x[0])*dot(u,v)
 
@@ -48,7 +48,7 @@ def test_p0_volume_forms_and_interpolation_match_skfem(
         return (1.+w.x[0])*u*v
 
     np.testing.assert_allclose(
-        skfn.asm(mass,basis).toarray(),
+        skfemntv.asm(mass,basis).toarray(),
         skfem.asm(reference_mass,reference_basis).toarray(),
         rtol=3e-12,atol=3e-12,
     )
@@ -66,39 +66,39 @@ def test_p0_volume_forms_and_interpolation_match_skfem(
 def test_element_dg_jump_penalty_matches_skfem(kind,order):
     axis=np.linspace(0.,1.,4)
     if kind=="tri":
-        mesh=skfn.MeshTri.init_tensor(axis,axis)
+        mesh=skfemntv.MeshTri.init_tensor(axis,axis)
         reference_mesh=skfem.MeshTri(mesh.p,mesh.t)
         element=(
-            skfn.ElementTriP0() if order==0 else
-            skfn.ElementTriP1() if order==1 else skfn.ElementTriP2()
+            skfemntv.ElementTriP0() if order==0 else
+            skfemntv.ElementTriP1() if order==1 else skfemntv.ElementTriP2()
         )
         reference_element=(
             skfem.ElementTriP0() if order==0 else
             skfem.ElementTriP1() if order==1 else skfem.ElementTriP2()
         )
         if order==2:
-            mesh=skfn.MeshTri2.from_mesh(mesh)
+            mesh=skfemntv.MeshTri2.from_mesh(mesh)
             reference_mesh=skfem.MeshTri2.from_mesh(reference_mesh)
     else:
-        mesh=skfn.MeshQuad.init_tensor(axis,axis)
+        mesh=skfemntv.MeshQuad.init_tensor(axis,axis)
         reference_mesh=skfem.MeshQuad(mesh.p,mesh.t)
         element=(
-            skfn.ElementQuad0() if order==0 else
-            skfn.ElementQuad1() if order==1 else skfn.ElementQuad2()
+            skfemntv.ElementQuad0() if order==0 else
+            skfemntv.ElementQuad1() if order==1 else skfemntv.ElementQuad2()
         )
         reference_element=(
             skfem.ElementQuad0() if order==0 else
             skfem.ElementQuad1() if order==1 else skfem.ElementQuad2()
         )
         if order==2:
-            mesh=skfn.MeshQuad2.from_mesh(mesh)
+            mesh=skfemntv.MeshQuad2.from_mesh(mesh)
             reference_mesh=skfem.MeshQuad2.from_mesh(reference_mesh)
     intorder=4 if order==2 else 2
     basis=[
-        skfn.InteriorFacetBasis(
+        skfemntv.InteriorFacetBasis(
             mesh,
-            skfn.ElementVector(
-                element if order==0 else skfn.ElementDG(element),dim=1
+            skfemntv.ElementVector(
+                element if order==0 else skfemntv.ElementDG(element),dim=1
             ),
             side=side,intorder=intorder,
         )
@@ -118,7 +118,7 @@ def test_element_dg_jump_penalty_matches_skfem(kind,order):
         for side in (0,1)
     ]
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def penalty(u,v,w):
         return (1.+w.x[1])*dot(jump(w,u),jump(w,v))
 
@@ -131,7 +131,7 @@ def test_element_dg_jump_penalty_matches_skfem(kind,order):
             )
         )
 
-    actual=skfn.asm(penalty,basis,basis)
+    actual=skfemntv.asm(penalty,basis,basis)
     expected=skfem.asm(
         reference_penalty,reference_basis,reference_basis
     )
@@ -143,12 +143,12 @@ def test_element_dg_jump_penalty_matches_skfem(kind,order):
 
 
 def test_dg_traces_are_independent_between_cells():
-    mesh=skfn.MeshQuad.init_tensor([0.,.5,1.],[0.,1.])
+    mesh=skfemntv.MeshQuad.init_tensor([0.,.5,1.],[0.,1.])
     bases=[
-        skfn.InteriorFacetBasis(
+        skfemntv.InteriorFacetBasis(
             mesh,
-            skfn.ElementVector(
-                skfn.ElementDG(skfn.ElementQuad1()),dim=1
+            skfemntv.ElementVector(
+                skfemntv.ElementDG(skfemntv.ElementQuad1()),dim=1
             ),
             side=side,
         )
@@ -161,11 +161,11 @@ def test_dg_traces_are_independent_between_cells():
 
 
 def test_dg_get_dofs_matches_scikit_fem_policy():
-    mesh=skfn.MeshTri.init_tensor([0.,.5,1.],[0.,1.])
-    basis=skfn.Basis(
+    mesh=skfemntv.MeshTri.init_tensor([0.,.5,1.],[0.,1.])
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(
-            skfn.ElementDG(skfn.ElementTriP1()),dim=1
+        skfemntv.ElementVector(
+            skfemntv.ElementDG(skfemntv.ElementTriP1()),dim=1
         ),
     )
     assert basis.get_dofs().all().size==0

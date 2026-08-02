@@ -30,7 +30,13 @@ def main() -> None:
         "--skip-tests",action="store_true",
         help="only build distributions and check their metadata",
     )
+    parser.add_argument(
+        "--smoke-only",action="store_true",
+        help="install the wheel and import it without running pytest",
+    )
     arguments=parser.parse_args()
+    if arguments.skip_tests and arguments.smoke_only:
+        parser.error("--skip-tests and --smoke-only are mutually exclusive")
     output=arguments.outdir.resolve()
     if output.exists():
         shutil.rmtree(output)
@@ -46,23 +52,24 @@ def main() -> None:
     if arguments.skip_tests:
         return
 
-    with tempfile.TemporaryDirectory(prefix="skfn-wheel-test-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="skfemntv-wheel-test-") as temporary:
         environment=Path(temporary)/"venv"
         venv.EnvBuilder(with_pip=True).create(environment)
         python=venv_python(environment)
         run(
             str(python),"-m","pip","install",
-            f"{wheels[0]}[test]",
+            str(wheels[0]) if arguments.smoke_only else f"{wheels[0]}[test]",
         )
-        run(
-            str(python),"-m","pytest",str(ROOT/"tests"),"-q",
-            cwd=Path(temporary),
-        )
+        if not arguments.smoke_only:
+            run(
+                str(python),"-m","pytest",str(ROOT/"tests"),"-q",
+                cwd=Path(temporary),
+            )
         run(
             str(python),"-c",
-            "import skfn; from importlib.metadata import version; "
-            "assert skfn.__version__ == version('skfem-native'); "
-            "print('installed skfn:', skfn.__file__, skfn.__version__)",
+            "import skfemntv; from importlib.metadata import version; "
+            "assert skfemntv.__version__ == version('skfem-native'); "
+            "print('installed skfemntv:', skfemntv.__file__, skfemntv.__version__)",
             cwd=Path(temporary),
         )
 

@@ -6,8 +6,8 @@ from skfem.helpers import div as reference_div
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot,div,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,div,dot,grad
 
 
 def _reference_mesh(mesh,quadratic):
@@ -58,11 +58,11 @@ def _composite_permutation(native,reference):
     "mesh,element,reference_element,intorder",
     [
         (
-            skfn.MeshQuad(),skfn.ElementQuad1(),
+            skfemntv.MeshQuad(),skfemntv.ElementQuad1(),
             skfem.ElementQuad1,2,
         ),
         (
-            skfn.MeshQuad2(),skfn.ElementQuad2(),
+            skfemntv.MeshQuad2(),skfemntv.ElementQuad2(),
             skfem.ElementQuad2,4,
         ),
     ],
@@ -70,15 +70,15 @@ def _composite_permutation(native,reference):
 def test_quad_volume_forms_match_skfem(
     mesh,element,reference_element,intorder
 ):
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=1),intorder=intorder
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=1),intorder=intorder
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return (1.+w.x[0])*dot(u,v)+.7*ddot(grad(u),grad(v))
 
-    actual=skfn.asm(form,basis)
+    actual=skfemntv.asm(form,basis)
     reference_basis=skfem.Basis(
         _reference_mesh(mesh,intorder>=4),
         reference_element(),
@@ -104,11 +104,11 @@ def test_quad_volume_forms_match_skfem(
     "mesh,element,reference_element,intorder",
     [
         (
-            skfn.MeshQuad(),skfn.ElementQuad1(),
+            skfemntv.MeshQuad(),skfemntv.ElementQuad1(),
             skfem.ElementQuad1,2,
         ),
         (
-            skfn.MeshQuad2(),skfn.ElementQuad2(),
+            skfemntv.MeshQuad2(),skfemntv.ElementQuad2(),
             skfem.ElementQuad2,4,
         ),
     ],
@@ -116,20 +116,20 @@ def test_quad_volume_forms_match_skfem(
 def test_quad_facet_forms_match_skfem(
     mesh,element,reference_element,intorder
 ):
-    basis=skfn.FacetBasis(
-        mesh,skfn.ElementVector(element),intorder=intorder
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(element),intorder=intorder
     )
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def pressure(v,w):
         return dot((1.+w.x[0])*w.n,v)
 
-    @skfn.Functional
+    @skfemntv.Functional
     def measure(w):
         return 1.+w.x[1]+w.n[0]**2
 
-    actual=skfn.asm(pressure,basis)
-    actual_measure=skfn.asm(measure,basis)
+    actual=skfemntv.asm(pressure,basis)
+    actual_measure=skfemntv.asm(measure,basis)
     reference_basis=skfem.FacetBasis(
         _reference_mesh(mesh,intorder>=4),
         skfem.ElementVector(reference_element()),
@@ -156,21 +156,21 @@ def test_quad_facet_forms_match_skfem(
 
 
 def test_quad_q2_q1_composite_divergence_matches_skfem():
-    linear=skfn.MeshQuad.init_tensor(
+    linear=skfemntv.MeshQuad.init_tensor(
         np.linspace(0.,1.,4),np.linspace(0.,1.,3)
     )
-    mesh=skfn.MeshQuad2.from_mesh(linear)
-    basis=skfn.Basis(
+    mesh=skfemntv.MeshQuad2.from_mesh(linear)
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(skfn.ElementQuad2())*skfn.ElementQuad1(),
+        skfemntv.ElementVector(skfemntv.ElementQuad2())*skfemntv.ElementQuad1(),
         intorder=4,
     )
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def stokes(u,p,v,q,w):
         return ddot(grad(u),grad(v))-p*div(v)-q*div(u)
 
-    actual=skfn.asm(stokes,basis)
+    actual=skfemntv.asm(stokes,basis)
     reference_mesh=skfem.MeshQuad2.from_mesh(
         skfem.MeshQuad(linear.p,linear.t)
     )
@@ -197,9 +197,9 @@ def test_quad_q2_q1_composite_divergence_matches_skfem():
 
 
 def test_quad2_reproduces_quadratic_field_and_curved_edge_geometry():
-    mesh=skfn.MeshQuad2()
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementQuad2(),dim=1),intorder=4
+    mesh=skfemntv.MeshQuad2()
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementQuad2(),dim=1),intorder=4
     )
     coefficients=(
         basis.doflocs[0]**2
@@ -212,8 +212,8 @@ def test_quad2_reproduces_quadratic_field_and_curved_edge_geometry():
     np.testing.assert_allclose(field.value,expected,rtol=2e-13,atol=2e-13)
 
     mesh.p[:,5]=[1.15,.5]
-    facet=skfn.FacetBasis(
-        mesh,skfn.ElementVector(skfn.ElementQuad2()),intorder=4
+    facet=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementQuad2()),intorder=4
     )
     lengths=facet.dx.sum(axis=1)
     assert lengths.max()>1.
@@ -221,7 +221,7 @@ def test_quad2_reproduces_quadratic_field_and_curved_edge_geometry():
         np.linalg.norm(facet.normals,axis=2),1.,rtol=2e-14,atol=2e-14
     )
 
-    @skfn.Functional
+    @skfemntv.Functional
     def geometry_measure(w):
         return 1.+w.x[0]+.3*w.n[0]**2
 
@@ -240,7 +240,7 @@ def test_quad2_reproduces_quadratic_field_and_curved_edge_geometry():
         return 1.+w.x[0]+.3*w.n[0]**2
 
     np.testing.assert_allclose(
-        skfn.asm(geometry_measure,facet),
+        skfemntv.asm(geometry_measure,facet),
         skfem.asm(reference_measure,reference_facet),
         rtol=3e-12,atol=3e-12,
     )

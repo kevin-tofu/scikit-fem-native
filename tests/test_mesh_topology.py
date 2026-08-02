@@ -2,26 +2,26 @@ import numpy as np
 import pytest
 import skfem
 
-import skfn
+import skfemntv
 
 
 def _linear_mesh(kind):
     if kind=="tri":
-        mesh=skfn.MeshTri.init_tensor(
+        mesh=skfemntv.MeshTri.init_tensor(
             np.linspace(0.,1.,4),np.linspace(0.,1.,3)
         )
         return mesh,skfem.MeshTri(mesh.p,mesh.t)
     if kind=="quad":
-        mesh=skfn.MeshQuad.init_tensor(
+        mesh=skfemntv.MeshQuad.init_tensor(
             np.linspace(0.,1.,4),np.linspace(0.,1.,3)
         )
         return mesh,skfem.MeshQuad(mesh.p,mesh.t)
     if kind=="tet":
-        mesh=skfn.MeshTet.init_tensor(
+        mesh=skfemntv.MeshTet.init_tensor(
             [0.,1.],[0.,1.],[0.,1.]
         )
         return mesh,skfem.MeshTet(mesh.p,mesh.t)
-    mesh=skfn.MeshHex.init_tensor(
+    mesh=skfemntv.MeshHex.init_tensor(
         [0.,.5,1.],[0.,1.],[0.,1.]
     )
     return mesh,skfem.MeshHex(mesh.p,mesh.t)
@@ -56,10 +56,10 @@ def test_linear_mesh_topology_matches_skfem(kind):
 def test_quadratic_mesh_retains_linear_topology(kind):
     linear,_=_linear_mesh(kind)
     quadratic=(
-        skfn.MeshTri2.from_mesh(linear) if kind=="tri" else
-        skfn.MeshQuad2.from_mesh(linear) if kind=="quad" else
-        skfn.MeshTet2.from_mesh(linear) if kind=="tet" else
-        skfn.MeshHex2.from_mesh(linear)
+        skfemntv.MeshTri2.from_mesh(linear) if kind=="tri" else
+        skfemntv.MeshQuad2.from_mesh(linear) if kind=="quad" else
+        skfemntv.MeshTet2.from_mesh(linear) if kind=="tet" else
+        skfemntv.MeshHex2.from_mesh(linear)
     )
     if kind=="hex":
         assert _facet_coordinate_signatures(quadratic)==(
@@ -114,18 +114,18 @@ def test_topology_queries_match_skfem(kind):
 def test_facet_ids_select_basis_and_dofs(kind):
     mesh,_=_linear_mesh(kind)
     element=(
-        skfn.ElementTriP1() if kind=="tri" else
-        skfn.ElementQuad1() if kind=="quad" else
-        skfn.ElementTetP1() if kind=="tet" else
-        skfn.ElementHex1()
+        skfemntv.ElementTriP1() if kind=="tri" else
+        skfemntv.ElementQuad1() if kind=="quad" else
+        skfemntv.ElementTetP1() if kind=="tet" else
+        skfemntv.ElementHex1()
     )
     selected=mesh.facets_satisfying(
         lambda x:np.isclose(x[0],0.),boundaries_only=True
     )
-    facet_basis=skfn.FacetBasis(
-        mesh,skfn.ElementVector(element),facets=selected
+    facet_basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(element),facets=selected
     )
-    basis=skfn.Basis(mesh,skfn.ElementVector(element))
+    basis=skfemntv.Basis(mesh,skfemntv.ElementVector(element))
     expected_nodes=np.unique(mesh.facets[:,selected])
     expected_dofs=np.unique(basis.nodal_dofs[:,expected_nodes])
     np.testing.assert_array_equal(

@@ -9,7 +9,7 @@ from ._skfn import get_num_threads as _get_num_threads
 from ._skfn import set_num_threads as _set_num_threads
 
 
-BACKEND = "skfn-native"
+BACKEND = "skfemntv-native"
 CAPABILITIES = frozenset({
     "native_backend",
     "native_threads",

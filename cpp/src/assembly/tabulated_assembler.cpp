@@ -59,6 +59,30 @@ public:
     py::array indptr(){return view(indptr_);}py::array indices(){return view(indices_);}
     py::array values(){return view(values_);}std::size_t ndofs()const{return ndofs_;}
     std::size_t nelements()const{return elements_;}
+    std::size_t color_count()const{return colors_.size();}
+    std::size_t min_color_size()const{
+        if(colors_.empty())return 0;
+        return std::min_element(
+            colors_.begin(),colors_.end(),
+            [](const auto&a,const auto&b){return a.size()<b.size();}
+        )->size();
+    }
+    std::size_t max_color_size()const{
+        if(colors_.empty())return 0;
+        return std::max_element(
+            colors_.begin(),colors_.end(),
+            [](const auto&a,const auto&b){return a.size()<b.size();}
+        )->size();
+    }
+    constexpr std::size_t explicit_thread_threshold()const{return 128;}
+    std::size_t parallel_eligible_color_count()const{
+        return std::count_if(
+            colors_.begin(),colors_.end(),
+            [this](const auto&color){
+                return color.size()>=explicit_thread_threshold();
+            }
+        );
+    }
 private:
     static void validate(const py::buffer_info&b,std::size_t n,const char*name){
         if(b.ndim!=1||std::size_t(b.shape[0])!=n)throw std::invalid_argument(std::string(name)+" has an invalid shape");}
@@ -154,5 +178,15 @@ void native_fem::bind_tabulated_assembler(py::module_&m){py::class_<TabulatedAss
     .def("evaluate_into",&TabulatedAssembler::evaluate_into,py::arg("u"),py::arg("residual"),py::arg("tangent_values")=py::none(),py::arg("external_load")=py::none(),py::arg("num_threads")=0)
     .def_property_readonly("indptr",&TabulatedAssembler::indptr).def_property_readonly("indices",&TabulatedAssembler::indices)
     .def_property_readonly("values",&TabulatedAssembler::values).def_property_readonly("ndofs",&TabulatedAssembler::ndofs)
-    .def_property_readonly("nelements",&TabulatedAssembler::nelements);
+    .def_property_readonly("nelements",&TabulatedAssembler::nelements)
+    .def_property_readonly("color_count",&TabulatedAssembler::color_count)
+    .def_property_readonly("min_color_size",&TabulatedAssembler::min_color_size)
+    .def_property_readonly("max_color_size",&TabulatedAssembler::max_color_size)
+    .def_property_readonly(
+        "explicit_thread_threshold",&TabulatedAssembler::explicit_thread_threshold
+    )
+    .def_property_readonly(
+        "parallel_eligible_color_count",
+        &TabulatedAssembler::parallel_eligible_color_count
+    );
 }

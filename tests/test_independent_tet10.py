@@ -3,14 +3,14 @@ import skfem
 from scipy.sparse.linalg import spsolve
 from skfem.models.elasticity import linear_elasticity
 
-import skfn
+import skfemntv
 
 
 def meshes():
     axis_x = np.linspace(0., 1., 3)
     axis_yz = np.linspace(0., 1., 2)
-    linear = skfn.MeshTet.init_tensor(axis_x, axis_yz, axis_yz)
-    return linear, skfn.MeshTet2.from_mesh(linear)
+    linear = skfemntv.MeshTet.init_tensor(axis_x, axis_yz, axis_yz)
+    return linear, skfemntv.MeshTet2.from_mesh(linear)
 
 
 def reference_basis(linear_mesh):
@@ -38,8 +38,8 @@ def coordinate_permutation(native_basis, reference):
 
 def test_independent_tet10_matches_skfem_reference():
     linear_mesh, mesh = meshes()
-    basis = skfn.Basis(
-        mesh, skfn.ElementVector(skfn.ElementTetP2()), intorder=4
+    basis = skfemntv.Basis(
+        mesh, skfemntv.ElementVector(skfemntv.ElementTetP2()), intorder=4
     )
     reference = reference_basis(linear_mesh)
     young, poisson = 29., .22
@@ -48,8 +48,8 @@ def test_independent_tet10_matches_skfem_reference():
     expected = linear_elasticity(Lambda=lmbda, Mu=mu).assemble(reference)
     permutation = coordinate_permutation(basis, reference)
     expected = expected[permutation][:, permutation]
-    actual = skfn.NativeAssembler.from_basis(
-        basis, skfn.LinearElasticity(young, poisson)
+    actual = skfemntv.NativeAssembler.from_basis(
+        basis, skfemntv.LinearElasticity(young, poisson)
     ).evaluate(np.zeros(basis.N)).tangent
     np.testing.assert_allclose(
         actual.toarray(), expected.toarray(), rtol=5e-12, atol=5e-12
@@ -58,17 +58,17 @@ def test_independent_tet10_matches_skfem_reference():
 
 def test_tet10_reproduces_quadratic_manufactured_solution():
     _, mesh = meshes()
-    basis = skfn.Basis(
-        mesh, skfn.ElementVector(skfn.ElementTetP2()), intorder=4
+    basis = skfemntv.Basis(
+        mesh, skfemntv.ElementVector(skfemntv.ElementTetP2()), intorder=4
     )
     young, poisson = 10., .25
     lmbda = young*poisson/((1+poisson)*(1-2*poisson))
     mu = young/(2*(1+poisson))
-    tangent = skfn.NativeAssembler.from_basis(
-        basis, skfn.LinearElasticity(young, poisson)
+    tangent = skfemntv.NativeAssembler.from_basis(
+        basis, skfemntv.LinearElasticity(young, poisson)
     ).evaluate(np.zeros(basis.N)).tangent
     body = -2*lmbda-4*mu
-    load, _ = skfn.NativeLinearForm(basis).assemble(
+    load, _ = skfemntv.NativeLinearForm(basis).assemble(
         value=np.array([body, body, body])
     )
     exact = np.array([

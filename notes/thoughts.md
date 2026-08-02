@@ -394,18 +394,18 @@ geometry
 大きな高速化が得られた。ただし、この結果からユーザーの自由なForm APIを
 廃止して専用kernelだけに寄せてはいけない。
 
-skfnは次の二層構成にする。
+skfemntvは次の二層構成にする。
 
 ## 1. scikit-fem互換Form API
 
 ```python
-@skfn.BilinearForm
+@skfemntv.BilinearForm
 def tangent(u, v, w):
     ...
 ```
 
 任意の弱形式、表面積分、interface coupling、独自係数を記述するための
-柔軟な経路である。`import skfn as skfem`で書き換えやすいことを重視する。
+柔軟な経路である。`import skfemntv as skfem`で書き換えやすいことを重視する。
 
 ## 2. fused native kernel API
 

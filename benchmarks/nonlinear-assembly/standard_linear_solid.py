@@ -15,7 +15,7 @@ import time
 import numpy as np
 import skfem
 
-import skfn
+import skfemntv
 
 sys.path.insert(0,str(Path(__file__).parents[1]))
 from skfem_j2 import forms as reference_forms
@@ -56,16 +56,16 @@ def median_time(function,repeat):
 
 def benchmark(points,repeat,native_threads,check):
     axis=np.linspace(0.,1.,points)
-    mesh=skfn.MeshTet.init_tensor(axis,axis,axis)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
     reference_basis=skfem.Basis(
         skfem.MeshTet(mesh.p,mesh.t),skfem.ElementVector(skfem.ElementTetP1()),
         quadrature=(basis.X,basis.W),
     )
-    material=skfn.StandardLinearSolid(100.,60.,.25,2.,.2)
-    assembler=skfn.MaterialAssembler(basis,material)
+    material=skfemntv.StandardLinearSolid(100.,60.,.25,2.,.2)
+    assembler=skfemntv.MaterialAssembler(basis,material)
     residual_form,tangent_form=reference_forms()
     coordinates=basis.doflocs
     displacements=[]
@@ -116,7 +116,7 @@ def benchmark(points,repeat,native_threads,check):
             )
         return residual,tangent,viscous
 
-    effective=min(native_threads,skfn.available_num_threads())
+    effective=min(native_threads,skfemntv.available_num_threads())
     if check:
         result,state=native(effective)
         residual,tangent,viscous=reference()
@@ -137,8 +137,8 @@ def benchmark(points,repeat,native_threads,check):
 
 def markdown(results):
     lines=[
-        "| DoFs | Elements | IPs | Steps | skfn 1t [ms] | skfn Nt [ms] | "
-        "skfem [ms] | threads | skfem/skfn Nt |",
+        "| DoFs | Elements | IPs | Steps | skfemntv 1t [ms] | skfemntv Nt [ms] | "
+        "skfem [ms] | threads | skfem/skfemntv Nt |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in results:
@@ -161,14 +161,14 @@ def write_csv(path,results):
 
 def write_plot(path,results,repeat):
     os.environ.setdefault(
-        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfn-matplotlib")
+        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfemntv-matplotlib")
     )
     import matplotlib.pyplot as plt
     dofs=[row.dofs for row in results];threads=results[0].native_threads
     figure,axes=plt.subplots(1,2,figsize=(11,4.5),constrained_layout=True)
     for field,label,style in (
-        ("skfn_1t_ms","skfn 1 thread","o-"),
-        ("skfn_parallel_ms",f"skfn {threads} threads","^-"),
+        ("skfn_1t_ms","skfemntv 1 thread","o-"),
+        ("skfn_parallel_ms",f"skfemntv {threads} threads","^-"),
         ("skfem_ms","scikit-fem","s-"),
     ):
         axes[0].loglog(
@@ -181,11 +181,11 @@ def write_plot(path,results,repeat):
     );axes[0].grid(True,which="both",alpha=.3);axes[0].legend()
     axes[1].semilogx(
         dofs,[row.skfem_ms/row.skfn_1t_ms for row in results],
-        "o-",label="skfem / skfn 1 thread",linewidth=2,
+        "o-",label="skfem / skfemntv 1 thread",linewidth=2,
     )
     axes[1].semilogx(
         dofs,[row.skfem_ms/row.skfn_parallel_ms for row in results],
-        "^-",label=f"skfem / skfn {threads} threads",linewidth=2,
+        "^-",label=f"skfem / skfemntv {threads} threads",linewidth=2,
     )
     axes[1].axhline(1.,color="black",linestyle="--",linewidth=1)
     axes[1].set(

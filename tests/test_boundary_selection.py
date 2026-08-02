@@ -2,36 +2,36 @@ import numpy as np
 import pytest
 import skfem
 
-import skfn
+import skfemntv
 
 
 @pytest.mark.parametrize(
     "mesh,element,reference_mesh,reference_element,intorder",
     [
         (
-            skfn.MeshTet(),
-            skfn.ElementTetP1(),
+            skfemntv.MeshTet(),
+            skfemntv.ElementTetP1(),
             skfem.MeshTet,
             skfem.ElementTetP1,
             2,
         ),
         (
-            skfn.MeshTet2(),
-            skfn.ElementTetP2(),
+            skfemntv.MeshTet2(),
+            skfemntv.ElementTetP2(),
             skfem.MeshTet2,
             skfem.ElementTetP2,
             4,
         ),
         (
-            skfn.MeshHex(),
-            skfn.ElementHex1(),
+            skfemntv.MeshHex(),
+            skfemntv.ElementHex1(),
             skfem.MeshHex,
             skfem.ElementHex1,
             2,
         ),
         (
-            skfn.MeshHex2(),
-            skfn.ElementHex2(),
+            skfemntv.MeshHex2(),
+            skfemntv.ElementHex2(),
             skfem.MeshHex2,
             skfem.ElementHex2,
             4,
@@ -42,8 +42,8 @@ def test_coordinate_boundary_dofs_match_skfem(
     mesh,element,reference_mesh,reference_element,intorder
 ):
     predicate=lambda x:np.isclose(x[0],0.)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(element),intorder=intorder
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element),intorder=intorder
     )
     actual=basis.get_dofs(predicate).all()
 
@@ -70,10 +70,10 @@ def test_coordinate_boundary_dofs_match_skfem(
 @pytest.mark.parametrize(
     "mesh,element,intorder",
     [
-        (skfn.MeshTet(),skfn.ElementTetP1(),2),
-        (skfn.MeshTet2(),skfn.ElementTetP2(),4),
-        (skfn.MeshHex(),skfn.ElementHex1(),2),
-        (skfn.MeshHex2(),skfn.ElementHex2(),4),
+        (skfemntv.MeshTet(),skfemntv.ElementTetP1(),2),
+        (skfemntv.MeshTet2(),skfemntv.ElementTetP2(),4),
+        (skfemntv.MeshHex(),skfemntv.ElementHex1(),2),
+        (skfemntv.MeshHex2(),skfemntv.ElementHex2(),4),
     ],
 )
 def test_named_boundary_matches_coordinate_predicate(
@@ -81,8 +81,8 @@ def test_named_boundary_matches_coordinate_predicate(
 ):
     predicate=lambda x:np.isclose(x[0],0.)
     named=mesh.with_boundaries({"left":predicate})
-    basis=skfn.Basis(
-        named,skfn.ElementVector(element),intorder=intorder
+    basis=skfemntv.Basis(
+        named,skfemntv.ElementVector(element),intorder=intorder
     )
     np.testing.assert_array_equal(
         basis.get_dofs("left").all(),
@@ -93,18 +93,18 @@ def test_named_boundary_matches_coordinate_predicate(
 
 
 def test_composite_named_boundary_maps_each_field():
-    linear=skfn.MeshTet.init_tensor(
+    linear=skfemntv.MeshTet.init_tensor(
         np.linspace(0.,1.,3),
         np.linspace(0.,1.,2),
         np.linspace(0.,1.,2),
     )
-    mesh=skfn.MeshTet2.from_mesh(linear).with_boundaries({
+    mesh=skfemntv.MeshTet2.from_mesh(linear).with_boundaries({
         "left":lambda x:np.isclose(x[0],0.),
     })
-    basis=skfn.Basis(
+    basis=skfemntv.Basis(
         mesh,
-        skfn.ElementVector(skfn.ElementTetP2())
-        *skfn.ElementTetP1(),
+        skfemntv.ElementVector(skfemntv.ElementTetP2())
+        *skfemntv.ElementTetP1(),
         intorder=4,
     )
     split=basis.split_bases()

@@ -6,7 +6,7 @@ from skfem import Basis, ElementTetP1, ElementVector, MeshTet
 from skfem.helpers import ddot, sym_grad, trace
 from skfem.models.elasticity import linear_elasticity
 
-from skfn import LinearElasticTet4, NativeAssembler
+from skfemntv import LinearElasticTet4, NativeAssembler
 
 
 def test_matches_scikit_fem():

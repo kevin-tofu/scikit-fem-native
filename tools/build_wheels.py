@@ -32,6 +32,10 @@ def main() -> None:
         help="build only the selected CPython versions",
     )
     parser.add_argument(
+        "--arch",nargs="+",
+        help="cibuildwheel architecture(s), e.g. x86_64, arm64, or AMD64",
+    )
+    parser.add_argument(
         "--output-dir",type=Path,default=ROOT/"wheelhouse"
     )
     parser.add_argument(
@@ -54,6 +58,8 @@ def main() -> None:
         "--platform",arguments.platform,
         "--output-dir",str(arguments.output_dir.resolve()),
     ]
+    if arguments.arch:
+        command.extend(("--archs",",".join(arguments.arch)))
     print("+"," ".join(command),flush=True)
     if "CIBW_BUILD" in environment:
         print("  CIBW_BUILD="+environment["CIBW_BUILD"],flush=True)

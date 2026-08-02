@@ -10,7 +10,7 @@ import statistics
 
 import numpy as np
 
-from skfn._skfn import CrossBilinearAssembler
+from skfemntv._skfn import CrossBilinearAssembler
 
 
 def median_native(call, repeats):

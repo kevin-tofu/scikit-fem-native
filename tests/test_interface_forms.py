@@ -1,30 +1,30 @@
 import numpy as np
 
-import skfn
-from skfn.helpers import avg, ddot, dot, grad, jump, normal_grad
+import skfemntv
+from skfemntv.helpers import avg, ddot, dot, grad, jump, normal_grad
 
 
 def interface():
-    linear=skfn.MeshTet()
-    quadratic=skfn.MeshTet2.from_mesh(linear)
-    master=skfn.FacetBasis(
-        quadratic,skfn.ElementVector(skfn.ElementTetP2()),intorder=4
+    linear=skfemntv.MeshTet()
+    quadratic=skfemntv.MeshTet2.from_mesh(linear)
+    master=skfemntv.FacetBasis(
+        quadratic,skfemntv.ElementVector(skfemntv.ElementTetP2()),intorder=4
     )
-    slave=skfn.FacetBasis(
-        linear,skfn.ElementVector(skfn.ElementTetP1()),intorder=4
+    slave=skfemntv.FacetBasis(
+        linear,skfemntv.ElementVector(skfemntv.ElementTetP1()),intorder=4
     )
-    integration=skfn.TriangleSupermesh.from_facets(master,slave)
+    integration=skfemntv.TriangleSupermesh.from_facets(master,slave)
     return master,slave,integration
 
 
 def test_jump_form_matches_trace_block_assembly():
     master,slave,integration=interface()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return w.alpha*dot(jump(u),jump(v))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         form,master,slave,integration=integration,alpha=3.5
     )
     expected=integration.assemble_traces(
@@ -38,7 +38,7 @@ def test_jump_form_matches_trace_block_assembly():
 def test_average_normal_gradient_against_jump_is_user_composable():
     master,slave,integration=interface()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return dot(avg(normal_grad(u),weights=(.3,.7)),jump(v))
 
@@ -57,7 +57,7 @@ def test_average_normal_gradient_against_jump_is_user_composable():
 def test_interface_form_sum_builds_no_prescribed_formulation():
     master,slave,integration=interface()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def arbitrary(u,v,w):
         return (
             w.a*dot(jump(u),jump(v))
@@ -81,11 +81,11 @@ def test_interface_form_sum_builds_no_prescribed_formulation():
 def test_full_gradient_jump_form_dispatches_to_cross_kernel():
     master,slave,integration=interface()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return w.kappa*ddot(jump(grad(u)),jump(grad(v)))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         form,master,slave,integration=integration,kappa=1.7
     )
     expected=integration.assemble_traces(
@@ -105,11 +105,11 @@ def test_direction_tensor_mixed_form_dispatches_to_cross_kernel():
     beta[1,1,0]=-2.
     beta[2,2,0]=.5
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return dot(jump(v),dot(w.beta,avg(grad(u))))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         form,master,slave,integration=integration,beta=beta
     )
     expected=integration.assemble_traces(
@@ -126,11 +126,11 @@ def test_interface_linear_jump_has_equal_and_opposite_resultants():
     master,slave,integration=interface()
     traction=np.array([.4,-1.2,2.3])
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def load(v,w):
         return dot(w.traction,jump(v))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         load,master,slave,integration=integration,traction=traction
     )
     expected=integration.assemble_linear_trace(
@@ -148,7 +148,7 @@ def test_interface_linear_average_full_gradient_is_composable():
     master,slave,integration=interface()
     tensor=np.arange(9,dtype=float).reshape(3,3)/7.
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def load(v,w):
         return ddot(w.tensor,avg(grad(v),weights=(.25,.75)))
 
@@ -165,11 +165,11 @@ def test_interface_linear_normal_gradient_uses_both_sides():
     master,slave,integration=interface()
     flux=np.array([1.,-.5,.25])
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def load(v,w):
         return dot(w.flux,jump(normal_grad(v)))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         load,master,slave,integration=integration,flux=flux
     )
     expected=integration.assemble_linear_trace(
@@ -184,11 +184,11 @@ def test_interface_linear_coordinate_context_evaluates_at_overlap_points():
     def load(x):
         return np.stack((1.+x[0],x[1]**2,-x[2]),axis=0)
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def form(v,w):
         return dot(load(w.x),jump(v))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         form,master,slave,integration=integration
     )
     coefficient=load(np.moveaxis(
@@ -203,7 +203,7 @@ def test_interface_linear_coordinate_context_evaluates_at_overlap_points():
 def test_interface_master_normal_is_available_to_linear_form():
     master,slave,integration=interface()
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def form(v,w):
         return dot(w.n_master,jump(v))
 
@@ -224,11 +224,11 @@ def test_interface_master_normal_is_available_to_linear_form():
 def test_interface_gap_can_weight_bilinear_form():
     master,slave,integration=interface()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         return (1.+w.gap**2)*dot(jump(u),jump(v))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         form,master,slave,integration=integration
     )
     expected=integration.assemble_traces(
@@ -245,14 +245,14 @@ def test_user_callable_composes_parameters_coordinates_gap_and_normal():
     def pressure_law(x,gap,scale):
         return scale*(1.+x[0]+gap**2)
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def form(v,w):
         traction=(
             w.pressure_law(w.x,w.gap,w.scale)*w.n_master
         )
         return dot(traction,jump(v))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         form,master,slave,integration=integration,
         pressure_law=pressure_law,scale=1.7,
     )
@@ -272,12 +272,12 @@ def test_user_callable_composes_parameters_coordinates_gap_and_normal():
 def test_user_parameters_compose_with_numpy_gap_expression():
     master,slave,integration=interface()
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def form(u,v,w):
         coefficient=w.alpha*np.exp(-w.gap/w.length)
         return coefficient*dot(jump(u),jump(v))
 
-    actual=skfn.asm(
+    actual=skfemntv.asm(
         form,master,slave,integration=integration,
         alpha=2.5,length=.3,
     )

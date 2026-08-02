@@ -6,8 +6,8 @@ from skfem.helpers import div as reference_div
 from skfem.helpers import dot as reference_dot
 from skfem.helpers import grad as reference_grad
 
-import skfn
-from skfn.helpers import ddot,div,dot,grad
+import skfemntv
+from skfemntv.helpers import ddot,div,dot,grad
 
 
 def _permutation(native,reference):
@@ -38,31 +38,31 @@ def _solve(matrix,rhs,constrained):
 
 def test_taylor_hood_stokes_end_to_end_matches_skfem():
     axis=np.linspace(0.,1.,3)
-    linear=skfn.MeshTet.init_tensor(axis,axis,axis)
-    mesh=skfn.MeshTet2.from_mesh(linear).with_boundaries({
+    linear=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+    mesh=skfemntv.MeshTet2.from_mesh(linear).with_boundaries({
         "wall":lambda x:np.ones(x.shape[1],dtype=bool),
     })
     element=(
-        skfn.ElementVector(skfn.ElementTetP2())
-        *skfn.ElementTetP1()
+        skfemntv.ElementVector(skfemntv.ElementTetP2())
+        *skfemntv.ElementTetP1()
     )
-    basis=skfn.Basis(mesh,element,intorder=4)
+    basis=skfemntv.Basis(mesh,element,intorder=4)
 
-    @skfn.BilinearForm
+    @skfemntv.BilinearForm
     def stokes(u,p,v,q,w):
         return (
             w.viscosity*ddot(grad(u),grad(v))
             -p*div(v)-q*div(u)
         )
 
-    @skfn.LinearForm
+    @skfemntv.LinearForm
     def forcing(v,q,w):
         return dot(w.force,v)
 
-    matrix=skfn.asm(stokes,basis,viscosity=.8)
+    matrix=skfemntv.asm(stokes,basis,viscosity=.8)
     x=np.moveaxis(basis.global_coordinates,-1,0)
     force=np.stack((x[1],-x[0],x[0]*0.))
-    rhs=skfn.asm(forcing,basis,force=force)
+    rhs=skfemntv.asm(forcing,basis,force=force)
 
     velocity_basis,_=basis.split_bases()
     velocity_indices,pressure_indices=basis.split_indices()
@@ -73,13 +73,13 @@ def test_taylor_hood_stokes_end_to_end_matches_skfem():
     solution=_solve(matrix,rhs,constrained)
     velocity,pressure=basis.interpolate(solution)
 
-    @skfn.Functional
+    @skfemntv.Functional
     def dissipation(w):
         return w.viscosity*ddot(
             grad(w.velocity),grad(w.velocity)
         )
 
-    native_dissipation=skfn.asm(
+    native_dissipation=skfemntv.asm(
         dissipation,basis,viscosity=.8,velocity=velocity
     )
 

@@ -70,6 +70,27 @@ scikit-fem using the native quadrature.  Tet10 and Hex27 DOFs are matched by
 physical nodal coordinates so differing package-local node order does not
 affect the comparison.
 
+## Large native-only thread scaling
+
+`native_parallel_scaling.py` removes the scikit-fem runtime from the timed
+sweep and records the race-free CSR scatter coloring itself: number of colors,
+smallest/largest color, colors meeting the explicit-thread threshold, current
+RSS, and CSR storage.  It measures one, two, four, and eight requested threads.
+
+```bash
+python benchmarks/nonlinear-assembly/native_parallel_scaling.py \
+  --topology hex8 --points 6 8 10 12 --repeat 3 \
+  --output benchmarks/nonlinear-assembly/results/neo-hookean-hex8-native-parallel.csv \
+  --plot-output benchmarks/nonlinear-assembly/results/neo-hookean-hex8-native-parallel.png
+```
+
+The committed Hex8 result shows why the smaller comparison sweep has
+overlapping thread curves.  At 729 elements its largest color has 125 elements,
+below the threshold of 128.  At 1331 elements, seven of eight colors are
+eligible and R+K improves from 217.27 ms on one thread to 47.27 ms on eight
+threads (4.60x, 57.4% parallel efficiency).  RSS is sampled after Basis and
+assembler construction on Linux; it is not an isolated subprocess peak.
+
 ## J2 plasticity
 
 The J2 benchmark separates the constitutive material-point update from fused

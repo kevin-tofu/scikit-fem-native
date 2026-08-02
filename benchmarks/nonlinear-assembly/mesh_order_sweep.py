@@ -14,7 +14,7 @@ import time
 import numpy as np
 import skfem
 
-import skfn
+import skfemntv
 
 sys.path.insert(0,str(Path(__file__).parents[1]))
 from skfem_neo_hookean import forms as reference_forms
@@ -61,32 +61,32 @@ def distort(points):
 def spaces(topology,points,intorder,distorted):
     axis=np.linspace(0.,1.,points)
     if topology.startswith("tet"):
-        linear=skfn.MeshTet.init_tensor(axis,axis,axis)
+        linear=skfemntv.MeshTet.init_tensor(axis,axis,axis)
         reference_linear=skfem.MeshTet(linear.p,linear.t)
         if topology=="tet10":
-            mesh=skfn.MeshTet2.from_mesh(linear)
-            element=skfn.ElementTetP2()
+            mesh=skfemntv.MeshTet2.from_mesh(linear)
+            element=skfemntv.ElementTetP2()
             reference_mesh=skfem.MeshTet2.from_mesh(reference_linear)
             reference_element=skfem.ElementTetP2()
         else:
-            mesh=linear;element=skfn.ElementTetP1()
+            mesh=linear;element=skfemntv.ElementTetP1()
             reference_mesh=reference_linear
             reference_element=skfem.ElementTetP1()
     elif topology.startswith("hex"):
-        linear=skfn.MeshHex.init_tensor(axis,axis,axis)
+        linear=skfemntv.MeshHex.init_tensor(axis,axis,axis)
         reference_linear=skfem.MeshHex(linear.p,linear.t)
         if topology=="hex27":
-            mesh=skfn.MeshHex2.from_mesh(linear)
-            element=skfn.ElementHex2()
+            mesh=skfemntv.MeshHex2.from_mesh(linear)
+            element=skfemntv.ElementHex2()
             reference_mesh=skfem.MeshHex2.from_mesh(reference_linear)
             reference_element=skfem.ElementHex2()
         else:
-            mesh=linear;element=skfn.ElementHex1()
+            mesh=linear;element=skfemntv.ElementHex1()
             reference_mesh=reference_linear
             reference_element=skfem.ElementHex1()
     else:
-        mesh=skfn.MeshWedge1.init_tensor(axis,axis,axis)
-        element=skfn.ElementWedge1()
+        mesh=skfemntv.MeshWedge1.init_tensor(axis,axis,axis)
+        element=skfemntv.ElementWedge1()
         reference_mesh=skfem.MeshWedge1(mesh.p,mesh.t)
         reference_element=skfem.ElementWedge1()
     if distorted:
@@ -94,8 +94,8 @@ def spaces(topology,points,intorder,distorted):
         reference_mesh=type(reference_mesh)(
             distort(reference_mesh.p),reference_mesh.t
         )
-    native=skfn.Basis(
-        mesh,skfn.ElementVector(element,dim=3),intorder=intorder
+    native=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(element,dim=3),intorder=intorder
     )
     reference=skfem.Basis(
         reference_mesh,skfem.ElementVector(reference_element),
@@ -128,8 +128,8 @@ def benchmark(topology,points,intorder,distorted,repeat,check):
     young,poisson=100.,.3
     mu=young/(2.*(1.+poisson))
     lmbda=young*poisson/((1.+poisson)*(1.-2.*poisson))
-    assembler=skfn.NativeAssembler.from_basis(
-        basis,skfn.NeoHookean(mu,lmbda)
+    assembler=skfemntv.NativeAssembler.from_basis(
+        basis,skfemntv.NeoHookean(mu,lmbda)
     )
     residual_form,tangent_form=reference_forms(mu,lmbda)
     coordinates=basis.doflocs
@@ -156,7 +156,7 @@ def benchmark(topology,points,intorder,distorted,repeat,check):
             native.tangent.toarray(),expected_tangent[order][:,order].toarray(),
             rtol=5e-10,atol=5e-10,
         )
-    available=skfn.available_num_threads()
+    available=skfemntv.available_num_threads()
     t2=min(2,available);t4=min(4,available)
     timed=lambda mode,threads:median_time(
         lambda:assembler.assemble(u,mode=mode,num_threads=threads),repeat
@@ -179,9 +179,9 @@ def benchmark(topology,points,intorder,distorted,repeat,check):
 
 def markdown(results):
     lines=[
-        "| Mesh | DoFs | Elems | QP/elem | skfn R t1/t2/t4 [ms] | "
-        "skfn R+K t1/t2/t4 [ms] | skfem R+K [ms] | "
-        "speedup t4 | CSR skfn/skfem [MiB] |",
+        "| Mesh | DoFs | Elems | QP/elem | skfemntv R t1/t2/t4 [ms] | "
+        "skfemntv R+K t1/t2/t4 [ms] | skfem R+K [ms] | "
+        "speedup t4 | CSR skfemntv/skfem [MiB] |",
         "|:---|---:|---:|---:|:---|:---|---:|---:|:---|",
     ]
     for r in results:
@@ -208,7 +208,7 @@ def write_csv(path,results):
 def write_plot(path,results,repeat):
     import os
     os.environ.setdefault(
-        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfn-matplotlib")
+        "MPLCONFIGDIR",str(Path(tempfile.gettempdir())/"skfemntv-matplotlib")
     )
     import matplotlib.pyplot as plt
     dofs=np.array([r.dofs for r in results])
@@ -218,8 +218,8 @@ def write_plot(path,results,repeat):
         (axes[1],"skfn_rk_","Residual + tangent"),
     ):
         for suffix,label,style in (
-            ("t1_ms","skfn t1","o-"),("t2_ms","skfn t2","s-"),
-            ("t4_ms","skfn t4","^-"),
+            ("t1_ms","skfemntv t1","o-"),("t2_ms","skfemntv t2","s-"),
+            ("t4_ms","skfemntv t4","^-"),
         ):
             axis.loglog(
                 dofs,[getattr(r,prefix+suffix) for r in results],
@@ -234,15 +234,15 @@ def write_plot(path,results,repeat):
         axis.grid(True,which="both",alpha=.3);axis.legend()
     axes[2].semilogx(
         dofs,[r.skfem_rk_ms/r.skfn_rk_t1_ms for r in results],
-        "o-",label="skfn t1",linewidth=2,
+        "o-",label="skfemntv t1",linewidth=2,
     )
     axes[2].semilogx(
         dofs,[r.skfem_rk_ms/r.skfn_rk_t4_ms for r in results],
-        "^-",label="skfn t4",linewidth=2,
+        "^-",label="skfemntv t4",linewidth=2,
     )
     axes[2].axhline(1.,color="black",linestyle="--",linewidth=1)
     axes[2].set(
-        xlabel="Degrees of freedom",ylabel="scikit-fem / skfn",
+        xlabel="Degrees of freedom",ylabel="scikit-fem / skfemntv",
         title="R+K speedup (>1 is faster)",
     )
     axes[2].grid(True,which="both",alpha=.3);axes[2].legend()

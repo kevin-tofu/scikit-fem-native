@@ -28,4 +28,4 @@ else()
   target_compile_options(_skfn PRIVATE -O3 -Wall -Wextra -Wpedantic)
 endif()
 
-install(TARGETS _skfn DESTINATION skfn)
+install(TARGETS _skfn DESTINATION skfemntv)

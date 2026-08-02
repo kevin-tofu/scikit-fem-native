@@ -10,7 +10,7 @@ from skfem import (
 )
 from skfem.models.elasticity import linear_elasticity
 
-from skfn import LinearElasticity, NativeAssembler, NeoHookean
+from skfemntv import LinearElasticity, NativeAssembler, NeoHookean
 
 
 @pytest.mark.parametrize(

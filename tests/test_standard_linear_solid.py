@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import skfem
 
-import skfn
+import skfemntv
 
 
 sys.path.insert(0,str(Path(__file__).parents[1]/"benchmarks"))
@@ -12,7 +12,7 @@ from skfem_j2 import forms as reference_forms
 
 
 def material():
-    return skfn.StandardLinearSolid(
+    return skfemntv.StandardLinearSolid(
         equilibrium_modulus=100.,branch_modulus=60.,poisson_ratio=.25,
         relaxation_time=2.,time_step=.2,
     )
@@ -73,7 +73,7 @@ def test_standard_linear_solid_relaxes_under_held_strain():
 
 def test_standard_linear_solid_consistent_tangent_matches_difference():
     model=material()
-    state=skfn.StandardLinearSolidState(
+    state=skfemntv.StandardLinearSolidState(
         np.array([[.001,-.0004,-.0006,.0002,0.,0.]])
     )
     strain=np.array([[.003,-.001,-.002,.0005,.0002,0.]])
@@ -90,15 +90,15 @@ def test_standard_linear_solid_consistent_tangent_matches_difference():
 
 def test_standard_linear_solid_tet_assembly_matches_scikit_fem():
     axis=np.linspace(0.,1.,3)
-    mesh=skfn.MeshTet.init_tensor(axis,axis,axis)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
     reference_basis=skfem.Basis(
         skfem.MeshTet(mesh.p,mesh.t),skfem.ElementVector(skfem.ElementTetP1()),
         quadrature=(basis.X,basis.W),
     )
-    model=material();assembler=skfn.MaterialAssembler(basis,model)
+    model=material();assembler=skfemntv.MaterialAssembler(basis,model)
     state=assembler.initial_state()
     coordinates=basis.doflocs
     u=np.zeros(basis.N)
@@ -142,11 +142,11 @@ def test_standard_linear_solid_tet_assembly_matches_scikit_fem():
 
 def test_standard_linear_solid_hex_parallel_matches_serial():
     axis=np.linspace(0.,1.,4)
-    mesh=skfn.MeshHex.init_tensor(axis,axis,axis)
-    basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementHex1(),dim=3),intorder=2
+    mesh=skfemntv.MeshHex.init_tensor(axis,axis,axis)
+    basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementHex1(),dim=3),intorder=2
     )
-    assembler=skfn.MaterialAssembler(basis,material())
+    assembler=skfemntv.MaterialAssembler(basis,material())
     state=assembler.initial_state()
     assert state.storage.shape==(assembler.state_count,6)
     u=np.ascontiguousarray(
@@ -177,10 +177,10 @@ def test_standard_linear_solid_time_step_override_without_rebuild():
     )
     np.testing.assert_allclose(result.tangent[0],expected,rtol=2e-15,atol=2e-15)
 
-    mesh=skfn.MeshTet();basis=skfn.Basis(
-        mesh,skfn.ElementVector(skfn.ElementTetP1(),dim=3),intorder=2
+    mesh=skfemntv.MeshTet();basis=skfemntv.Basis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=3),intorder=2
     )
-    assembler=skfn.MaterialAssembler(basis,model)
+    assembler=skfemntv.MaterialAssembler(basis,model)
     native_identity=id(assembler._native)
     committed=assembler.initial_state();u=np.linspace(0.,.003,basis.N)
     small=assembler.assemble(u,committed,time_step=.05)

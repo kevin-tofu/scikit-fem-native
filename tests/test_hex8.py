@@ -2,7 +2,7 @@ import numpy as np
 from skfem import Basis, ElementHex1, ElementVector, MeshHex
 from skfem.models.elasticity import linear_elasticity
 
-from skfn import LinearElasticHex8, NativeAssembler, NeoHookeanHex8
+from skfemntv import LinearElasticHex8, NativeAssembler, NeoHookeanHex8
 
 
 def hex_basis():
