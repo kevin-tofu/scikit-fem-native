@@ -195,8 +195,10 @@ and restricted bases do not renumber global DOFs.
 Normal-oriented facet queries are implemented for exterior and interior
 facets.  Each `FacetRegion` carries immutable parent-side and normal-sign
 metadata, and every FacetBasis topology path consumes mixed orientations.  The
-next selection additions are component-aware DOF selection for
-vector/composite spaces and classification metadata needed by level sets.
+Component-aware DOF selection is implemented through `DofsView` groups,
+scikit-fem-style `all/keep/drop`, numeric vector components, and composite
+field/component selectors.  The next region addition is classification
+metadata needed by level sets.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -279,19 +281,16 @@ case requires them:
 
 ## Recommended next work
 
-1. Add component-aware DOF selection.
-2. Add classification metadata needed by level-set regions.
-3. Add arbitrary-point value/gradient evaluation.
-4. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-5. Add level-set classification independently of integration.
-6. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
-7. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
+1. Add classification metadata needed by level-set regions.
+2. Add arbitrary-point value/gradient evaluation.
+3. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
+4. Add level-set classification independently of integration.
+5. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
+6. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
 
-## Working tree at this checkpoint
+## Branch checkpoints
 
-The following documentation changes are not committed as of this checkpoint:
-
-- `README.md`: PyPI installation and wheel-platform guidance;
-- `notes/gh-usage.md`: GitHub CLI and release workflow usage;
-- `notes/assembly-gap-audit-20260803.md`: assembly gap and CutFEM audit;
-- `notes/dev-status-20260803.md`: this checkpoint.
+- `fae02db`: geometry validation and initial development-status documents;
+- `57adef0`: first-class regions and named subdomains;
+- `e99d17d`: normal-oriented facet regions;
+- component-aware DOF selection follows as the next branch checkpoint.

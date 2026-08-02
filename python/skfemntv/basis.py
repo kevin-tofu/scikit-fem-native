@@ -1069,15 +1069,46 @@ class DiscreteField:
 class DofsView:
     """Selected DOF indices with the scikit-fem-style ``all()`` accessor."""
 
-    def __init__(self,dofs,doflocs):
+    def __init__(self,dofs,doflocs,groups=None):
         self._dofs=np.unique(np.asarray(dofs,dtype=np.int64))
         self.doflocs=doflocs
+        self.groups={
+            str(name):np.unique(np.asarray(values,dtype=np.int64))
+            for name,values in (groups or {}).items()
+        }
 
-    def all(self):
-        return self._dofs.copy()
+    @staticmethod
+    def _names(names):
+        return [names] if isinstance(names,str) else list(names)
+
+    def all(self,names=None):
+        if names is None:
+            return self._dofs.copy()
+        return self.keep(names).flatten()
 
     def flatten(self):
-        return self.all()
+        return self._dofs.copy()
+
+    def keep(self,names):
+        selected=self._names(names)
+        unknown=[name for name in selected if name not in self.groups]
+        if unknown:
+            raise KeyError(f"unknown DOF group {unknown[0]!r}")
+        groups={name:self.groups[name] for name in selected}
+        dofs=(
+            np.unique(np.concatenate(tuple(groups.values())))
+            if groups else np.empty(0,dtype=np.int64)
+        )
+        return DofsView(dofs,self.doflocs,groups)
+
+    def drop(self,names):
+        removed=set(self._names(names))
+        unknown=removed-self.groups.keys()
+        if unknown:
+            raise KeyError(f"unknown DOF group {sorted(unknown)[0]!r}")
+        return self.keep([
+            name for name in self.groups if name not in removed
+        ])
 
     def __array__(self,dtype=None):
         return np.asarray(self._dofs,dtype=dtype)
@@ -1712,11 +1743,10 @@ class Basis:
             for subbasis in self.subbases
         )
 
-    def get_dofs(self,facets=None,elements=None,nodes=None,skip=None):
-        if skip:
-            raise NotImplementedError(
-                "named component skipping is not implemented"
-            )
+    def get_dofs(
+        self,facets=None,elements=None,nodes=None,skip=None,
+        *,components=None,fields=None,
+    ):
         if sum(value is not None for value in (facets,elements,nodes))>1:
             raise ValueError("select only one of facets, elements, or nodes")
         if nodes is not None:
@@ -1774,20 +1804,94 @@ class Basis:
                 dofs=np.unique(self.element_dofs[:,local_elements])
             else:
                 dofs=np.empty(0,dtype=np.int64)
-            return DofsView(dofs,self.doflocs)
+            count=self.elem._dim
+            groups={
+                f"u^{component+1}":dofs[dofs%count==component]
+                for component in range(count)
+            }
+            return self._filtered_dofs_view(
+                groups,skip=skip,components=components,fields=fields
+            )
         selected_set=set(map(int,selected))
         if hasattr(self,"subbases"):
-            dofs=[]
-            for subbasis in self.subbases:
+            groups={}
+            for field,subbasis in enumerate(self.subbases):
+                component_values=[[] for _ in range(subbasis.elem._dim)]
                 for local,node in enumerate(subbasis.active_nodes):
                     if int(node) in selected_set:
-                        dofs.extend(subbasis.nodal_dofs[:,local])
+                        for component,dof in enumerate(
+                            subbasis.nodal_dofs[:,local]
+                        ):
+                            component_values[component].append(dof)
+                for component,values in enumerate(component_values):
+                    groups[f"field{field}^{component+1}"]=values
         else:
-            dofs=[]
+            component_values=[[] for _ in range(self.elem._dim)]
             for local,node in enumerate(self.active_nodes):
                 if int(node) in selected_set:
-                    dofs.extend(self.nodal_dofs[:,local])
-        return DofsView(dofs,self.doflocs)
+                    for component,dof in enumerate(
+                        self.nodal_dofs[:,local]
+                    ):
+                        component_values[component].append(dof)
+            groups={
+                f"u^{component+1}":values
+                for component,values in enumerate(component_values)
+            }
+        return self._filtered_dofs_view(
+            groups,skip=skip,components=components,fields=fields
+        )
+
+    @staticmethod
+    def _indices(value,count,label):
+        if value is None:
+            return list(range(count))
+        values=[value] if np.isscalar(value) else list(value)
+        result=[]
+        for item in values:
+            index=int(item)
+            if index<0 or index>=count:
+                raise IndexError(f"{label} index {index} is out of range")
+            if index not in result:
+                result.append(index)
+        return result
+
+    def _filtered_dofs_view(
+        self,groups,*,skip=None,components=None,fields=None
+    ):
+        if hasattr(self,"subbases"):
+            field_ids=self._indices(fields,len(self.subbases),"field")
+            if components is not None and not isinstance(components,dict):
+                raise TypeError(
+                    "composite components must be a {field: components} mapping"
+                )
+            selected_names=[]
+            for field in field_ids:
+                count=self.subbases[field].elem._dim
+                requested=(
+                    None if components is None
+                    else components.get(field,None)
+                )
+                for component in self._indices(
+                    requested,count,f"field {field} component"
+                ):
+                    selected_names.append(f"field{field}^{component+1}")
+        else:
+            if fields is not None:
+                raise ValueError("fields is only valid for ElementComposite")
+            selected_names=[
+                f"u^{component+1}" for component in self._indices(
+                    components,self.elem._dim,"component"
+                )
+            ]
+        view=DofsView(
+            np.concatenate([
+                np.asarray(groups[name],dtype=np.int64)
+                for name in selected_names
+            ]) if selected_names else np.empty(0,dtype=np.int64),
+            self.doflocs,
+            {name:groups[name] for name in selected_names},
+        )
+        return view.drop(skip) if skip else view
 
     def _init_composite(self,mesh,element,intorder,quadrature=None):
         vector_elements=tuple(

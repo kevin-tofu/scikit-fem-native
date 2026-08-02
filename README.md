@@ -449,6 +449,26 @@ The resulting `FacetRegion.sides` and `FacetRegion.normal_signs` are immutable
 per-facet metadata.  `FacetBasis` applies both, including mixed orientations in
 one region.
 
+Vector and composite DOFs can be selected by component without relying on
+stride assumptions:
+
+```python
+boundary = basis.get_dofs("wall")
+x_dofs = boundary.all("u^1")
+in_plane = boundary.keep(["u^1", "u^2"]).all()
+
+# Native numeric selectors are convenient for generated mixed spaces.
+velocity_x = mixed_basis.get_dofs(
+    "wall", fields=0, components={0: 0}
+).all()
+pressure = mixed_basis.get_dofs("wall", fields=1).all()
+```
+
+Simple vector names follow scikit-fem (`u^1`, `u^2`, ...).  Composite groups
+use unambiguous names such as `field0^1` and `field1^1`; they are available in
+`DofsView.groups`.  `all(names)`, `keep(names)`, `drop(names)`, `components=`,
+and `fields=` all return sorted global DOF IDs.
+
 The cached `mesh.facets`, `mesh.t2f`, and `mesh.f2t` arrays are shared by
 repeated Basis construction.  `mesh.interior_facets()` is a small skfemntv
 convenience returning `np.flatnonzero(mesh.f2t[1] != -1)`.

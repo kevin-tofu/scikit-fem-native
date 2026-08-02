@@ -67,9 +67,10 @@ immutable region values; named cell subdomains and named boundary regions can
 be passed directly to Basis, FacetBasis, and DOF selection.  Region algebra
 provides union, intersection, difference, and complement without renumbering
 global entities.  `facets_satisfying(..., normal=...)` and
-`get_dofs(skip=...)` remains the next gap.  Normal-oriented selection now
-records a parent side and normal sign for every facet and is consumed by all
-FacetBasis topology paths.
+Normal-oriented selection records a parent side and normal sign for every
+facet and is consumed by all FacetBasis topology paths.  Component-aware DOF
+selection is also implemented through scikit-fem-style DofsView names and
+numeric vector/composite selectors.
 
 The public region results are:
 
@@ -87,7 +88,7 @@ renumber global DOFs.  First implement:
 2. [x] union, intersection, difference, and complement;
 3. [x] deterministic selection and empty-region diagnostics;
 4. [x] normal-oriented exterior/interior facet selection;
-5. [ ] component-aware DOF selection for vector/composite spaces;
+5. [x] component-aware DOF selection for vector/composite spaces;
 6. [ ] classification/orientation metadata for level-set results.
 
 These operations are useful in ordinary multi-material and load-selection
@@ -239,14 +240,13 @@ solutions cover the genuinely CutFEM-specific parts.
 
 ## Recommended execution order
 
-1. Implement component-aware DOF queries.
-2. Add classification metadata needed by level-set regions.
-3. Add arbitrary-point value/gradient evaluation.
-4. Close form-algebra gaps required by anisotropic and multi-coefficient forms.
-5. Introduce level-set classification without cut integration.
-6. Add CSR-like cell-local cut quadrature and constant/linear exactness tests.
-7. Build `CutCellBasis` and `ImplicitFacetBasis`, then Nitsche/ghost-penalty
+1. Add classification metadata needed by level-set regions.
+2. Add arbitrary-point value/gradient evaluation.
+3. Close form-algebra gaps required by anisotropic and multi-coefficient forms.
+4. Introduce level-set classification without cut integration.
+5. Add CSR-like cell-local cut quadrature and constant/linear exactness tests.
+6. Build `CutCellBasis` and `ImplicitFacetBasis`, then Nitsche/ghost-penalty
    examples as user-defined forms.
 
-The common Jacobian validation path is implemented.  After its full regression
-suite passes, the next feature track is item 1: first-class regions.
+Jacobian validation and the first-class region/selection layer are implemented.
+The next feature track is item 1: level-set classification metadata.
