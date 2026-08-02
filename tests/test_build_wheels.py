@@ -10,6 +10,7 @@ def test_build_wheels_dry_run_selects_python_versions(tmp_path):
     result=subprocess.run(
         [
             sys.executable,str(SCRIPT),"--platform","linux",
+            "--arch","x86_64",
             "--python","3.10","3.14","--output-dir",str(tmp_path),
             "--dry-run",
         ],
@@ -17,4 +18,5 @@ def test_build_wheels_dry_run_selects_python_versions(tmp_path):
     )
     assert result.returncode==0,result.stderr
     assert "--platform linux" in result.stdout
+    assert "--archs x86_64" in result.stdout
     assert "CIBW_BUILD=cp310-* cp314-*" in result.stdout

@@ -1,0 +1,87 @@
+name: Full validation
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: full-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }} on ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            label: Linux x86_64
+            python: "3.10"
+          - os: ubuntu-24.04
+            label: Linux x86_64
+            python: "3.11"
+          - os: ubuntu-24.04
+            label: Linux x86_64
+            python: "3.12"
+          - os: ubuntu-24.04
+            label: Linux x86_64
+            python: "3.13"
+          - os: ubuntu-24.04
+            label: Linux x86_64
+            python: "3.14"
+          - os: macos-15
+            label: macOS arm64
+            python: "3.14"
+          - os: macos-15-intel
+            label: macOS x86_64
+            python: "3.14"
+          - os: windows-2025
+            label: Windows AMD64
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install package and test dependencies
+        run: python -m pip install --upgrade pip ".[test]"
+      - name: Run tests
+        run: python -m pytest
+
+  wheel-smoke:
+    name: Wheel smoke on ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            label: Linux x86_64
+            platform: linux
+            arch: x86_64
+          - os: macos-15
+            label: macOS arm64
+            platform: macos
+            arch: arm64
+          - os: macos-15-intel
+            label: macOS x86_64
+            platform: macos
+            arch: x86_64
+          - os: windows-2025
+            label: Windows AMD64
+            platform: windows
+            arch: AMD64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Build and test one wheel
+        run: |
+          python -m pip install "cibuildwheel>=4,<5"
+          python tools/build_wheels.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --python 3.14

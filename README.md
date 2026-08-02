@@ -174,32 +174,54 @@ python -m pip install --upgrade build twine
 python tools/package_check.py
 ```
 
+Use `--smoke-only` for the faster PR check that installs and imports the wheel
+without repeating the full test suite; `--skip-tests` validates only build
+metadata.
+
 To build the complete Linux wheel matrix locally, install Docker and
 `cibuildwheel`, then run:
 
 ```bash
 python -m pip install --upgrade cibuildwheel
-python tools/build_wheels.py --platform linux
+python tools/build_wheels.py --platform linux --arch x86_64
 ```
 
 The same wrapper runs natively on macOS and Windows.  A single-version build is
 useful while iterating:
 
 ```bash
-python tools/build_wheels.py --platform linux --python 3.12
-python tools/build_wheels.py --platform macos --python 3.12
-python tools/build_wheels.py --platform windows --python 3.12
+python tools/build_wheels.py --platform linux --arch x86_64 --python 3.12
+python tools/build_wheels.py --platform macos --arch arm64 --python 3.12
+python tools/build_wheels.py --platform macos --arch x86_64 --python 3.12
+python tools/build_wheels.py --platform windows --arch AMD64 --python 3.12
 ```
 
 Linux uses Docker to produce repaired manylinux wheels.  macOS wheels must be
 built on macOS and Windows wheels on Windows; they cannot be produced by the
 Linux Docker build.
 
+`tools/local_ci.py` is the cross-platform entry point matching the GitHub
+stages.  `fast` installs the editable package and runs tests; `package` builds
+and installs a wheel in a clean environment; `wheel` invokes cibuildwheel for
+the detected native architecture; and `all` runs every stage:
+
+```bash
+python tools/local_ci.py fast
+python tools/local_ci.py package
+python tools/local_ci.py wheel --python 3.12
+python tools/local_ci.py all --python 3.12
+```
+
+The normal PR workflow intentionally tests only Python 3.10/3.14 on Linux and
+Python 3.14 on macOS arm64 and Windows AMD64.  The manually dispatched
+`Full validation` workflow covers every supported Python on Linux, macOS arm64
+and Intel, Windows AMD64, and a wheel-install smoke test on all four targets.
+
 GitHub Releases whose tag is `v<version>` trigger `.github/workflows/workflow.yml`.
 The workflow verifies the tag against `pyproject.toml`, builds CPython 3.10--3.14
-wheels for Linux, macOS, and Windows, and publishes through PyPI Trusted
-Publishing.  Configure a protected GitHub environment named `pypi` before the
-first release.
+wheels for Linux x86_64, macOS arm64, macOS x86_64, and Windows AMD64, and
+publishes through PyPI Trusted Publishing.  Configure a protected GitHub
+environment named `pypi` before the first release.
 
 ### License
 
