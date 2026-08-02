@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import re
-import tomllib
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -28,12 +27,17 @@ def validate_version(value: str) -> str:
 
 
 def project_version(path: Path) -> str:
-    with path.open("rb") as stream:
-        data=tomllib.load(stream)
-    try:
-        return str(data["project"]["version"])
-    except KeyError as error:
-        raise ValueError(f"{path} has no [project].version") from error
+    text=path.read_text(encoding="utf-8")
+    project=re.search(r"(?ms)^\[project\]\s*$.*?(?=^\[|\Z)",text)
+    if project is None:
+        raise ValueError(f"{path} has no [project] table")
+    match=re.search(
+        r'(?m)^version\s*=\s*["\']([^"\']+)["\']\s*$',
+        project.group(0),
+    )
+    if match is None:
+        raise ValueError(f"{path} has no [project].version")
+    return match.group(1)
 
 
 def replace_project_version(text: str,old: str,new: str) -> str:
@@ -69,7 +73,7 @@ def main() -> None:
             raise ValueError(f"project version is already {new}")
         text=arguments.pyproject.read_text(encoding="utf-8")
         updated=replace_project_version(text,old,new)
-    except (OSError,ValueError,tomllib.TOMLDecodeError) as error:
+    except (OSError,ValueError) as error:
         parser.error(str(error))
     print(f"project version: {old} -> {new}")
     if arguments.dry_run:
