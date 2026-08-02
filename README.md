@@ -11,6 +11,30 @@ Compatibility applies to the documented subset, not to every scikit-fem API.
 Unsupported forms and operations raise `skfemntv.UnsupportedNativeForm`; there is
 no runtime fallback to scikit-fem or Python element assembly.
 
+## Installation
+
+Install the latest release from PyPI:
+
+```bash
+python -m pip install skfem-native
+```
+
+The distribution name is `skfem-native`; the Python import name is `skfemntv`:
+
+```python
+import skfemntv
+
+# Convenient when porting a form from scikit-fem's supported subset:
+import skfemntv as skfem
+```
+
+PyPI provides prebuilt CPython 3.10--3.14 wheels for Linux x86_64 (glibc 2.27
+or newer), Windows AMD64, macOS arm64, and macOS x86_64.  On these platforms,
+`pip` selects the matching wheel automatically; users do not need a C++
+compiler.  Other platforms, including Linux arm64, Alpine/musl, Windows
+32-bit, and PyPy, currently have no prebuilt wheel and may require a source
+build toolchain.
+
 ## API contract
 
 ### scikit-fem-compatible subset

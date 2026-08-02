@@ -1,0 +1,296 @@
+# Development status — 2026-08-03
+
+## Project identity
+
+- GitHub repository: `kevin-tofu/skfem-native`
+- Distribution name: `skfem-native`
+- Python import name: `skfemntv`
+- Current branch: `main`
+- Current version and tag: `0.1.2` / `v0.1.2`
+- Current commit: `1143df0` (`Bump version to 0.1.2`)
+- Python requirement: CPython 3.10 or newer
+- Runtime policy: no scikit-fem import, fallback, or Python element assembly
+
+The intended user-facing compatibility pattern is:
+
+```python
+import skfemntv as skfem
+```
+
+This works for the documented compatible subset.  Native-only extensions and
+unsupported operations are explicit; unsupported forms raise
+`UnsupportedNativeForm` rather than silently switching implementation.
+
+## Release status
+
+`v0.1.2` was published as a GitHub Release and uploaded to PyPI through Trusted
+Publishing.  The complete release workflow succeeded:
+
+- source distribution;
+- Linux x86_64 wheels;
+- Windows AMD64 wheels;
+- macOS arm64 wheels;
+- macOS x86_64 wheels;
+- final PyPI publish job.
+
+PyPI currently provides CPython 3.10--3.14 wheels.  Users on a supported
+platform can install without a local C++ compiler:
+
+```bash
+python -m pip install skfem-native
+```
+
+The wheel coverage is:
+
+- Linux x86_64 with glibc 2.27 or newer;
+- Windows 64-bit x86;
+- macOS Apple Silicon;
+- macOS Intel.
+
+Linux arm64, Alpine/musl, Windows 32-bit, and PyPy do not yet have prebuilt
+wheels and may fall back to an sdist build.
+
+## Implemented assembly scope
+
+### Meshes and elements
+
+- Tri3 / Tri6;
+- Quad4 / Quad9;
+- Tet4 / Tet10;
+- Wedge6;
+- Pyramid5 as an explicit skfemntv extension;
+- Hex8 / Hex27;
+- scalar P0 and nodal H1 P1/P2 or Q1/Q2 where applicable;
+- vector, discontinuous, and composite elements with documented limits.
+
+Mesh topology includes cached facets, `t2f`, `f2t`, boundary/interior facet
+queries, tensor-mesh constructors, high-order conversion, named boundaries,
+and cell/facet predicates.
+
+### Forms and bases
+
+- `BilinearForm`, `LinearForm`, `Functional`, and `asm`;
+- `Basis`, `FacetBasis`, and `InteriorFacetBasis`;
+- volume, exterior-facet, and interior-facet integration;
+- `dot`, `ddot`, `grad`, `div`, `sym_grad`, and `trace`;
+- `jump`, `avg`, and `normal_grad` for interface terms;
+- physical coordinates through `w.x` and normals through `w.n`;
+- scalar, array, callable, and interpolated-field coefficients;
+- mixed signatures such as `u, p, v, q, w`;
+- rectangular trial/test spaces and mixed-order coupling;
+- element-restricted bases without global DOF renumbering;
+- interpolation of a global coefficient vector at basis quadrature points.
+
+scikit-fem is used only in tests as a numerical and API reference.  Matrix,
+vector, functional, interpolation, boundary, mixed-space, high-order, and
+interior-facet results are compared directly where an equivalent scikit-fem
+operation exists.
+
+### Nonlinear and material assembly
+
+- reusable CSR structure and native residual/tangent evaluation;
+- linear elasticity and Neo-Hookean kernels;
+- consistent tangent assembly;
+- J2 plasticity with committed/trial state separation;
+- Standard Linear Solid viscoelasticity;
+- adaptive-step `time_step` override without rebuilding geometry or sparsity;
+- residual-only and residual-plus-tangent modes;
+- caller-owned output buffers through the low-level evaluation path.
+
+Solver policy remains outside the package.  End-to-end tests use SciPy where a
+solve is needed to validate assembly, but `solve` and `condense` are not public
+skfemntv APIs.
+
+### Nonmatching interfaces and mortar
+
+- planar triangle supermesh construction;
+- AABB broad phase and batched native overlap construction;
+- parallel planar supermesh processing;
+- curved Tet10/Hex27 surface tessellation and projection diagnostics;
+- trace shape values, physical gradients, normals, weights, and parent IDs;
+- paired master/slave orientation diagnostics;
+- sparse cross/value/gradient blocks;
+- `MortarCouplingResult` with sparse master, slave, and coupling matrices;
+- slave P1, master P1, overlap-cell P0, and facet-local dual multiplier bases;
+- composable Poisson and elasticity Nitsche flux terms;
+- constant/linear reproduction, action-reaction, refinement, and scikit-fem
+  comparison tests.
+
+Native kernels return sparse blocks, COO/CSR data, or quadrature-local arrays;
+they do not construct a multiplier-sized global dense matrix.
+
+## Parallelism and performance
+
+Native thread controls are available globally, through a context manager, and
+per assembly call:
+
+```python
+skfemntv.set_num_threads(4)
+
+with skfemntv.thread_limit(4):
+    matrix = skfemntv.asm(form, basis)
+
+result = assembler.assemble(u, state, num_threads=4)
+```
+
+The requested count is capped by CPU affinity visible to the process.  Parallel
+paths include colored CSR scatter for volume/nonlinear assembly, interface and
+mortar CSR assembly, and planar supermesh construction.  Serial/parallel
+numerical agreement is covered by tests.
+
+Benchmarks distinguish:
+
+- mesh construction;
+- basis construction;
+- sparsity/assembler preparation;
+- first assembly;
+- repeated assembly;
+- residual-only versus residual-plus-tangent;
+- one-thread and multi-thread native execution;
+- peak memory where the platform exposes it.
+
+The comparison suite includes scikit-fem's performance-style Poisson problem,
+large DoF sweeps, nonlinear mesh/order sweeps, and native scaling.  Basis
+construction was optimized by removing eager duplicate work and caching
+triangle frames.  Performance claims should continue to report setup and
+repeated assembly separately rather than hiding native preparation cost.
+
+## Packaging and workflow
+
+- `scripts/upgrade_version.py` updates the project version and supports Python
+  3.10 without relying unconditionally on `tomllib`;
+- `tools/check_release_version.py` verifies `v<version>` release tags;
+- local package checks build, inspect, install, import, and optionally test a
+  wheel in an isolated environment;
+- `tools/local_ci.py` mirrors fast, package, wheel, and full validation stages;
+- `tools/build_wheels.py` wraps cibuildwheel for native platform builds;
+- GitHub Actions cover ordinary CI, manually dispatched full validation, and
+  release publication;
+- `notes/gh-usage.md` documents CLI inspection, failure logs, release creation,
+  monitoring, and PyPI verification.
+
+## Current production gaps
+
+The project is a useful focused assembly engine, but the following remain the
+highest-value gaps.
+
+### Geometry validity
+
+Basis construction now applies a scale-aware Jacobian policy in the common
+native tabulation path.  It rejects near-singular points and determinant sign
+changes within a curved element before assembly.  Errors identify cell and
+quadrature-point IDs and report determinant/tolerance data.  A uniformly
+negative local orientation remains valid and is counted in
+`GeometryDiagnostics`.  Tet10/Hex27 internal inversions and the maximum
+Jacobian condition number are covered.
+
+### P0 — First-class geometric regions
+
+Current cell/facet predicates evaluate entity centers.  This handles common
+coordinate boundaries but does not represent richer selections robustly.
+Needed additions are:
+
+- named cell subdomains;
+- immutable cell/facet/node region results;
+- union, intersection, difference, and complement;
+- normal-oriented facet selection;
+- component-aware DOF selection for vector/composite spaces;
+- explicit tolerance and empty-selection diagnostics.
+
+### P1 — Arbitrary-point field evaluation
+
+`Basis.interpolate` evaluates at existing quadrature points.  Probes, transfer,
+inverse problems, and post-processing need value and physical-gradient
+evaluation at arbitrary physical points, including containing-cell IDs and
+outside/ambiguous-point diagnostics.
+
+### P1 — Form algebra gaps
+
+The native form vocabulary should be extended deliberately for concrete weak
+forms, especially coefficient component access, multiple independent
+coefficient fields, outer products/transposes, anisotropic tensors, and richer
+facet coefficients.  Arbitrary NumPy tracing and runtime fallback should not be
+introduced.
+
+### P1 — Large-problem and concurrency contracts
+
+- preflight memory estimates for CSR patterns, scatter maps, geometry, and
+  material state;
+- 10k/100k/1M-DoF memory measurements by topology;
+- an explicit reentrancy contract for concurrent calls on one assembler;
+- deterministic handling of surrounding OpenMP/BLAS/PETSc thread pools.
+
+Lower-priority gaps include composite DG spaces, complete mixed-face interior
+facets, Line elements, custom facet mappings/DOFs, and future H(div)/H(curl)
+tracks.
+
+## Research direction: CutFEM and level sets
+
+CutFEM should build on first-class regions but must not be implemented as only
+a more complex facet predicate.  The design separates:
+
+1. level-set sampling;
+2. inside/outside/cut cell classification;
+3. active cells, facets, and DOFs;
+4. cell-local cut-volume quadrature;
+5. implicit-interface quadrature;
+6. user-defined Nitsche and ghost-penalty forms.
+
+Cut cells have different quadrature-point counts.  The intended storage is a
+CSR-like local representation rather than padding every cell:
+
+```text
+cell_offsets[ncells + 1]
+points[ncut_qp, dim]
+weights[ncut_qp]
+```
+
+Each point also needs its background cell, reference coordinate, shape values,
+physical gradients, level-set gradient, and consistently oriented interface
+normal where applicable.  Moving level sets must distinguish value updates,
+local quadrature rebuilds, and active-set/CSR-pattern rebuilds.
+
+Validation should progress from exact planar cuts and constant/linear
+integration to circle/sphere convergence, moving interfaces, unfitted Poisson
+with Nitsche terms, and ghost-penalty conditioning.  scikit-fem remains the
+comparison reference wherever the same custom quadrature can be expressed;
+analytic geometry and manufactured solutions validate CutFEM-specific pieces.
+
+See `notes/assembly-gap-audit-20260803.md` for the detailed capability matrix,
+proposed region APIs, cut-quadrature data, and validation ladder.
+
+## Deferred directions
+
+CalculiX comparison is intentionally deferred.  For current assembly features,
+scikit-fem gives more precise matrix/vector comparisons and makes failures much
+easier to localize.  CalculiX becomes valuable later for `.inp`
+interoperability, independent large-model validation, and migration from an
+existing industrial solver, not as a duplicate unit-test oracle.
+
+The following also remain outside core scope unless a concrete assembly use
+case requires them:
+
+- linear/nonlinear solver policy;
+- pressure pinning and condensation policy;
+- automatic contact/mortar/Nitsche formulation selection;
+- mandatory PETSc or external C++ tensor dependencies;
+- plotting and general mesh-file management.
+
+## Recommended next work
+
+1. Add named cell subdomains and first-class region algebra.
+2. Add normal-oriented facet and component-aware DOF selection.
+3. Add arbitrary-point value/gradient evaluation.
+4. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
+5. Add level-set classification independently of integration.
+6. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
+7. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
+
+## Working tree at this checkpoint
+
+The following documentation changes are not committed as of this checkpoint:
+
+- `README.md`: PyPI installation and wheel-platform guidance;
+- `notes/gh-usage.md`: GitHub CLI and release workflow usage;
+- `notes/assembly-gap-audit-20260803.md`: assembly gap and CutFEM audit;
+- `notes/dev-status-20260803.md`: this checkpoint.

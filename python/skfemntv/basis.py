@@ -9,6 +9,22 @@ import numpy as np
 from ._skfn import tabulate_basis_geometry
 
 
+@dataclass(frozen=True)
+class GeometryDiagnostics:
+    element_count: int
+    quadrature_points_per_element: int
+    minimum_determinant: float
+    maximum_determinant: float
+    minimum_scaled_determinant: float
+    worst_element: int
+    worst_quadrature_point: int
+    determinant_tolerance: float
+    negative_orientation_elements: int
+    maximum_condition_number: float
+    worst_condition_element: int
+    worst_condition_quadrature_point: int
+
+
 class _TopologyMesh:
     """Cached codimension-one topology shared by independent meshes."""
 
@@ -1523,6 +1539,12 @@ class Basis:
         self.element_dofs=self.element_dofs[:,local]
         self.dx=self.dx[local]
         self.global_coordinates=self.global_coordinates[local]
+        self._geometry_determinants=self._geometry_determinants[local]
+        self._geometry_tolerances=self._geometry_tolerances[local]
+        self._geometry_condition_numbers=(
+            self._geometry_condition_numbers[local]
+        )
+        self._update_geometry_diagnostics()
         if hasattr(self,"subbases"):
             for subbasis in self.subbases:
                 subbasis._restrict_elements(selected)
@@ -1746,6 +1768,10 @@ class Basis:
         self.quadrature=(self.X.copy(),self.W.copy())
         self.dx=first.dx
         self.global_coordinates=first.global_coordinates
+        self._geometry_determinants=first._geometry_determinants
+        self._geometry_tolerances=first._geometry_tolerances
+        self._geometry_condition_numbers=first._geometry_condition_numbers
+        self.geometry_diagnostics=first.geometry_diagnostics
         self.normals=None
         self.basis=tuple()
 
@@ -1865,9 +1891,77 @@ class Basis:
             geometry_shape,geometry_refgrad=_mesh_geometry_shapes(
                 self.mesh,self.X
             )
-        return tabulate_basis_geometry(
+        result=tabulate_basis_geometry(
             self.mesh.p,self.mesh.t,shape,refgrad,
             geometry_shape,geometry_refgrad,self.W,
+        )
+        geometry=result[:4]
+        self._geometry_determinants=np.asarray(result[4])
+        self._geometry_tolerances=np.asarray(result[5])
+        self._geometry_condition_numbers=np.asarray(result[6])
+        self._update_geometry_diagnostics()
+        return geometry
+
+    def _update_geometry_diagnostics(self):
+        determinants=self._geometry_determinants
+        tolerances=self._geometry_tolerances
+        if determinants.size==0:
+            self.geometry_diagnostics=GeometryDiagnostics(
+                element_count=0,
+                quadrature_points_per_element=(
+                    determinants.shape[1] if determinants.ndim==2 else 0
+                ),
+                minimum_determinant=float("inf"),
+                maximum_determinant=float("-inf"),
+                minimum_scaled_determinant=float("inf"),
+                worst_element=-1,
+                worst_quadrature_point=-1,
+                determinant_tolerance=0.,
+                negative_orientation_elements=0,
+                maximum_condition_number=0.,
+                worst_condition_element=-1,
+                worst_condition_quadrature_point=-1,
+            )
+            return
+        scale_power=tolerances/(
+            64.*np.finfo(np.float64).eps
+        )
+        scaled=np.abs(determinants)/scale_power
+        flat=int(np.argmin(scaled))
+        local_element,quadrature_point=np.unravel_index(
+            flat,determinants.shape
+        )
+        element=(
+            int(self.tind[local_element])
+            if hasattr(self,"tind") and len(self.tind)==len(determinants)
+            else int(local_element)
+        )
+        condition_flat=int(np.argmax(self._geometry_condition_numbers))
+        condition_local,condition_quadrature=np.unravel_index(
+            condition_flat,self._geometry_condition_numbers.shape
+        )
+        condition_element=(
+            int(self.tind[condition_local])
+            if hasattr(self,"tind") and len(self.tind)==len(determinants)
+            else int(condition_local)
+        )
+        self.geometry_diagnostics=GeometryDiagnostics(
+            element_count=int(determinants.shape[0]),
+            quadrature_points_per_element=int(determinants.shape[1]),
+            minimum_determinant=float(np.min(determinants)),
+            maximum_determinant=float(np.max(determinants)),
+            minimum_scaled_determinant=float(scaled.flat[flat]),
+            worst_element=element,
+            worst_quadrature_point=int(quadrature_point),
+            determinant_tolerance=float(tolerances.flat[flat]),
+            negative_orientation_elements=int(np.count_nonzero(
+                determinants[:,0]<0.
+            )),
+            maximum_condition_number=float(
+                self._geometry_condition_numbers.flat[condition_flat]
+            ),
+            worst_condition_element=condition_element,
+            worst_condition_quadrature_point=int(condition_quadrature),
         )
 
     def _evaluate_reference(self, points):

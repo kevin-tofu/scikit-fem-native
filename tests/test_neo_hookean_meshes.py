@@ -194,5 +194,7 @@ def test_native_basis_rejects_singular_geometry(topology):
     points=space.mesh.p.copy();points[2]=0.
     mesh=type(space.mesh)(points,space.mesh.t)
     scalar=type(space.elem.elem)()
-    with pytest.raises(ValueError,match="singular element geometry"):
+    with pytest.raises(
+        ValueError,match="reason=near_singular_or_non_finite"
+    ):
         skfemntv.Basis(mesh,skfemntv.ElementVector(scalar),intorder=2)

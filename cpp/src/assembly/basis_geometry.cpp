@@ -3,6 +3,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 
 #include "native_fem/python_bindings.hpp"
@@ -12,34 +15,35 @@ namespace py = pybind11;
 
 namespace {
 
-double inverse(const double* matrix, double* result, int dimension) {
-    if (dimension == 2) {
-        const double determinant = matrix[0] * matrix[3] -
-            matrix[1] * matrix[2];
-        if (determinant == 0.) throw std::invalid_argument(
-            "singular element geometry");
-        result[0] = matrix[3] / determinant;
-        result[1] = -matrix[1] / determinant;
-        result[2] = -matrix[2] / determinant;
-        result[3] = matrix[0] / determinant;
-        return determinant;
-    }
-    const double determinant =
+double determinant(const double* matrix, int dimension) {
+    if (dimension == 2)
+        return matrix[0] * matrix[3] - matrix[1] * matrix[2];
+    return
         matrix[0] * (matrix[4] * matrix[8] - matrix[5] * matrix[7]) -
         matrix[1] * (matrix[3] * matrix[8] - matrix[5] * matrix[6]) +
         matrix[2] * (matrix[3] * matrix[7] - matrix[4] * matrix[6]);
-    if (determinant == 0.) throw std::invalid_argument(
-        "singular element geometry");
-    result[0] = (matrix[4] * matrix[8] - matrix[5] * matrix[7]) / determinant;
-    result[1] = (matrix[2] * matrix[7] - matrix[1] * matrix[8]) / determinant;
-    result[2] = (matrix[1] * matrix[5] - matrix[2] * matrix[4]) / determinant;
-    result[3] = (matrix[5] * matrix[6] - matrix[3] * matrix[8]) / determinant;
-    result[4] = (matrix[0] * matrix[8] - matrix[2] * matrix[6]) / determinant;
-    result[5] = (matrix[2] * matrix[3] - matrix[0] * matrix[5]) / determinant;
-    result[6] = (matrix[3] * matrix[7] - matrix[4] * matrix[6]) / determinant;
-    result[7] = (matrix[1] * matrix[6] - matrix[0] * matrix[7]) / determinant;
-    result[8] = (matrix[0] * matrix[4] - matrix[1] * matrix[3]) / determinant;
-    return determinant;
+}
+
+double inverse(const double* matrix, double* result, int dimension) {
+    if (dimension == 2) {
+        const double det = determinant(matrix, dimension);
+        result[0] = matrix[3] / det;
+        result[1] = -matrix[1] / det;
+        result[2] = -matrix[2] / det;
+        result[3] = matrix[0] / det;
+        return det;
+    }
+    const double det = determinant(matrix, dimension);
+    result[0] = (matrix[4] * matrix[8] - matrix[5] * matrix[7]) / det;
+    result[1] = (matrix[2] * matrix[7] - matrix[1] * matrix[8]) / det;
+    result[2] = (matrix[1] * matrix[5] - matrix[2] * matrix[4]) / det;
+    result[3] = (matrix[5] * matrix[6] - matrix[3] * matrix[8]) / det;
+    result[4] = (matrix[0] * matrix[8] - matrix[2] * matrix[6]) / det;
+    result[5] = (matrix[2] * matrix[3] - matrix[0] * matrix[5]) / det;
+    result[6] = (matrix[3] * matrix[7] - matrix[4] * matrix[6]) / det;
+    result[7] = (matrix[1] * matrix[6] - matrix[0] * matrix[7]) / det;
+    result[8] = (matrix[0] * matrix[4] - matrix[1] * matrix[3]) / det;
+    return det;
 }
 
 py::tuple tabulate_basis_geometry(
@@ -78,10 +82,18 @@ py::tuple tabulate_basis_geometry(
     py::array_t<double> gradients({elements, quadrature, nodes, dimension});
     py::array_t<double> dx({elements, quadrature});
     py::array_t<double> global({elements, quadrature, dimension});
+    py::array_t<double> determinants({elements, quadrature});
+    py::array_t<double> determinant_tolerances({elements, quadrature});
+    py::array_t<double> condition_numbers({elements, quadrature});
     auto* output_shape = static_cast<double*>(tabulated_shape.request().ptr);
     auto* output_gradient = static_cast<double*>(gradients.request().ptr);
     auto* output_dx = static_cast<double*>(dx.request().ptr);
     auto* output_global = static_cast<double*>(global.request().ptr);
+    auto* output_determinant = static_cast<double*>(determinants.request().ptr);
+    auto* output_tolerance = static_cast<double*>(
+        determinant_tolerances.request().ptr);
+    auto* output_condition = static_cast<double*>(
+        condition_numbers.request().ptr);
     const auto* point_data = static_cast<const double*>(p.ptr);
     const auto* cell_data = static_cast<const std::int64_t*>(t.ptr);
     const auto* shape_data = static_cast<const double*>(s.ptr);
@@ -118,10 +130,34 @@ py::tuple tabulate_basis_geometry(
                 for (py::ssize_t i = 0; i < dimension; ++i)
                     output_global[(e * quadrature + q) * dimension + i] =
                         physical_point[i];
-                const double determinant = inverse(
-                    jacobian, jacobian_inverse, static_cast<int>(dimension));
+                double jacobian_scale = 0.;
+                for (py::ssize_t i = 0; i < dimension * dimension; ++i)
+                    jacobian_scale = std::max(
+                        jacobian_scale, std::abs(jacobian[i]));
+                const double scale_power = dimension == 2
+                    ? jacobian_scale * jacobian_scale
+                    : jacobian_scale * jacobian_scale * jacobian_scale;
+                const double tolerance = 64. *
+                    std::numeric_limits<double>::epsilon() * scale_power;
+                const double det = determinant(
+                    jacobian, static_cast<int>(dimension));
+                output_determinant[e * quadrature + q] = det;
+                output_tolerance[e * quadrature + q] = tolerance;
+                if (!std::isfinite(det) || !std::isfinite(tolerance) ||
+                    !(std::abs(det) > tolerance))
+                    continue;
+                inverse(jacobian, jacobian_inverse, static_cast<int>(dimension));
+                double jacobian_norm_squared = 0.;
+                double inverse_norm_squared = 0.;
+                for (py::ssize_t i = 0; i < dimension * dimension; ++i) {
+                    jacobian_norm_squared += jacobian[i] * jacobian[i];
+                    inverse_norm_squared +=
+                        jacobian_inverse[i] * jacobian_inverse[i];
+                }
+                output_condition[e * quadrature + q] = std::sqrt(
+                    jacobian_norm_squared * inverse_norm_squared);
                 output_dx[e * quadrature + q] =
-                    std::abs(determinant) * weight_data[q];
+                    std::abs(det) * weight_data[q];
                 for (py::ssize_t a = 0; a < nodes; ++a) {
                     output_shape[(e * quadrature + q) * nodes + a] =
                         shape_data[q * nodes + a];
@@ -139,7 +175,37 @@ py::tuple tabulate_basis_geometry(
         }
         });
     }
-    return py::make_tuple(tabulated_shape, gradients, dx, global);
+    for (py::ssize_t e = 0; e < elements; ++e) {
+        for (py::ssize_t q = 0; q < quadrature; ++q) {
+            const double det = output_determinant[e * quadrature + q];
+            const double tolerance = output_tolerance[e * quadrature + q];
+            if (std::isfinite(det) && std::isfinite(tolerance) &&
+                std::abs(det) > tolerance)
+                continue;
+            std::ostringstream message;
+            message << "invalid element geometry: cell=" << e
+                << ", quadrature_point=" << q << std::scientific
+                << std::setprecision(17) << ", determinant=" << det
+                << ", tolerance=" << tolerance;
+            message << ", reason=near_singular_or_non_finite";
+            throw std::invalid_argument(message.str());
+        }
+        const bool negative = output_determinant[e * quadrature] < 0.;
+        for (py::ssize_t q = 1; q < quadrature; ++q) {
+            const double det = output_determinant[e * quadrature + q];
+            if ((det < 0.) == negative) continue;
+            std::ostringstream message;
+            message << "invalid element geometry: cell=" << e
+                << ", quadrature_point=" << q << std::scientific
+                << std::setprecision(17) << ", determinant=" << det
+                << ", tolerance=" << output_tolerance[e * quadrature + q]
+                << ", reason=orientation_change";
+            throw std::invalid_argument(message.str());
+        }
+    }
+    return py::make_tuple(
+        tabulated_shape, gradients, dx, global, determinants,
+        determinant_tolerances, condition_numbers);
 }
 
 }  // namespace
