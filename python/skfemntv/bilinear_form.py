@@ -3,7 +3,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from ._skfn import BilinearFormAssembler,CrossBilinearAssembler
+from ._skfn import (
+    BilinearFormAssembler,CrossBilinearAssembler,CutBilinearFormAssembler,
+)
 
 
 class NativeBilinearForm:
@@ -14,15 +16,23 @@ class NativeBilinearForm:
         components = basis.elem._dim
         nodes = len(scalar.doflocs)
         entities, quadrature = basis.dx.shape
-        dofs = basis.element_dofs.T.reshape(entities, nodes, components)
-        self._native = BilinearFormAssembler(
-            np.asarray(dofs, dtype=np.int64, order="C"),
-            np.asarray(basis.tabulated_shape, dtype=np.float64, order="C"),
-            np.asarray(
-                basis.tabulated_gradients, dtype=np.float64, order="C"
-            ),
-            np.asarray(basis.dx, dtype=np.float64, order="C"),
-        )
+        self._cut=hasattr(basis,"cell_offsets")
+        if self._cut:
+            self._native=CutBilinearFormAssembler(
+                np.ascontiguousarray(basis.cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(basis.cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(basis.shape,dtype=np.float64),
+                np.ascontiguousarray(basis.gradients,dtype=np.float64),
+                np.ascontiguousarray(basis.weights,dtype=np.float64),
+            )
+        else:
+            dofs = basis.element_dofs.T.reshape(entities, nodes, components)
+            self._native = BilinearFormAssembler(
+                np.asarray(dofs,dtype=np.int64,order="C"),
+                np.asarray(basis.tabulated_shape,dtype=np.float64,order="C"),
+                np.asarray(basis.tabulated_gradients,dtype=np.float64,order="C"),
+                np.asarray(basis.dx,dtype=np.float64,order="C"),
+            )
         self._coefficient_shape = (entities, quadrature)
         self._matrix = csr_matrix(
             (
@@ -38,6 +48,9 @@ class NativeBilinearForm:
     def assemble(self,*,value=None,gradient=None,num_threads=0):
         value = self._coefficient("value", value)
         gradient = self._coefficient("gradient", gradient)
+        if self._cut:
+            if value is not None:value=value.reshape(-1)
+            if gradient is not None:gradient=gradient.reshape(-1)
         self._native.assemble(value,gradient,num_threads)
         return self._matrix
 

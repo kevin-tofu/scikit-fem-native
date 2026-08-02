@@ -28,6 +28,8 @@ class CutCellBasis:
                 "CutCellBasis currently supports vector-wrapped TriP1 and TetP1"
             )
         expected=basis.mesh.dim()+1
+        node_count=expected
+        components=basis.elem._dim
         if basis.mesh.t.shape[0]!=expected:
             raise NotImplementedError(
                 "CutCellBasis currently supports affine Tri3 and Tet4 meshes"
@@ -65,9 +67,9 @@ class CutCellBasis:
         ))
         for cell in self.tind:
             selection=quadrature.cell_slice(int(cell))
-            nodes=basis.mesh.t[:,cell]
+            cell_nodes=basis.mesh.t[:,cell]
             jacobian=(
-                basis.mesh.p[:,nodes[1:]]-basis.mesh.p[:,[nodes[0]]]
+                basis.mesh.p[:,cell_nodes[1:]]-basis.mesh.p[:,[cell_nodes[0]]]
             )
             physical=reference_gradients@np.linalg.inv(jacobian)
             self.gradients[selection]=physical
@@ -75,6 +77,14 @@ class CutCellBasis:
             basis.element_dofs[:,local_cells].T.copy()
             if len(local_cells) else
             np.empty((0,basis.element_dofs.shape[0]),dtype=np.int64)
+        )
+        self.cell_dofs=np.zeros((
+            basis.mesh.nelements,node_count,components
+        ),dtype=np.int64)
+        self.cell_dofs[np.asarray(basis.tind,dtype=np.int64)]=(
+            basis.element_dofs.T.reshape(
+                len(basis.tind),node_count,components
+            )
         )
         # Native form assemblers can consume each flattened point as an entity
         # with one quadrature point.  This is a zero-padding adapter: storage
@@ -89,6 +99,7 @@ class CutCellBasis:
             self.shape,self.gradients,self.quadrature_dofs,self.tind,
             self.dx,self.tabulated_shape,self.tabulated_gradients,
             self.global_coordinates,self.element_dofs,
+            self.cell_dofs,
         ):
             array.flags.writeable=False
 

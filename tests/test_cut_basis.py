@@ -120,6 +120,12 @@ def test_cut_basis_assembles_functional_linear_and_bilinear_forms_natively():
     )
     vector=skfemntv.asm(source,cut_basis,force=np.array([1.]),num_threads=2)
     matrix=skfemntv.asm(reaction_diffusion,cut_basis,num_threads=2)
+    assert type(source._native_cache[cut_basis]._native).__name__==(
+        "CutLinearFormAssembler"
+    )
+    assert type(reaction_diffusion._native_cache[cut_basis]._native).__name__==(
+        "CutBilinearFormAssembler"
+    )
     assert vector.shape==(basis.N,)
     assert matrix.shape==(basis.N,basis.N)
     np.testing.assert_allclose(matrix.toarray(),matrix.toarray().T)

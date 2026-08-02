@@ -528,8 +528,10 @@ point to global element DOFs, and interpolates scalar or vector coefficients
 without constructing padded element-by-quadrature arrays.  `Functional`,
 `LinearForm`, and `BilinearForm` use the same public form syntax and execute in
 the native C++ assemblers, including `num_threads=`.  Each real cut point is
-presented as a one-point native entity; there is no Python assembly fallback or
-zero-weight padding.
+stored once; there is no Python assembly fallback or zero-weight padding.  The
+segmented LinearForm and BilinearForm kernels consume `cell_offsets` directly,
+build DOF/CSR scatter metadata once per active cell, and parallelize cell
+ranges with thread-local vector reduction or race-free CSR coloring.
 
 The supported form subset is intentionally source-compatible with scikit-fem:
 

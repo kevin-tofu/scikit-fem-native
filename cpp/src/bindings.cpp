@@ -11,6 +11,7 @@ PYBIND11_MODULE(_skfn, module) {
     native_fem::bind_supermesh_builder(module);
     native_fem::bind_bilinear_form_assembler(module);
     native_fem::bind_cross_bilinear_assembler(module);
+    native_fem::bind_cut_form_assemblers(module);
     native_fem::bind_basis_geometry(module);
     native_fem::bind_j2_material(module);
     native_fem::bind_linear_elastic_material(module);
