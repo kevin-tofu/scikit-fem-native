@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "skfem-native"
-version = "0.1.3"
+version = "0.1.4"
 description = "A small native assembly engine for nonlinear finite elements"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,7 +36,7 @@ Issues = "https://github.com/kevin-tofu/skfem-native/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8", "scikit-fem>=10", "matplotlib>=3.8"]
-benchmark = ["scikit-fem>=10", "matplotlib>=3.8"]
+benchmark = ["scikit-fem>=10", "shapely>=2", "matplotlib>=3.8"]
 
 [tool.scikit-build]
 wheel.packages = ["python/skfemntv"]

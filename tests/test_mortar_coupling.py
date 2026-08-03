@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from scipy.sparse import csr_matrix,eye
+from skfem.supermeshing import intersect
 
 import skfemntv
 
@@ -9,6 +10,44 @@ def _nonmatching_surface():
     master=np.array([[0.,1.,0.],[0.,0.,1.],[0.,0.,0.]])
     slave=np.array([[0.,1.,0.,.5],[0.,0.,1.,.5],[0.,0.,0.,0.]])
     return master,np.array([[0],[1],[2]]),slave,np.array([[0,0],[1,3],[3,2]])
+
+
+def _grid_surface(cells,reverse=False):
+    axis=np.linspace(0.,1.,cells+1)
+    points=np.asarray([(x,y,0.) for y in axis for x in axis]).T
+    triangles=[]
+    for j in range(cells):
+        for i in range(cells):
+            a=j*(cells+1)+i;b=a+1;c=a+cells+1;d=c+1
+            triangles.extend(
+                ((a,b,c),(b,d,c)) if reverse else ((a,b,d),(a,d,c))
+            )
+    return points,np.asarray(triangles,dtype=np.int64).T
+
+
+def _skfem_slave_facet_p0(master_points,master_triangles,slave_points,slave_triangles):
+    mesh,master_parents,slave_parents=intersect(
+        (master_points[:2],master_triangles),(slave_points[:2],slave_triangles)
+    )
+    matrix=np.zeros((slave_triangles.shape[1],master_points.shape[1]+slave_points.shape[1]))
+    for element,(master_parent,slave_parent) in enumerate(zip(
+        master_parents,slave_parents,strict=True
+    )):
+        overlap=mesh.p[:,mesh.t[:,element]]
+        area=.5*abs(np.linalg.det(np.column_stack((
+            overlap[:,1]-overlap[:,0],overlap[:,2]-overlap[:,0]
+        ))))
+        for points,triangles,parent,offset,sign in (
+            (master_points,master_triangles,master_parent,0,1.),
+            (slave_points,slave_triangles,slave_parent,master_points.shape[1],-1.),
+        ):
+            nodes=triangles[:,int(parent)]
+            barycentric=np.linalg.solve(
+                np.vstack((points[:2,nodes],np.ones(3))),
+                np.vstack((overlap,np.ones(3))),
+            )
+            matrix[int(slave_parent),offset+nodes]+=sign*area*barycentric.mean(axis=1)
+    return matrix
 
 
 def test_public_mortar_result_contains_only_sparse_global_blocks():
@@ -59,6 +98,19 @@ def test_facet_p0_collects_overlap_cells_without_changing_integrals():
     np.testing.assert_allclose(
         slave.coupling_matrix@np.ones(7),0.,atol=2.e-14
     )
+
+
+def test_native_slave_facet_p0_matches_skfem_supermeshing_reference():
+    master_points,master_triangles=_grid_surface(2)
+    slave_points,slave_triangles=_grid_surface(3,reverse=True)
+    native=skfemntv.TriangleSupermesh(
+        master_points,master_triangles,slave_points,slave_triangles
+    ).assemble_mortar("slave_facet_p0").coupling_matrix.toarray()
+    reference=_skfem_slave_facet_p0(
+        master_points,master_triangles,slave_points,slave_triangles
+    )
+
+    np.testing.assert_allclose(native,reference,rtol=2.e-13,atol=2.e-14)
 
 
 def test_multiplier_metadata_maps_compact_rows_to_parent_facets():
@@ -164,6 +216,64 @@ def test_local_dual_basis_is_biorthogonal_on_one_facet():
     offdiagonal=result.slave_matrix.toarray()-np.diag(diagonal)
     np.testing.assert_allclose(offdiagonal,0.,atol=2e-14)
     np.testing.assert_allclose(diagonal,np.full(3,1./6.),atol=2e-14)
+
+
+@pytest.mark.parametrize("space",[
+    "overlap_p0","slave_facet_p0","master_facet_p0",
+    "slave_p1","master_p1","dual",
+])
+def test_vector_nonmatching_mortar_spaces_reproduce_affine_trace(space):
+    master_points,master_triangles=_grid_surface(2)
+    slave_points,slave_triangles=_grid_surface(1,reverse=True)
+    result=skfemntv.TriangleSupermesh(
+        master_points,master_triangles,slave_points,slave_triangles,
+        components=3,
+    ).assemble_mortar(space)
+    gradient=np.array([
+        [.2,-.1,.3],[.1,.4,-.2],[-.3,.2,.1],
+    ])
+    offset=np.array([.4,-.3,.2])
+
+    def affine(points):
+        return (points.T@gradient.T+offset).reshape(-1)
+
+    displacement=np.concatenate((affine(master_points),affine(slave_points)))
+    np.testing.assert_allclose(
+        result.coupling_matrix@displacement,0.,atol=3.e-14
+    )
+
+
+def test_nonmatching_dual_multiplier_has_full_supported_row_rank():
+    master_points,master_triangles=_grid_surface(2)
+    slave_points,slave_triangles=_grid_surface(1,reverse=True)
+    result=skfemntv.TriangleSupermesh(
+        master_points,master_triangles,slave_points,slave_triangles,
+        components=3,
+    ).assemble_mortar("dual")
+    supported=result.multiplier.supported_rows
+    matrix=result.coupling_matrix[supported].toarray()
+
+    assert matrix.shape==(12,39)
+    assert np.linalg.matrix_rank(matrix,tol=1.e-12)==matrix.shape[0]
+
+
+@pytest.mark.parametrize("space",["slave_p1","master_p1","dual"])
+def test_nodal_multiplier_metadata_excludes_unused_surface_nodes(space):
+    master_points,master_triangles=_grid_surface(1)
+    slave_points,slave_triangles=_grid_surface(1,reverse=True)
+    master_points=np.column_stack((master_points,(2.,2.,2.)))
+    slave_points=np.column_stack((slave_points,(-2.,-2.,-2.)))
+    result=skfemntv.TriangleSupermesh(
+        master_points,master_triangles,slave_points,slave_triangles,
+        components=3,
+    ).assemble_mortar(space)
+    supported=result.multiplier.supported_rows
+    unsupported=np.setdiff1d(np.arange(result.coupling_matrix.shape[0]),supported)
+
+    np.testing.assert_array_equal(supported,np.arange(12))
+    np.testing.assert_array_equal(unsupported,np.arange(12,15))
+    assert result.coupling_matrix[supported].shape==(12,30)
+    assert result.coupling_matrix[unsupported].nnz==0
 
 
 def test_trace_data_shares_points_and_has_opposing_normals_and_gradients():
