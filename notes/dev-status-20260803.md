@@ -252,6 +252,15 @@ tests cover constant-jump null modes, symmetric jump penalty, average normal
 flux, and action/reaction linear loads.  Formulation signs, coefficients, and
 penalties remain user-owned.
 
+Because upstream scikit-fem has no direct implicit-cut reference object, these
+tests do not rely only on native-versus-native comparisons.  An independent
+NumPy element-loop oracle assembles all four trace blocks for value/value,
+gradient/gradient, and normal-gradient/value contractions.  Analytic planar
+length/area and moment identities, constant-jump null modes, action/reaction,
+opposite normals, and refinement-invariant planar measure provide additional
+independent checks.  Flattened-versus-segmented native comparisons are treated
+as performance regressions, not the sole correctness oracle.
+
 ### P1 — Arbitrary-point field evaluation
 
 `Basis.interpolate` evaluates at existing quadrature points.  Probes, transfer,
@@ -337,8 +346,8 @@ case requires them:
 2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
 3. Benchmark segmented cut assembly by cut ratio, integration order, and thread
    count, including setup/pattern and repeated-assembly timings.
-4. Add a segmented native cross-trace kernel so high-order implicit-interface
-   rules do not repeat CSR metadata per quadrature point.
+4. Benchmark segmented implicit cross traces by interface size, integration
+   order, contraction kind, and thread count.
 5. Add curved/high-order interface reconstruction with convergence tests.
 
 ## Branch checkpoints

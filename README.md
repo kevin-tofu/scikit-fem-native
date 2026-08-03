@@ -583,6 +583,12 @@ normal is `grad(phi) / |grad(phi)|`; the positive normal is its exact opposite.
 The package supplies traces and contractions but does not prescribe Nitsche
 signs, material weighting, or penalty parameters.
 
+Two-sided cross blocks use a segmented C++ kernel: rectangular CSR patterns,
+scatter maps, and coloring are built once per intersected background cell, not
+once per interface quadrature point.  Correctness is checked against an
+independent NumPy local-assembly oracle because scikit-fem has no direct
+implicit-interface object serving as a complete reference.
+
 The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python

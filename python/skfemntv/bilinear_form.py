@@ -5,6 +5,7 @@ from scipy.sparse import csr_matrix
 
 from ._skfn import (
     BilinearFormAssembler,CrossBilinearAssembler,CutBilinearFormAssembler,
+    CutCrossAssembler,
 )
 
 
@@ -92,21 +93,41 @@ class NativeCrossBilinearForm:
                 "trial and test quadrature coordinates must match"
             )
         entities=test_basis.dx.shape[0]
-        test_dofs=test_basis.element_dofs.T.reshape(
-            entities,len(test_scalar.doflocs),test_components
+        self._cut=(
+            hasattr(test_basis,"cell_offsets")
+            and hasattr(trial_basis,"cell_offsets")
         )
-        trial_dofs=trial_basis.element_dofs.T.reshape(
-            entities,len(trial_scalar.doflocs),trial_components
-        )
-        self._native=CrossBilinearAssembler(
-            np.ascontiguousarray(test_dofs,dtype=np.int64),
-            np.ascontiguousarray(trial_dofs,dtype=np.int64),
-            np.ascontiguousarray(test_basis.tabulated_shape),
-            np.ascontiguousarray(trial_basis.tabulated_shape),
-            np.ascontiguousarray(test_basis.dx),
-            np.ascontiguousarray(test_basis.tabulated_gradients),
-            np.ascontiguousarray(trial_basis.tabulated_gradients),
-        )
+        if self._cut:
+            if not np.array_equal(
+                test_basis.cell_offsets,trial_basis.cell_offsets
+            ):
+                raise ValueError("cut cross bases have different cell offsets")
+            self._native=CutCrossAssembler(
+                np.ascontiguousarray(test_basis.cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(trial_basis.cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(test_basis.cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(test_basis.shape),
+                np.ascontiguousarray(trial_basis.shape),
+                np.ascontiguousarray(test_basis.weights),
+                np.ascontiguousarray(test_basis.gradients),
+                np.ascontiguousarray(trial_basis.gradients),
+            )
+        else:
+            test_dofs=test_basis.element_dofs.T.reshape(
+                entities,len(test_scalar.doflocs),test_components
+            )
+            trial_dofs=trial_basis.element_dofs.T.reshape(
+                entities,len(trial_scalar.doflocs),trial_components
+            )
+            self._native=CrossBilinearAssembler(
+                np.ascontiguousarray(test_dofs,dtype=np.int64),
+                np.ascontiguousarray(trial_dofs,dtype=np.int64),
+                np.ascontiguousarray(test_basis.tabulated_shape),
+                np.ascontiguousarray(trial_basis.tabulated_shape),
+                np.ascontiguousarray(test_basis.dx),
+                np.ascontiguousarray(test_basis.tabulated_gradients),
+                np.ascontiguousarray(trial_basis.tabulated_gradients),
+            )
         self.shape=(test_basis.N,trial_basis.N)
         self.coefficient_shape=test_basis.dx.shape
         self.test_components=test_components
@@ -164,9 +185,10 @@ class NativeCrossBilinearForm:
             row_kind=column_kind=(
                 "gradient" if kind=="gradient" else "value"
             )
-        self._native.assemble(
-            np.ascontiguousarray(coefficient),row_kind,column_kind
+        native_coefficient=np.ascontiguousarray(
+            np.squeeze(coefficient,axis=1) if self._cut else coefficient
         )
+        self._native.assemble(native_coefficient,row_kind,column_kind)
         matrix=csr_matrix(
             (
                 self._native.values,self._native.indices,
@@ -253,8 +275,11 @@ class NativeCrossBilinearForm:
                         tensor[...,component,row_axis,component,column_axis]=(
                             scalar*factor
                         )
+        native_tensor=np.ascontiguousarray(
+            np.squeeze(tensor,axis=1) if self._cut else tensor
+        )
         self._native.assemble(
-            np.ascontiguousarray(tensor),
+            native_tensor,
             "gradient" if row_gradient else "value",
             "gradient" if column_gradient else "value",
         )
