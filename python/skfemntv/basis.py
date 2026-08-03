@@ -39,7 +39,7 @@ class _TopologyMesh:
                 )
             return (
                 ((0,1,4),(1,2,5),(2,3,6),(0,3,7))
-                if full and rows==9 else
+                if full and rows in (8,9) else
                 ((0,1),(1,2),(2,3),(0,3))
             )
         if rows in (4,10):
@@ -65,6 +65,21 @@ class _TopologyMesh:
         if rows==8:
             return ((0,1,4,2),(0,2,6,3),(0,3,5,1),
                     (2,4,7,6),(1,5,7,4),(3,6,7,5))
+        if rows==20:
+            faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
+                   (2,4,7,6),(1,5,7,4),(3,6,7,5))
+            if not full:
+                return faces
+            edges=((0,1),(1,4),(4,2),(2,0),(3,5),(5,7),
+                   (7,6),(6,3),(0,3),(1,5),(4,7),(2,6))
+            edge_node={tuple(sorted(edge)):8+i for i,edge in enumerate(edges)}
+            return tuple(
+                face+tuple(
+                    edge_node[tuple(sorted((face[i],face[(i+1)%4])))]
+                    for i in range(4)
+                )
+                for face in faces
+            )
         index=lambda i,j,k:i+3*j+9*k
         full_faces=(
             tuple(index(i,j,0) for j in range(3) for i in range(3)),
@@ -511,6 +526,47 @@ class MeshQuad2(MeshQuad):
             )
         self._boundaries={}
 
+
+class MeshQuad8(MeshQuad):
+    """Eight-node serendipity quadrilateral mesh."""
+
+    @classmethod
+    def from_mesh(cls,mesh:MeshQuad):
+        points=[mesh.p[:,i].copy() for i in range(mesh.p.shape[1])]
+        edge_nodes={};cells=[]
+        for corners in mesh.t.T:
+            cell=[int(node) for node in corners]
+            for first,second in ((0,1),(1,2),(2,3),(3,0)):
+                edge=tuple(sorted((int(corners[first]),int(corners[second]))))
+                if edge not in edge_nodes:
+                    edge_nodes[edge]=len(points)
+                    points.append(.5*(mesh.p[:,edge[0]]+mesh.p[:,edge[1]]))
+                cell.append(edge_nodes[edge])
+            cells.append(cell)
+        return cls(np.asarray(points).T,np.asarray(cells,dtype=np.int64).T)
+
+    def __init__(self,p=None,t=None):
+        if p is None or t is None:
+            generated=type(self).from_mesh(MeshQuad())
+            self.p,self.t=generated.p,generated.t
+            self._boundaries={}
+            return
+        self.p=np.asarray(p,dtype=np.float64);self.t=np.asarray(t,dtype=np.int64)
+        if self.p.ndim!=2 or self.p.shape[0]!=2 or self.t.ndim!=2 or self.t.shape[0]!=8:
+            raise ValueError("Quad8 mesh requires p (2,n) and t (8,e)")
+        self._boundaries={}
+
+    def _legacy_boundary_facets(self):
+        found={}
+        for nodes in self.t.T:
+            for first,second,midpoint in ((0,1,4),(1,2,5),(2,3,6),(3,0,7)):
+                key=tuple(sorted((int(nodes[first]),int(nodes[second]))))
+                value=(int(nodes[first]),int(nodes[second]),int(nodes[midpoint]))
+                found[key]=None if key in found else value
+        return np.asarray(
+            [value for value in found.values() if value is not None],dtype=np.int64
+        ).T
+
     def _legacy_boundary_facets(self):
         found={}
         for nodes in self.t.T:
@@ -762,10 +818,21 @@ class MeshHex(_TopologyMesh):
         return 3
 
     def _legacy_boundary_facets(self):
-        if self.t.shape[0] == 8:
+        if self.t.shape[0] in (8,20):
             local_faces=((0,1,4,2),(3,6,7,5),(0,3,5,1),
                          (2,4,7,6),(0,2,6,3),(1,5,7,4))
             corners=local_faces
+            if self.t.shape[0]==20:
+                edges=((0,1),(1,4),(4,2),(2,0),(3,5),(5,7),
+                       (7,6),(6,3),(0,3),(1,5),(4,7),(2,6))
+                edge_node={tuple(sorted(edge)):8+i for i,edge in enumerate(edges)}
+                local_faces=tuple(
+                    face+tuple(
+                        edge_node[tuple(sorted((face[i],face[(i+1)%4])))]
+                        for i in range(4)
+                    )
+                    for face in local_faces
+                )
         else:
             index=lambda i,j,k:i+3*j+9*k
             local_faces=(
@@ -827,6 +894,39 @@ class MeshHex2(MeshHex):
         self._boundaries={}
 
 
+class MeshHex20(MeshHex):
+    """Twenty-node serendipity hexahedral mesh."""
+
+    _edges=((0,1),(1,4),(4,2),(2,0),(3,5),(5,7),
+            (7,6),(6,3),(0,3),(1,5),(4,7),(2,6))
+
+    @classmethod
+    def from_mesh(cls,mesh:MeshHex):
+        points=[mesh.p[:,i].copy() for i in range(mesh.p.shape[1])]
+        edge_nodes={};cells=[]
+        for corners in mesh.t.T:
+            cell=[int(node) for node in corners]
+            for first,second in cls._edges:
+                edge=tuple(sorted((int(corners[first]),int(corners[second]))))
+                if edge not in edge_nodes:
+                    edge_nodes[edge]=len(points)
+                    points.append(.5*(mesh.p[:,edge[0]]+mesh.p[:,edge[1]]))
+                cell.append(edge_nodes[edge])
+            cells.append(cell)
+        return cls(np.asarray(points).T,np.asarray(cells,dtype=np.int64).T)
+
+    def __init__(self,p=None,t=None):
+        if p is None or t is None:
+            generated=type(self).from_mesh(MeshHex())
+            self.p,self.t=generated.p,generated.t
+            self._boundaries={}
+            return
+        self.p=np.asarray(p,dtype=np.float64);self.t=np.asarray(t,dtype=np.int64)
+        if self.p.ndim!=2 or self.p.shape[0]!=3 or self.t.ndim!=2 or self.t.shape[0]!=20:
+            raise ValueError("Hex20 mesh requires p (3,n) and t (20,e)")
+        self._boundaries={}
+
+
 class _ComposableElement:
     def __mul__(self,other):
         if isinstance(other,ElementComposite):
@@ -866,6 +966,14 @@ class ElementQuad2(_ComposableElement):
         self.doflocs=np.array([
             [0.,0.],[1.,0.],[1.,1.],[0.,1.],
             [.5,0.],[1.,.5],[.5,1.],[0.,.5],[.5,.5],
+        ])
+
+
+class ElementQuad8(_ComposableElement):
+    def __init__(self):
+        self.doflocs=np.array([
+            [0.,0.],[1.,0.],[1.,1.],[0.,1.],
+            [.5,0.],[1.,.5],[.5,1.],[0.,.5],
         ])
 
 
@@ -939,6 +1047,16 @@ class ElementHex2(_ComposableElement):
             [[x,y,z] for z in (0.,.5,1.) for y in (0.,.5,1.)
              for x in (0.,.5,1.)]
         )
+
+
+class ElementHex20(_ComposableElement):
+    def __init__(self):
+        corners=ElementHex1().doflocs
+        edges=MeshHex20._edges
+        self.doflocs=np.vstack((
+            corners,
+            np.asarray([.5*(corners[a]+corners[b]) for a,b in edges]),
+        ))
 
 
 class ElementVector(_ComposableElement):
@@ -1149,11 +1267,71 @@ def _quad_shapes(points,quadratic):
     return shape,grad
 
 
+def _quad8_shapes(points):
+    points=np.asarray(points,dtype=float);nq=points.shape[1]
+    shape=np.empty((nq,8));grad=np.empty((nq,8,2))
+    signs=((-1.,-1.),(1.,-1.),(1.,1.),(-1.,1.))
+    for q,(x,y) in enumerate(points.T):
+        r,s=2.*x-1.,2.*y-1.
+        for node,(ri,si) in enumerate(signs):
+            a,b=1.+ri*r,1.+si*s;d=ri*r+si*s-1.
+            shape[q,node]=.25*a*b*d
+            grad[q,node]=(
+                .5*ri*b*(d+a),
+                .5*si*a*(d+b),
+            )
+        edge_values=(
+            .5*(1.-r*r)*(1.-s),.5*(1.+r)*(1.-s*s),
+            .5*(1.-r*r)*(1.+s),.5*(1.-r)*(1.-s*s),
+        )
+        edge_gradients=(
+            (-2.*r*(1.-s),-(1.-r*r)),
+            ((1.-s*s),-2.*s*(1.+r)),
+            (-2.*r*(1.+s),(1.-r*r)),
+            (-(1.-s*s),-2.*s*(1.-r)),
+        )
+        shape[q,4:]=edge_values;grad[q,4:]=edge_gradients
+    return shape,grad
+
+
+def _hex20_shapes(points):
+    points=np.asarray(points,dtype=float);nq=points.shape[1]
+    shape=np.empty((nq,20));grad=np.empty((nq,20,3))
+    corner_bits=ElementHex1().doflocs.astype(int)
+    corner_signs=2.*corner_bits-1.
+    edges=MeshHex20._edges
+    for q,coordinate in enumerate(points.T):
+        natural=2.*coordinate-1.
+        for node,signs in enumerate(corner_signs):
+            factors=1.+signs*natural
+            d=float(signs@natural-2.)
+            shape[q,node]=.125*np.prod(factors)*d
+            for axis in range(3):
+                others=np.prod(np.delete(factors,axis))
+                grad[q,node,axis]=.25*signs[axis]*others*(d+factors[axis])
+        for edge_index,(first,second) in enumerate(edges,start=8):
+            first_bits=corner_bits[first];second_bits=corner_bits[second]
+            varying=int(np.flatnonzero(first_bits!=second_bits)[0])
+            fixed=[axis for axis in range(3) if axis!=varying]
+            fixed_signs=corner_signs[first,fixed]
+            edge_factor=1.-natural[varying]**2
+            fixed_factors=1.+fixed_signs*natural[fixed]
+            shape[q,edge_index]=.25*edge_factor*np.prod(fixed_factors)
+            gradient_natural=np.zeros(3)
+            gradient_natural[varying]=-.5*natural[varying]*np.prod(fixed_factors)
+            for local,axis in enumerate(fixed):
+                gradient_natural[axis]=(
+                    .25*edge_factor*fixed_signs[local]*fixed_factors[1-local]
+                )
+            grad[q,edge_index]=2.*gradient_natural
+    return shape,grad
+
+
 def _interior_facets_2d(mesh):
-    is_quad=mesh.t.shape[0] in (4,9)
+    is_quad=mesh.t.shape[0] in (4,8,9)
     if is_quad:
         edges=((0,1),(1,2),(2,3),(3,0))
-        midpoints=(4,5,6,7) if mesh.t.shape[0]==9 else None
+        midpoints=(4,5,6,7) if mesh.t.shape[0] in (8,9) else None
     else:
         edges=((1,2),(2,0),(0,1))
         midpoints=(4,5,3) if mesh.t.shape[0]==6 else None
@@ -1355,6 +1533,8 @@ def _mesh_geometry_shapes(mesh,points):
     nodes=mesh.t.shape[0]
     if mesh.dim()==2 and nodes in (3,6):
         return _simplex_shapes(points,2,nodes==6)
+    if mesh.dim()==2 and nodes==8:
+        return _quad8_shapes(points)
     if mesh.dim()==2:
         return _quad_shapes(points,nodes==9)
     if nodes in (4,10):
@@ -1363,6 +1543,8 @@ def _mesh_geometry_shapes(mesh,points):
         return _wedge_shapes(points)
     if nodes==5:
         return _pyramid_shapes(points)
+    if nodes==20:
+        return _hex20_shapes(points)
     return _hex_shapes(points,nodes==27)
 
 
@@ -1456,11 +1638,11 @@ class Basis:
         base=scalar.elem if isinstance(scalar,ElementDG) else scalar
         supported=(
             ElementTriP0,ElementTriP1,ElementTriP2,
-            ElementQuad0,ElementQuad1,ElementQuad2,
+            ElementQuad0,ElementQuad1,ElementQuad2,ElementQuad8,
             ElementTetP0,ElementTetP1,ElementTetP2,
             ElementWedge1,
             ElementPyramid1,
-            ElementHex0,ElementHex1,ElementHex2,
+            ElementHex0,ElementHex1,ElementHex2,ElementHex20,
         )
         if not isinstance(element,ElementVector) or not isinstance(base,supported):
             raise NotImplementedError(
@@ -1476,13 +1658,15 @@ class Basis:
         )
         self._tri=isinstance(base,(ElementTriP0,ElementTriP1,ElementTriP2))
         self._quadratic_tri=isinstance(base,ElementTriP2)
-        self._quad=isinstance(base,(ElementQuad0,ElementQuad1,ElementQuad2))
+        self._quad=isinstance(base,(ElementQuad0,ElementQuad1,ElementQuad2,ElementQuad8))
         self._quadratic_quad=isinstance(base,ElementQuad2)
+        self._serendipity_quad=isinstance(base,ElementQuad8)
         self._tet=isinstance(base,(ElementTetP0,ElementTetP1,ElementTetP2))
         self._quadratic_tet=isinstance(base,ElementTetP2)
         self._wedge=isinstance(base,ElementWedge1)
         self._pyramid=isinstance(base,ElementPyramid1)
         self._quadratic_hex=isinstance(base,ElementHex2)
+        self._serendipity_hex=isinstance(base,ElementHex20)
         if quadrature is not None:
             self.X,self.W=_validate_quadrature(
                 quadrature,mesh.dim()
@@ -1513,7 +1697,7 @@ class Basis:
                 [1./6.,1./6.,2./3.],
             ])
             self.W=np.full(3,1./6.)
-        elif self._quadratic_quad or (self._quad and intorder>=4):
+        elif self._quadratic_quad or self._serendipity_quad or (self._quad and intorder>=4):
             points,weights=np.polynomial.legendre.leggauss(3)
             points=(points+1.)/2.;weights=weights/2.
             entries=[
@@ -1552,7 +1736,7 @@ class Basis:
                  [.1381966011250105,.1381966011250105,.5854101966249685,.1381966011250105]]
             )
             self.W = np.full(4,1./24.)
-        elif self._quadratic_hex or (
+        elif self._quadratic_hex or self._serendipity_hex or (
             not self._tri and not self._tet and intorder>=4
         ):
             points=np.array([.5-np.sqrt(3./5.)/2.,.5,.5+np.sqrt(3./5.)/2.])
@@ -1991,6 +2175,8 @@ class Basis:
             return mesh.t[:4]
         if isinstance(scalar,ElementQuad2):
             return mesh.t[:9]
+        if isinstance(scalar,ElementQuad8):
+            return mesh.t[:8]
         if isinstance(scalar,ElementTetP1):
             return mesh.t[:4]
         if isinstance(scalar,ElementTetP2):
@@ -2005,6 +2191,8 @@ class Basis:
             return mesh.t[:8]
         if isinstance(scalar,ElementHex2):
             return mesh.t[:27]
+        if isinstance(scalar,ElementHex20):
+            return mesh.t[:20]
         raise NotImplementedError("unsupported scalar element")
 
     def _geometry(self):
@@ -2033,7 +2221,10 @@ class Basis:
                 reference,(self.X.shape[1],3,2)
             )
         elif self._quad:
-            shape,refgrad=_quad_shapes(self.X,self._quadratic_quad)
+            shape,refgrad=(
+                _quad8_shapes(self.X) if self._serendipity_quad
+                else _quad_shapes(self.X,self._quadratic_quad)
+            )
         elif self._quadratic_tet:
             bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
             pairs=((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
@@ -2054,6 +2245,8 @@ class Basis:
             shape,refgrad=_wedge_shapes(self.X)
         elif self._pyramid:
             shape,refgrad=_pyramid_shapes(self.X)
+        elif self._serendipity_hex:
+            shape,refgrad=_hex20_shapes(self.X)
         elif self._quadratic_hex:
             grid=(0.,.5,1.)
             def values(x):
@@ -2218,6 +2411,8 @@ class Basis:
                 return _wedge_shapes(self.X)
             if self._pyramid:
                 return _pyramid_shapes(self.X)
+            if self._serendipity_hex:
+                return _hex20_shapes(self.X)
             if self._quadratic_hex:
                 values=lambda x:np.array([2*(x-.5)*(x-1),4*x*(1-x),2*x*(x-.5)])
                 deriv=lambda x:np.array([4*x-3,4-8*x,4*x-1])
@@ -2288,7 +2483,7 @@ class FacetBasis:
             scalar,(ElementTetP0,ElementTetP1,ElementTetP2)
         )
         quadratic_field=isinstance(
-            scalar,(ElementTetP2,ElementHex2)
+            scalar,(ElementTetP2,ElementHex2,ElementHex20)
         )
         if _interior:
             facet_ids=(
@@ -2308,10 +2503,11 @@ class FacetBasis:
             facets=mesh._facet_connectivity(facet_ids,full=True)
         else:
             facets=np.asarray(facet_ids,dtype=np.int64)
-        quadratic_geometry=mesh.t.shape[0] in (10,27)
+        quadratic_geometry=mesh.t.shape[0] in (10,20,27)
         expected_face_nodes=(
             6 if is_tet and quadratic_geometry else
             3 if is_tet else
+            8 if mesh.t.shape[0]==20 else
             9 if quadratic_geometry else 4
         )
         if facets.shape[0] != expected_face_nodes:
@@ -2429,6 +2625,8 @@ class FacetBasis:
             reference_vertices=(
                 ElementTetP2().doflocs
                 if mesh.t.shape[0]==10 else
+                ElementHex20().doflocs
+                if mesh.t.shape[0]==20 else
                 ElementHex2().doflocs
                 if mesh.t.shape[0]==27 else
                 np.array([[0.,0.,0.],[1.,0.,0.],
@@ -2627,7 +2825,7 @@ class FacetBasis:
             facets=mesh._facet_connectivity(facet_ids,full=True)
         else:
             facets=np.asarray(facet_ids,dtype=np.int64)
-        quadratic_geometry=mesh.t.shape[0] in (6,9)
+        quadratic_geometry=mesh.t.shape[0] in (6,8,9)
         expected=3 if quadratic_geometry else 2
         if facets.shape[0]!=expected:
             facets=facets.T
