@@ -34,6 +34,11 @@ Initial implementation on `dev`:
   an explicit error until a sparse rank-revealing backend replaces it.
 - The matching 2x2 vector overlap-P0 regression reduces 24 raw rows to rank 21
   while preserving the affine patch field.
+- Backend selection now prefers `sksparse.spqr`, then `sparseqr`, and uses the
+  guarded SciPy dense reference only when neither optional sparse backend is
+  available.  Diagnostics record the selected backend, fallback reason, and
+  reduction time.  Sparse-backend tests verify that the dense path is not
+  entered when the dense row guard is exceeded.
 
 ## Priority 2: compact trace DOFs
 

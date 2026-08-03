@@ -1,5 +1,7 @@
 import numpy as np
 import pytest
+import sys
+from types import SimpleNamespace
 from scipy.sparse import csr_matrix,eye
 from skfem.supermeshing import intersect
 
@@ -276,6 +278,8 @@ def test_global_qr_removes_cross_facet_overlap_dependencies():
     assert reduced.reduction.supported_row_count==24
     assert reduced.reduction.independent_row_count==21
     assert reduced.reduction.numerical_rank==21
+    assert reduced.reduction.elapsed_seconds>=0.
+    assert reduced.reduction.fallback_reason is not None
     assert not reduced.reduction.selected_raw_rows.flags.writeable
     assert np.linalg.matrix_rank(
         reduced.coupling_matrix.toarray(),tol=1.e-10
@@ -300,6 +304,25 @@ def test_global_qr_dense_reference_requires_explicit_size_guard():
         supermesh.assemble_mortar(
             "overlap_p0",reduction="global_qr",dense_reduction_max_rows=23
         )
+
+
+def test_global_qr_prefers_sparseqr_without_dense_allocation(monkeypatch):
+    points,triangles=_grid_surface(1)
+
+    def sparse_qr(matrix,**kwargs):
+        assert matrix.shape==(24,6)
+        return None,None,np.arange(6,dtype=np.int64),6
+
+    monkeypatch.setitem(sys.modules,"sparseqr",SimpleNamespace(qr=sparse_qr))
+    result=skfemntv.TriangleSupermesh(
+        points,triangles,points,triangles,components=3
+    ).assemble_mortar(
+        "overlap_p0",reduction="global_qr",dense_reduction_max_rows=1
+    )
+
+    assert result.reduction.backend=="sparseqr"
+    assert result.reduction.independent_row_count==6
+    assert "sksparse.spqr" in result.reduction.fallback_reason
 
 
 @pytest.mark.parametrize("space",["slave_p1","master_p1","dual"])

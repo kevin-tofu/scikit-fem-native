@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 from scipy.linalg import qr
@@ -302,9 +303,72 @@ class MortarReductionDiagnostics:
     independent_row_count: int
     numerical_rank: int
     selected_raw_rows: np.ndarray
+    elapsed_seconds: float = 0.
+    fallback_reason: str | None = None
 
     def __post_init__(self):
         self.selected_raw_rows.flags.writeable=False
+
+
+def _spqr_tolerance(matrix,tolerance):
+    norms=np.sqrt(matrix.multiply(matrix).sum(axis=1)).A.ravel()
+    scale=float(norms.max(initial=0.))
+    return float(tolerance*scale if tolerance<1. and scale else tolerance)
+
+
+def _spqr_selected_rows(matrix,permutation,rank):
+    pivots=np.asarray(permutation,dtype=np.int64).ravel()
+    if len(pivots)!=matrix.shape[0]:
+        raise ValueError("SPQR returned an invalid row permutation")
+    return np.sort(pivots[:max(0,min(int(rank),matrix.shape[0]))])
+
+
+def _global_qr_rows(matrix,tolerance,dense_max_rows):
+    """Return independent row indices, backend, and optional fallback reason."""
+    absolute_tolerance=_spqr_tolerance(matrix,tolerance)
+    failures=[]
+    try:
+        from sksparse.spqr import spqr
+        factorization=spqr(
+            matrix.T.tocsc(),mode="r",order="default",tol=absolute_tolerance
+        )
+        if len(factorization)==2:
+            factor,permutation=factorization
+        elif len(factorization)==3:
+            _q,factor,permutation=factorization
+        else:
+            raise TypeError("unsupported sksparse.spqr result")
+        diagonal=np.abs(np.asarray(factor.diagonal(),dtype=float))
+        rank=int(np.count_nonzero(diagonal>absolute_tolerance))
+        return _spqr_selected_rows(matrix,permutation,rank),"sksparse-spqr",None
+    except Exception as exc:
+        failures.append(f"sksparse.spqr: {type(exc).__name__}")
+    try:
+        import sparseqr
+        _q,_r,permutation,rank=sparseqr.qr(
+            matrix.T.tocsc(),economy=True,tolerance=absolute_tolerance
+        )
+        return (
+            _spqr_selected_rows(matrix,permutation,rank),"sparseqr",
+            "; ".join(failures),
+        )
+    except Exception as exc:
+        failures.append(f"sparseqr: {type(exc).__name__}")
+    if matrix.shape[0]>dense_max_rows:
+        raise ValueError(
+            "global_qr sparse backends are unavailable and dense reference "
+            "exceeds dense_reduction_max_rows ("+"; ".join(failures)+")"
+        )
+    active_columns=np.unique(matrix.indices).astype(np.int64)
+    dense=matrix[:,active_columns].toarray()
+    _q,factor,pivots=qr(
+        dense.T,mode="economic",pivoting=True,check_finite=False
+    )
+    diagonal=np.abs(np.diag(factor))
+    scale=float(diagonal.max(initial=0.))
+    rank=int(np.count_nonzero(diagonal>tolerance*scale))
+    selected=np.sort(np.asarray(pivots[:rank],dtype=np.int64))
+    return selected,"scipy-dense-pivoted-qr","; ".join(failures)
 
 
 @dataclass(frozen=True)
@@ -1122,21 +1186,12 @@ class TriangleSupermesh:
         )
         reduction_diagnostics=None
         if reduction=="global_qr":
-            if len(supported_rows)>dense_reduction_max_rows:
-                raise ValueError(
-                    "global_qr dense reference exceeds dense_reduction_max_rows; "
-                    "use reduction='none' or a larger explicit guard"
-                )
+            started=time.perf_counter()
             supported=coupling[supported_rows].tocsr()
-            active_columns=np.unique(supported.indices).astype(np.int64)
-            dense=supported[:,active_columns].toarray()
-            _q,factor,pivots=qr(
-                dense.T,mode="economic",pivoting=True,check_finite=False
+            selected_supported,backend,fallback_reason=_global_qr_rows(
+                supported,rank_tolerance,dense_reduction_max_rows
             )
-            diagonal=np.abs(np.diag(factor))
-            scale=float(diagonal.max(initial=0.))
-            rank=int(np.count_nonzero(diagonal>rank_tolerance*scale))
-            selected_supported=np.asarray(pivots[:rank],dtype=np.int64)
+            rank=len(selected_supported)
             selected_raw=np.asarray(
                 supported_rows[selected_supported],dtype=np.int64
             )
@@ -1155,9 +1210,9 @@ class TriangleSupermesh:
                 np.arange(rank,dtype=np.int64),
             )
             reduction_diagnostics=MortarReductionDiagnostics(
-                "global_qr","scipy-dense-pivoted-qr",float(rank_tolerance),
+                "global_qr",backend,float(rank_tolerance),
                 int(len(row_entities)),int(len(supported_rows)),rank,rank,
-                selected_raw,
+                selected_raw,time.perf_counter()-started,fallback_reason,
             )
         return MortarCouplingResult(
             master_matrix,slave_matrix,coupling,
