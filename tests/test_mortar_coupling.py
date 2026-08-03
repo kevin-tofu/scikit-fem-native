@@ -257,6 +257,51 @@ def test_nonmatching_dual_multiplier_has_full_supported_row_rank():
     assert np.linalg.matrix_rank(matrix,tol=1.e-12)==matrix.shape[0]
 
 
+def test_global_qr_removes_cross_facet_overlap_dependencies():
+    points,triangles=_grid_surface(2)
+    supermesh=skfemntv.TriangleSupermesh(
+        points,triangles,points,triangles,components=3
+    )
+    raw=supermesh.assemble_mortar("overlap_p0")
+    reduced=supermesh.assemble_mortar(
+        "overlap_p0",reduction="global_qr",rank_tolerance=1.e-10
+    )
+
+    assert raw.coupling_matrix.shape==(24,54)
+    assert reduced.coupling_matrix.shape==(21,54)
+    assert reduced.multiplier.row_count==21
+    np.testing.assert_array_equal(reduced.multiplier.supported_rows,np.arange(21))
+    assert reduced.reduction.method=="global_qr"
+    assert reduced.reduction.raw_row_count==24
+    assert reduced.reduction.supported_row_count==24
+    assert reduced.reduction.independent_row_count==21
+    assert reduced.reduction.numerical_rank==21
+    assert not reduced.reduction.selected_raw_rows.flags.writeable
+    assert np.linalg.matrix_rank(
+        reduced.coupling_matrix.toarray(),tol=1.e-10
+    )==21
+
+    gradient=np.array([
+        [.2,-.1,.3],[.1,.4,-.2],[-.3,.2,.1],
+    ])
+    displacement=(points.T@gradient.T+np.array([.4,-.3,.2])).reshape(-1)
+    np.testing.assert_allclose(
+        reduced.coupling_matrix@np.concatenate((displacement,displacement)),
+        0.,atol=3.e-14,
+    )
+
+
+def test_global_qr_dense_reference_requires_explicit_size_guard():
+    points,triangles=_grid_surface(2)
+    supermesh=skfemntv.TriangleSupermesh(
+        points,triangles,points,triangles,components=3
+    )
+    with pytest.raises(ValueError,match="dense_reduction_max_rows"):
+        supermesh.assemble_mortar(
+            "overlap_p0",reduction="global_qr",dense_reduction_max_rows=23
+        )
+
+
 @pytest.mark.parametrize("space",["slave_p1","master_p1","dual"])
 def test_nodal_multiplier_metadata_excludes_unused_surface_nodes(space):
     master_points,master_triangles=_grid_surface(1)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.linalg import qr
 from scipy.sparse import bmat, csr_matrix, hstack, isspmatrix_csr
 
 from .basis import DiscreteField
@@ -290,6 +291,23 @@ class MortarMultiplierMetadata:
 
 
 @dataclass(frozen=True)
+class MortarReductionDiagnostics:
+    """Rank-reduction accounting for a solver-ready Mortar block."""
+
+    method: str
+    backend: str
+    tolerance: float
+    raw_row_count: int
+    supported_row_count: int
+    independent_row_count: int
+    numerical_rank: int
+    selected_raw_rows: np.ndarray
+
+    def __post_init__(self):
+        self.selected_raw_rows.flags.writeable=False
+
+
+@dataclass(frozen=True)
 class MortarKKTBlocks:
     """Solver-independent ``K``/``C`` blocks without a monolithic KKT matrix."""
 
@@ -344,6 +362,7 @@ class MortarCouplingResult:
     overlap_area: float
     diagnostics: SupermeshDiagnostics
     multiplier: MortarMultiplierMetadata
+    reduction: MortarReductionDiagnostics | None = None
 
     def kkt_blocks(
         self,primal_matrix,primal_rhs,*,constraint_rhs=None,rows=None,
@@ -970,6 +989,7 @@ class TriangleSupermesh:
 
     def assemble_mortar(
         self,multiplier="slave",*,dual_side="slave",num_threads=None,
+        reduction="none",rank_tolerance=1.e-10,dense_reduction_max_rows=4096,
     ):
         """Assemble sparse mortar blocks for a selected multiplier space.
 
@@ -978,6 +998,11 @@ class TriangleSupermesh:
         or ``"dual"``.  Facet-P0 rows collect every overlap contribution
         belonging to one parent facet.  The dual basis is formed from small
         facet-local Gram matrices; no multiplier-sized dense matrix is formed.
+
+        ``reduction="global_qr"`` selects a globally independent subset of
+        supported rows.  Its dense pivoted-QR backend is a guarded correctness
+        reference and raises above ``dense_reduction_max_rows`` rather than
+        silently allocating a multiplier-sized dense matrix.
         """
         aliases={
             "slave_p1":"slave","master_p1":"master","p0":"overlap_p0",
@@ -995,6 +1020,12 @@ class TriangleSupermesh:
             )
         if dual_side not in {"slave","master"}:
             raise ValueError("dual_side must be slave or master")
+        if reduction not in {"none","global_qr"}:
+            raise ValueError("reduction must be none or global_qr")
+        if rank_tolerance<=0.:
+            raise ValueError("rank_tolerance must be positive")
+        if dense_reduction_max_rows<1:
+            raise ValueError("dense_reduction_max_rows must be positive")
         master_components=self._row_dofs.shape[2]
         slave_components=self._column_dofs.shape[2]
         if master_components!=slave_components:
@@ -1089,9 +1120,49 @@ class TriangleSupermesh:
             np.asarray(entity_ids,dtype=np.int64),row_entities,
             row_components,supported_rows,
         )
+        reduction_diagnostics=None
+        if reduction=="global_qr":
+            if len(supported_rows)>dense_reduction_max_rows:
+                raise ValueError(
+                    "global_qr dense reference exceeds dense_reduction_max_rows; "
+                    "use reduction='none' or a larger explicit guard"
+                )
+            supported=coupling[supported_rows].tocsr()
+            active_columns=np.unique(supported.indices).astype(np.int64)
+            dense=supported[:,active_columns].toarray()
+            _q,factor,pivots=qr(
+                dense.T,mode="economic",pivoting=True,check_finite=False
+            )
+            diagonal=np.abs(np.diag(factor))
+            scale=float(diagonal.max(initial=0.))
+            rank=int(np.count_nonzero(diagonal>rank_tolerance*scale))
+            selected_supported=np.asarray(pivots[:rank],dtype=np.int64)
+            selected_raw=np.asarray(
+                supported_rows[selected_supported],dtype=np.int64
+            )
+            master_matrix=csr_matrix(master_matrix[selected_raw])
+            slave_matrix=csr_matrix(slave_matrix[selected_raw])
+            coupling=csr_matrix(coupling[selected_raw])
+            selected_entity_ids=entity_ids[row_entities[selected_raw]]
+            compact_entities,inverse=np.unique(
+                selected_entity_ids,return_inverse=True
+            )
+            metadata=MortarMultiplierMetadata(
+                multiplier,entity_kind,metadata_side,
+                np.asarray(compact_entities,dtype=np.int64),
+                np.asarray(inverse,dtype=np.int64),
+                np.asarray(row_components[selected_raw],dtype=np.int64),
+                np.arange(rank,dtype=np.int64),
+            )
+            reduction_diagnostics=MortarReductionDiagnostics(
+                "global_qr","scipy-dense-pivoted-qr",float(rank_tolerance),
+                int(len(row_entities)),int(len(supported_rows)),rank,rank,
+                selected_raw,
+            )
         return MortarCouplingResult(
             master_matrix,slave_matrix,coupling,
             self.diagnostics.overlap_area,self.diagnostics,metadata,
+            reduction_diagnostics,
         )
 
     def _assemble_mortar_block(
