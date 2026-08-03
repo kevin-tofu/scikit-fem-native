@@ -92,6 +92,7 @@ from .runtime import (
 )
 from .material import (
     J2Assembler,J2Evaluation,J2Plasticity,J2State,MaterialAssembler,
+    MaterialStateHistory,
     MaterialState,
     StandardLinearSolid,StandardLinearSolidEvaluation,
     StandardLinearSolidState,
@@ -120,6 +121,7 @@ __all__ = [
     "J2Assembler",
     "J2Plasticity",
     "J2State",
+    "MaterialStateHistory",
     "MaterialAssembler",
     "MaterialState",
     "StandardLinearSolid",

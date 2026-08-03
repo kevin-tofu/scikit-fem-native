@@ -33,6 +33,60 @@ class MaterialState:
     def storage(self):
         return self._storage
 
+    def copy(self,*,readonly=False):
+        storage=np.array(self._storage,dtype=np.float64,order="C",copy=True)
+        if readonly:
+            storage.flags.writeable=False
+        return type(self)._from_storage(storage)
+
+
+class MaterialStateHistory:
+    """Explicit committed/trial state owner for nonlinear load stepping."""
+
+    def __init__(self,initial_state: MaterialState):
+        if not isinstance(initial_state,MaterialState):
+            raise TypeError("initial_state must be a MaterialState")
+        self._state_type=type(initial_state)
+        self._committed=initial_state.copy(readonly=True)
+        self._trial=None
+        self._commit_count=0
+
+    @property
+    def committed(self):
+        return self._committed
+
+    @property
+    def trial(self):
+        return self._trial
+
+    @property
+    def commit_count(self):
+        return self._commit_count
+
+    def stage(self,trial_state: MaterialState):
+        if not isinstance(trial_state,self._state_type):
+            raise TypeError(
+                f"trial_state must be a {self._state_type.__name__}"
+            )
+        if trial_state.storage.shape!=self._committed.storage.shape:
+            raise ValueError(
+                "trial_state shape differs from committed state"
+            )
+        self._trial=trial_state.copy(readonly=True)
+        return self._trial
+
+    def commit(self):
+        if self._trial is None:
+            raise RuntimeError("no trial state has been staged")
+        self._committed=self._trial
+        self._trial=None
+        self._commit_count+=1
+        return self._committed
+
+    def rollback(self):
+        self._trial=None
+        return self._committed
+
 
 class J2State(MaterialState):
     """Named views over a contiguous ``(points, 7)`` native state buffer."""
@@ -265,6 +319,23 @@ class MaterialAssembler:
                 (self.state_count,self.material.state_size),dtype=np.float64
             )
         )
+
+    def initial_history(self):
+        return MaterialStateHistory(self.initial_state())
+
+    def assemble_trial(
+        self,u: np.ndarray,history: MaterialStateHistory,**kwargs,
+    ) -> NativeEvaluation:
+        """Evaluate from committed state and stage, but do not commit, trial state."""
+        if not isinstance(history,MaterialStateHistory):
+            raise TypeError("history must be a MaterialStateHistory")
+        if not isinstance(history.committed,self._state_type):
+            raise TypeError(
+                "history state type is incompatible with this assembler"
+            )
+        result=self.assemble(u,history.committed,**kwargs)
+        history.stage(result.trial_state)
+        return result
 
     def assemble(
         self,u: np.ndarray,state: MaterialState,*,

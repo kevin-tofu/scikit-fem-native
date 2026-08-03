@@ -19,5 +19,5 @@ class EvaluationDiagnostics:
 class NativeEvaluation:
     residual: np.ndarray
     tangent: Any | None
-    trial_state: None
+    trial_state: Any | None
     diagnostics: EvaluationDiagnostics
