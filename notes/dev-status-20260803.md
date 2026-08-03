@@ -269,6 +269,14 @@ case, cross setup becomes 1.14--1.42x faster for orders 2--6 while repeated
 assembly remains roughly equal to the flattened kernel.  This is recorded as a
 metadata-scaling improvement, not claimed as a large arithmetic speedup.
 
+A deterministic geometry-invariant suite now covers every nonzero Tri3/Tet4
+nodal sign pattern, randomized Tet planes, positive weights, finite arrays, CSR
+offset integrity, inside/outside measure partition, global node relabeling,
+rigid transforms, uniform scaling, transformed first moments, and normal
+covariance.  Circle area/perimeter and sphere volume/surface errors decrease
+under refinement.  The tests compare physical invariants rather than requiring
+an arbitrary polygon triangulation to preserve quadrature-point ordering.
+
 ### P1 — Arbitrary-point field evaluation
 
 `Basis.interpolate` evaluates at existing quadrature points.  Probes, transfer,

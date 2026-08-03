@@ -589,6 +589,12 @@ once per interface quadrature point.  Correctness is checked against an
 independent NumPy local-assembly oracle because scikit-fem has no direct
 implicit-interface object serving as a complete reference.
 
+Geometry regression tests additionally enumerate all simplex sign patterns and
+exercise randomized planes, rigid transforms, scaling, node relabeling,
+inside/outside conservation, and circle/sphere refinement.  Quadrature-point
+ordering is not treated as physical data; measures, moments, normals, and
+assembled operators are the invariants.
+
 The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python
