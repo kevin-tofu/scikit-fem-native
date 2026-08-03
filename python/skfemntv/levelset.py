@@ -287,9 +287,9 @@ class LevelSet:
     ) -> CutCellQuadrature:
         """Integrate a reconstructed level-set side on simplex cells.
 
-        Tri6 uses its four P1 subtriangles, preserving its quadratic nodal
-        level-set samples without introducing curved geometry.  Curved Tri6
-        geometry is rejected explicitly.
+        Tri6 and Tet10 use four P1 subtriangles or eight P1 subtetrahedra,
+        preserving quadratic nodal level-set samples without introducing
+        curved geometry.  Curved quadratic geometry is rejected explicitly.
         """
         if side not in ("inside","outside"):
             raise ValueError("cut-quadrature side must be 'inside' or 'outside'")
@@ -302,11 +302,11 @@ class LevelSet:
         node_count=int(mesh.t.shape[0])
         if not (
             (dimension==2 and node_count in (3,6))
-            or (dimension==3 and node_count==4)
+            or (dimension==3 and node_count in (4,10))
         ):
             raise NotImplementedError(
                 "cut quadrature currently supports affine Tri3, straight-sided "
-                "Tri6, and affine Tet4 meshes"
+                "Tri6, affine Tet4, and straight-sided Tet10 meshes"
             )
         subcells=_simplex_subcells(mesh)
         values=self.values(mesh)
@@ -389,9 +389,9 @@ class LevelSet:
     ) -> ImplicitInterfaceQuadrature:
         """Reconstruct interfaces in supported simplex cells.
 
-        A straight-sided Tri6 is reconstructed piecewise-linearly on its four
-        P1 subtriangles.  This retains P2 level-set nodal information while
-        keeping the geometry and storage model explicit.
+        Straight-sided Tri6/Tet10 cells are reconstructed piecewise-linearly
+        on four P1 subtriangles or eight P1 subtetrahedra.  This retains P2
+        level-set nodal information while keeping geometry and storage explicit.
         """
         if isinstance(intorder,bool) or not isinstance(intorder,(int,np.integer)):
             raise TypeError("interface-quadrature intorder must be an integer")
@@ -401,11 +401,12 @@ class LevelSet:
         dimension=int(mesh.dim());node_count=int(mesh.t.shape[0])
         if not (
             (dimension==2 and node_count in (3,6))
-            or (dimension==3 and node_count==4)
+            or (dimension==3 and node_count in (4,10))
         ):
             raise NotImplementedError(
                 "implicit interface quadrature currently supports affine "
-                "Tri3, straight-sided Tri6, and affine Tet4 meshes"
+                "Tri3, straight-sided Tri6, affine Tet4, and straight-sided "
+                "Tet10 meshes"
             )
         subcells=_simplex_subcells(mesh)
         values=self.values(mesh)
@@ -434,9 +435,10 @@ class LevelSet:
                         f"level-set interface is not unique in cell {cell}, "
                         f"subcell {subcell}: all nodal values are within tolerance"
                     )
-                if node_count==6 and zero_count>=2:
+                if node_count in (6,10) and zero_count>=dimension:
                     raise ValueError(
-                        f"level-set interface coincides with a Tri6 subcell edge "
+                        f"level-set interface coincides with a quadratic "
+                        f"simplex subcell facet "
                         f"in cell {cell}, subcell {subcell}; perturb the level "
                         "set or refine the mesh"
                     )
@@ -503,7 +505,7 @@ def _simplex_subcells(mesh):
     dimension=int(mesh.dim())
     node_count=int(mesh.t.shape[0])
     if dimension==2 and node_count==6:
-        _validate_straight_tri6(mesh)
+        _validate_straight_quadratic_simplex(mesh)
         parent=np.array([
             [0.,0.],[1.,0.],[0.,1.],
             [.5,0.],[.5,.5],[0.,.5],
@@ -513,18 +515,38 @@ def _simplex_subcells(mesh):
             (np.asarray(nodes,dtype=np.int64),parent[np.asarray(nodes)])
             for nodes in connectivity
         )
+    if dimension==3 and node_count==10:
+        _validate_straight_quadratic_simplex(mesh)
+        parent=np.array([
+            [0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.],
+            [.5,0.,0.],[.5,.5,0.],[0.,.5,0.],
+            [0.,0.,.5],[.5,0.,.5],[0.,.5,.5],
+        ])
+        connectivity=(
+            (0,4,6,7),(1,5,4,8),(2,6,5,9),(3,7,8,9),
+            (4,5,6,9),(4,5,8,9),(4,7,8,9),(4,6,7,9),
+        )
+        return tuple(
+            (np.asarray(nodes,dtype=np.int64),parent[np.asarray(nodes)])
+            for nodes in connectivity
+        )
     canonical=np.vstack((np.zeros((1,dimension)),np.eye(dimension)))
     return ((np.arange(dimension+1,dtype=np.int64),canonical),)
 
 
-def _validate_straight_tri6(mesh):
-    expected=np.stack((
-        .5*(mesh.p[:,mesh.t[0]]+mesh.p[:,mesh.t[1]]),
-        .5*(mesh.p[:,mesh.t[1]]+mesh.p[:,mesh.t[2]]),
-        .5*(mesh.p[:,mesh.t[0]]+mesh.p[:,mesh.t[2]]),
+def _validate_straight_quadratic_simplex(mesh):
+    if mesh.t.shape[0]==6:
+        edges=((0,1),(1,2),(0,2))
+        name="Tri6"
+    else:
+        edges=((0,1),(1,2),(0,2),(0,3),(1,3),(2,3))
+        name="Tet10"
+    expected=np.stack(tuple(
+        .5*(mesh.p[:,mesh.t[a]]+mesh.p[:,mesh.t[b]]) for a,b in edges
     ),axis=1)
-    actual=np.stack((
-        mesh.p[:,mesh.t[3]],mesh.p[:,mesh.t[4]],mesh.p[:,mesh.t[5]],
+    actual=np.stack(tuple(
+        mesh.p[:,mesh.t[index]]
+        for index in range(int(mesh.dim())+1,int(mesh.dim())+1+len(edges))
     ),axis=1)
     scale=max(1.,float(np.max(np.abs(mesh.p),initial=0.)))
     tolerance=128.*np.finfo(np.float64).eps*scale
@@ -533,7 +555,7 @@ def _validate_straight_tri6(mesh):
     if len(bad):
         cell=int(bad[0])
         raise NotImplementedError(
-            f"curved Tri6 geometry is not supported: cell {cell} has "
+            f"curved {name} geometry is not supported: cell {cell} has "
             f"mid-edge deviation {error[cell]:.6e} exceeding {tolerance:.6e}"
         )
 

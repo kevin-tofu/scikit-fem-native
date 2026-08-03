@@ -3,7 +3,8 @@ from __future__ import annotations
 import numpy as np
 
 from .basis import (
-    Basis,DiscreteField,ElementTetP1,ElementTriP1,ElementTriP2,ElementVector,
+    Basis,DiscreteField,ElementTetP1,ElementTetP2,ElementTriP1,ElementTriP2,
+    ElementVector,
 )
 from .levelset import CutCellQuadrature,ImplicitInterfaceQuadrature
 
@@ -29,11 +30,12 @@ class CutCellBasis:
             isinstance(scalar,ElementTriP1) and node_count==3
             or isinstance(scalar,ElementTriP2) and node_count==6
             or isinstance(scalar,ElementTetP1) and node_count==4
+            or isinstance(scalar,ElementTetP2) and node_count==10
         )
         if not supported:
             raise NotImplementedError(
                 "CutCellBasis currently supports vector-wrapped TriP1, "
-                "straight-sided TriP2, and TetP1"
+                "straight-sided TriP2, TetP1, and straight-sided TetP2"
             )
         components=basis.elem._dim
         positions={int(cell):local for local,cell in enumerate(basis.tind)}
@@ -203,5 +205,24 @@ def _tabulate_reference(element,points):
         gradients[:,5]=4.*(
             bary[:,0,None]*dbary[2]+bary[:,2,None]*dbary[0]
         )
+        return shape,gradients
+    if isinstance(element,ElementTetP2):
+        bary=np.column_stack((1.-points.sum(axis=1),points))
+        dbary=np.vstack((-np.ones(3),np.eye(3)))
+        shape=np.empty((len(points),10),dtype=np.float64)
+        gradients=np.empty((len(points),10,3),dtype=np.float64)
+        for index in range(4):
+            shape[:,index]=bary[:,index]*(2.*bary[:,index]-1.)
+            gradients[:,index]=(
+                (4.*bary[:,index]-1.)[:,None]*dbary[index]
+            )
+        for local,(first,second) in enumerate(
+            ((0,1),(1,2),(0,2),(0,3),(1,3),(2,3)),start=4
+        ):
+            shape[:,local]=4.*bary[:,first]*bary[:,second]
+            gradients[:,local]=4.*(
+                bary[:,first,None]*dbary[second]
+                +bary[:,second,None]*dbary[first]
+            )
         return shape,gradients
     raise NotImplementedError("unsupported cut-cell reference element")

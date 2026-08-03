@@ -498,7 +498,8 @@ does not construct quadrature.  `ghost_facets` is only the active-interior
 candidate set incident to cut cells; stabilization layers, penalty parameters,
 and the weak form remain user choices.
 
-Affine Tri3/Tet4 and straight-sided Tri6 meshes provide cut-volume quadrature:
+Affine Tri3/Tet4 and straight-sided Tri6/Tet10 meshes provide cut-volume
+quadrature:
 
 ```python
 inside = level_set.cut_quadrature(mesh, side="inside", intorder=2)
@@ -522,10 +523,11 @@ and consistently oriented level-set normals are immutable local arrays.  The
 Order one integrates constant and linear physical fields exactly.  Order two
 uses positive standard simplex rules, and higher orders use positive
 Duffy-transformed Gauss rules.  A straight-sided Tri6 is divided into four P1
-subtriangles: this piecewise-linear reconstruction uses every P2 level-set
-sample while returning parent-reference coordinates for TriP2 evaluation.
-Curved Tri6 geometry is rejected with the cell ID and mid-edge deviation.
-`CutCellBasis` tabulates TriP1, TriP2, or TetP1 shape values and physical
+subtriangles; Tet10 similarly uses eight P1 subtetrahedra.  This piecewise-linear
+reconstruction uses every P2 level-set sample while returning parent-reference
+coordinates for P2 evaluation.  Curved Tri6/Tet10 geometry is rejected with
+the cell ID and mid-edge deviation.  `CutCellBasis` tabulates TriP1, TriP2,
+TetP1, or TetP2 shape values and physical
 gradients directly on the flattened rule, maps every point to global element
 DOFs, and interpolates scalar or vector coefficients without padded
 element-by-quadrature arrays.  `Functional`,
@@ -537,7 +539,7 @@ build DOF/CSR scatter metadata once per active cell, and parallelize cell
 ranges with thread-local vector reduction or race-free CSR coloring.
 
 Implicit-interface quadrature is available on the same Tri3, straight-sided
-Tri6, and Tet4 background meshes:
+Tri6, Tet4, and straight-sided Tet10 background meshes:
 
 ```python
 interface_rule = level_set.interface_quadrature(mesh, intorder=2)
@@ -553,8 +555,9 @@ moment = skfem.asm(flux_moment, interface_basis)
 ```
 
 Tri3 cells reconstruct a line segment; Tri6 reconstructs up to four segments
-from its P1 subtriangles; Tet cells reconstruct and locally
-triangulate a triangular or quadrilateral section.  CSR offsets retain the
+from its P1 subtriangles; Tet4/Tet10 cells reconstruct and locally triangulate
+triangular or quadrilateral sections (piecewise across Tet10 subtetrahedra).
+CSR offsets retain the
 background cell association without padding.  Surface weights are positive,
 and `w.n` is the normalized level-set gradient, oriented from negative-inside
 to positive-outside.  Cells whose level set is zero at every node are rejected

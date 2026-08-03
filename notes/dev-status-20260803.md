@@ -211,9 +211,10 @@ are available without imposing a CutFEM formulation.  Cut-volume and
 implicit-interface quadrature remain separate stages.
 
 Cut-volume integration is implemented for affine Tri3/Tet4 and straight-sided
-Tri6 cells.  Tri6 uses four P1 subtriangles so all quadratic level-set nodal
-samples influence the reconstructed cut while points remain in the parent
-reference frame.  Curved Tri6 geometry is rejected diagnostically.
+Tri6/Tet10 cells.  Tri6 uses four P1 subtriangles and Tet10 uses eight P1
+subtetrahedra, so all quadratic level-set nodal samples influence the
+reconstructed cut while points remain in the parent reference frame.  Curved
+quadratic simplex geometry is rejected diagnostically.
 `CutCellQuadrature` stores CSR-like cell offsets, physical/reference points,
 positive physical weights, background cell IDs, and oriented level-set normals
 with memory proportional to generated quadrature points.  Inside and outside
@@ -224,7 +225,7 @@ the CSR storage.  True curved geometry remains intentionally unsupported
 rather than silently approximated.
 
 `CutCellBasis` is implemented as the first variable-quadrature assembly
-geometry provider.  It tabulates affine TriP1/TriP2/TetP1 shape values and physical
+geometry provider.  It tabulates affine TriP1/TriP2/TetP1/TetP2 shape values and physical
 gradients at flattened cut points, maps each point to global parent-element
 DOFs, supports restricted parent bases, and interpolates scalar/vector fields.
 It does not pad cells to a common point count.  Functional uses the flattened
@@ -237,7 +238,7 @@ support per-call thread selection.  Full-domain regression tests match regular
 Basis assembly, and cut-domain serial/parallel matrices agree.
 
 Implicit-interface reconstruction is implemented for affine Tri3/Tet4 and
-straight-sided Tri6 backgrounds.  `ImplicitInterfaceQuadrature` represents
+straight-sided Tri6/Tet10 backgrounds.  `ImplicitInterfaceQuadrature` represents
 line segments (piecewise segments for Tri6) and
 triangulated triangle/quadrilateral sections with CSR cell offsets, positive
 surface weights, physical/reference points, and normals oriented by
