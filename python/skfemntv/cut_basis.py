@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from .basis import Basis,DiscreteField,ElementTetP1,ElementTriP1,ElementVector
-from .levelset import CutCellQuadrature
+from .levelset import CutCellQuadrature,ImplicitInterfaceQuadrature
 
 
 class CutCellBasis:
@@ -55,7 +55,7 @@ class CutCellBasis:
         self.points=quadrature.points
         self.reference_coordinates=quadrature.reference_points
         self.weights=quadrature.weights
-        self.normals=quadrature.normals
+        self.normal_vectors=quadrature.normals
         self.tind=np.flatnonzero(np.diff(self.cell_offsets)>0)
         self.shape=np.column_stack((
             1.-self.reference_coordinates.sum(axis=1),
@@ -93,13 +93,14 @@ class CutCellBasis:
         self.tabulated_shape=self.shape[:,None,:]
         self.tabulated_gradients=self.gradients[:,None,:,:]
         self.global_coordinates=self.points[:,None,:]
+        self.normals=self.normal_vectors[:,None,:]
         self.element_dofs=self.quadrature_dofs.T
         self.basis=()
         for array in (
             self.shape,self.gradients,self.quadrature_dofs,self.tind,
             self.dx,self.tabulated_shape,self.tabulated_gradients,
             self.global_coordinates,self.element_dofs,
-            self.cell_dofs,
+            self.cell_dofs,self.normals,
         ):
             array.flags.writeable=False
 
@@ -137,3 +138,14 @@ class CutCellBasis:
                 f"cut integrand must have shape ({self.npoints},)"
             )
         return float(self.weights@values)
+
+
+class ImplicitFacetBasis(CutCellBasis):
+    """Trace of an affine P1 background basis on a reconstructed interface."""
+
+    def __init__(self,basis: Basis,quadrature: ImplicitInterfaceQuadrature):
+        if not isinstance(quadrature,ImplicitInterfaceQuadrature):
+            raise TypeError(
+                "ImplicitFacetBasis requires ImplicitInterfaceQuadrature"
+            )
+        super().__init__(basis,quadrature)

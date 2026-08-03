@@ -63,6 +63,11 @@ class CutCellQuadrature:
 
 
 @dataclass(frozen=True)
+class ImplicitInterfaceQuadrature(CutCellQuadrature):
+    """CSR-like surface quadrature on the reconstructed ``phi = 0`` set."""
+
+
+@dataclass(frozen=True)
 class CellClassificationResult:
     """Global cell labels and first-class regions derived from a level set."""
 
@@ -362,6 +367,77 @@ class LevelSet:
             side,diagnostics,
         )
 
+    def interface_quadrature(
+        self,mesh,*,intorder: int=2,
+        classification: CellClassificationResult | None=None,
+    ) -> ImplicitInterfaceQuadrature:
+        """Reconstruct planar interfaces in affine Tri3 or Tet4 cells."""
+        if isinstance(intorder,bool) or not isinstance(intorder,(int,np.integer)):
+            raise TypeError("interface-quadrature intorder must be an integer")
+        intorder=int(intorder)
+        if intorder<1:
+            raise ValueError("interface-quadrature intorder must be positive")
+        dimension=int(mesh.dim());expected=dimension+1
+        if dimension not in (2,3) or mesh.t.shape[0]!=expected:
+            raise NotImplementedError(
+                "implicit interface quadrature currently supports affine "
+                "Tri3 and Tet4 meshes"
+            )
+        values=self.values(mesh)
+        if classification is None:classification=self.classify(mesh)
+        elif len(classification.labels)!=mesh.nelements:
+            raise ValueError("classification and mesh have different cell counts")
+        tolerance=float(classification.diagnostics.tolerance)
+        reference=np.vstack((np.zeros((1,dimension)),np.eye(dimension)))
+        point_blocks=[];reference_blocks=[];weight_blocks=[]
+        cell_blocks=[];normal_blocks=[];offsets=[0]
+        for cell,nodes in enumerate(mesh.t.T):
+            cell_values=values[nodes]
+            if np.all(np.abs(cell_values)<=tolerance):
+                raise ValueError(
+                    f"level-set interface is not unique in cell {cell}: "
+                    "all nodal values are within tolerance"
+                )
+            vertices=_interface_vertices(reference,cell_values,tolerance)
+            physical_nodes=mesh.p[:,nodes]
+            gradient=_linear_simplex_gradient(physical_nodes,cell_values)
+            length=float(np.linalg.norm(gradient))
+            normal=(gradient/length if length>0. else np.zeros(dimension))
+            local_reference,local_weights=_interface_rule(
+                vertices,physical_nodes,normal,intorder
+            )
+            if len(local_weights):
+                point_blocks.append(_map_reference(
+                    physical_nodes,local_reference
+                ))
+                reference_blocks.append(local_reference)
+                weight_blocks.append(local_weights)
+                cell_blocks.append(np.full(len(local_weights),cell,dtype=np.int64))
+                normal_blocks.append(np.broadcast_to(
+                    normal,(len(local_weights),dimension)
+                ).copy())
+            offsets.append(offsets[-1]+len(local_weights))
+        points=_stack(point_blocks,(0,dimension),np.float64)
+        reference_points=_stack(reference_blocks,(0,dimension),np.float64)
+        weights=_stack(weight_blocks,(0,),np.float64)
+        cells=_stack(cell_blocks,(0,),np.int64)
+        normals=_stack(normal_blocks,(0,dimension),np.float64)
+        cell_offsets=np.asarray(offsets,dtype=np.int64)
+        for array in (cell_offsets,points,reference_points,weights,cells,normals):
+            array.flags.writeable=False
+        diagnostics=CutQuadratureDiagnostics(
+            cell_count=int(mesh.nelements),cut_cell_count=len(classification.cut),
+            nonempty_cell_count=int(np.count_nonzero(np.diff(cell_offsets))),
+            quadrature_point_count=len(weights),total_measure=float(weights.sum()),
+            minimum_weight=(float(weights.min()) if len(weights) else 0.),
+            maximum_weight=(float(weights.max()) if len(weights) else 0.),
+            integration_order=intorder,
+        )
+        return ImplicitInterfaceQuadrature(
+            cell_offsets,points,reference_points,weights,cells,normals,
+            "interface",diagnostics,
+        )
+
 
 def _stack(blocks,empty_shape,dtype):
     return (
@@ -388,6 +464,71 @@ def _clip_simplex(vertices,values,tolerance):
         if not any(np.linalg.norm(point-other)<=1.e-13 for other in unique):
             unique.append(np.asarray(point,dtype=np.float64))
     return np.asarray(unique,dtype=np.float64)
+
+
+def _interface_vertices(vertices,values,tolerance):
+    points=[
+        vertices[index] for index,value in enumerate(values)
+        if abs(value)<=tolerance
+    ]
+    for first in range(len(vertices)):
+        for second in range(first+1,len(vertices)):
+            a=float(values[first]);b=float(values[second])
+            if (a < -tolerance and b > tolerance) or (
+                b < -tolerance and a > tolerance
+            ):
+                fraction=a/(a-b)
+                points.append(
+                    vertices[first]+fraction*(vertices[second]-vertices[first])
+                )
+    unique=[]
+    for point in points:
+        if not any(np.linalg.norm(point-other)<=1.e-13 for other in unique):
+            unique.append(np.asarray(point,dtype=np.float64))
+    return np.asarray(unique,dtype=np.float64).reshape(-1,vertices.shape[1])
+
+
+def _interface_rule(vertices,physical_nodes,normal,intorder):
+    dimension=physical_nodes.shape[0]
+    if len(vertices)<dimension:
+        return np.empty((0,dimension)),np.empty(0)
+    physical=_map_reference(physical_nodes,vertices)
+    if dimension==2:
+        distances=np.linalg.norm(physical[:,None,:]-physical[None,:,:],axis=2)
+        first,second=np.unravel_index(np.argmax(distances),distances.shape)
+        length=distances[first,second]
+        if length==0.:return np.empty((0,2)),np.empty(0)
+        count=max(1,int(np.ceil((intorder+1)/2.)))
+        parameter,weights=np.polynomial.legendre.leggauss(count)
+        parameter=(parameter+1.)/2.;weights=weights/2.*length
+        points=(
+            (1.-parameter[:,None])*vertices[first]
+            +parameter[:,None]*vertices[second]
+        )
+        return points,weights
+    center=physical.mean(axis=0)
+    tangent=physical[0]-center
+    tangent_length=np.linalg.norm(tangent)
+    if tangent_length==0.:return np.empty((0,3)),np.empty(0)
+    tangent=tangent/tangent_length
+    second_axis=np.cross(normal,tangent)
+    angles=np.arctan2(
+        (physical-center)@second_axis,(physical-center)@tangent
+    )
+    order=np.argsort(angles);vertices=vertices[order];physical=physical[order]
+    reference_points=[];quadrature_weights=[]
+    barycentric,canonical_weights=_canonical_simplex_rule(2,intorder)
+    for index in range(1,len(vertices)-1):
+        reference_triangle=vertices[[0,index,index+1]]
+        physical_triangle=physical[[0,index,index+1]]
+        scale=np.linalg.norm(np.cross(
+            physical_triangle[1]-physical_triangle[0],
+            physical_triangle[2]-physical_triangle[0],
+        ))
+        if scale>0.:
+            reference_points.extend(barycentric@reference_triangle)
+            quadrature_weights.extend(canonical_weights*scale)
+    return np.asarray(reference_points),np.asarray(quadrature_weights)
 
 
 def _map_reference(physical_nodes,reference_points):

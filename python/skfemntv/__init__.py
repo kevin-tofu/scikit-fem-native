@@ -55,9 +55,10 @@ from .regions import (
 )
 from .levelset import (
     CellClassification,CellClassificationResult,CutCellQuadrature,
-    CutQuadratureDiagnostics,LevelSet,LevelSetDiagnostics,
+    CutQuadratureDiagnostics,ImplicitInterfaceQuadrature,
+    LevelSet,LevelSetDiagnostics,
 )
-from .cut_basis import CutCellBasis
+from .cut_basis import CutCellBasis,ImplicitFacetBasis
 from .forms import (
     BilinearForm,
     Functional,
@@ -175,6 +176,8 @@ __all__ = [
     "CutCellQuadrature",
     "CutQuadratureDiagnostics",
     "CutCellBasis",
+    "ImplicitInterfaceQuadrature",
+    "ImplicitFacetBasis",
     "LevelSet",
     "LevelSetDiagnostics",
     "NeoHookeanTet4",

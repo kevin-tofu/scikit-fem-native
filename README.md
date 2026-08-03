@@ -533,6 +533,29 @@ segmented LinearForm and BilinearForm kernels consume `cell_offsets` directly,
 build DOF/CSR scatter metadata once per active cell, and parallelize cell
 ranges with thread-local vector reduction or race-free CSR coloring.
 
+Planar implicit-interface quadrature is available on the same affine Tri3 and
+Tet4 background meshes:
+
+```python
+interface_rule = level_set.interface_quadrature(mesh, intorder=2)
+interface_basis = skfem.ImplicitFacetBasis(
+    skfem.Basis(mesh, element), interface_rule,
+)
+
+@skfem.Functional
+def flux_moment(w):
+    return w.x[0] * w.n[0]
+
+moment = skfem.asm(flux_moment, interface_basis)
+```
+
+Tri cells reconstruct a line segment; Tet cells reconstruct and locally
+triangulate a triangular or quadrilateral section.  CSR offsets retain the
+background cell association without padding.  Surface weights are positive,
+and `w.n` is the normalized level-set gradient, oriented from negative-inside
+to positive-outside.  Cells whose level set is zero at every node are rejected
+as ambiguous rather than assigned an arbitrary interface.
+
 The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python

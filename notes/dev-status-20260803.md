@@ -233,6 +233,16 @@ while bilinear assembly uses cell coloring for race-free CSR scatter.  Both
 support per-call thread selection.  Full-domain regression tests match regular
 Basis assembly, and cut-domain serial/parallel matrices agree.
 
+Planar implicit-interface reconstruction is implemented for affine Tri3 and
+Tet4 backgrounds.  `ImplicitInterfaceQuadrature` represents line segments and
+triangulated triangle/quadrilateral sections with CSR cell offsets, positive
+surface weights, physical/reference points, and normals oriented by
+`grad(phi)`.  `ImplicitFacetBasis` tabulates the background P1 trace and uses
+the same native Functional, LinearForm, and BilinearForm paths.  Analytic
+length, area, linear-moment, normal, interpolation, and surface-mass tests are
+included.  All-zero cells fail explicitly because their codimension-one
+interface is not unique.
+
 ### P1 — Arbitrary-point field evaluation
 
 `Basis.interpolate` evaluates at existing quadrature points.  Probes, transfer,
@@ -318,7 +328,8 @@ case requires them:
 2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
 3. Benchmark segmented cut assembly by cut ratio, integration order, and thread
    count, including setup/pattern and repeated-assembly timings.
-4. Build `ImplicitFacetBasis` as an assembly geometry provider.
+4. Add two-sided implicit-interface traces for user-defined Nitsche and jump/
+   average forms on embedded material interfaces.
 5. Add curved/high-order interface reconstruction with convergence tests.
 
 ## Branch checkpoints
