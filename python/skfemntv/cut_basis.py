@@ -86,6 +86,11 @@ class CutCellBasis:
                 len(basis.tind),node_count,components
             )
         )
+        counts=np.diff(self.cell_offsets)[self.tind]
+        self.active_cell_offsets=np.concatenate((
+            np.array([0],dtype=np.int64),np.cumsum(counts,dtype=np.int64)
+        ))
+        self.active_cell_dofs=np.ascontiguousarray(self.cell_dofs[self.tind])
         # Native form assemblers can consume each flattened point as an entity
         # with one quadrature point.  This is a zero-padding adapter: storage
         # remains proportional to actual cut points and assembly stays in C++.
@@ -101,6 +106,7 @@ class CutCellBasis:
             self.dx,self.tabulated_shape,self.tabulated_gradients,
             self.global_coordinates,self.element_dofs,
             self.cell_dofs,self.normals,
+            self.active_cell_offsets,self.active_cell_dofs,
         ):
             array.flags.writeable=False
 

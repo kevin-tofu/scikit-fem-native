@@ -20,8 +20,8 @@ class NativeBilinearForm:
         self._cut=hasattr(basis,"cell_offsets")
         if self._cut:
             self._native=CutBilinearFormAssembler(
-                np.ascontiguousarray(basis.cell_dofs,dtype=np.int64),
-                np.ascontiguousarray(basis.cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(basis.active_cell_offsets,dtype=np.int64),
                 np.ascontiguousarray(basis.shape,dtype=np.float64),
                 np.ascontiguousarray(basis.gradients,dtype=np.float64),
                 np.ascontiguousarray(basis.weights,dtype=np.float64),
@@ -99,13 +99,14 @@ class NativeCrossBilinearForm:
         )
         if self._cut:
             if not np.array_equal(
-                test_basis.cell_offsets,trial_basis.cell_offsets
+                test_basis.active_cell_offsets,
+                trial_basis.active_cell_offsets,
             ):
                 raise ValueError("cut cross bases have different cell offsets")
             self._native=CutCrossAssembler(
-                np.ascontiguousarray(test_basis.cell_dofs,dtype=np.int64),
-                np.ascontiguousarray(trial_basis.cell_dofs,dtype=np.int64),
-                np.ascontiguousarray(test_basis.cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(test_basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(trial_basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(test_basis.active_cell_offsets,dtype=np.int64),
                 np.ascontiguousarray(test_basis.shape),
                 np.ascontiguousarray(trial_basis.shape),
                 np.ascontiguousarray(test_basis.weights),

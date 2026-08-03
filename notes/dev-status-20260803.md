@@ -261,6 +261,14 @@ opposite normals, and refinement-invariant planar measure provide additional
 independent checks.  Flattened-versus-segmented native comparisons are treated
 as performance regressions, not the sole correctness oracle.
 
+Implicit cross benchmarking exposed and fixed an initial setup regression: the
+first segmented implementation allocated metadata for every background cell,
+including non-intersected cells.  `CutCellBasis` now provides compact nonempty
+cell DOFs and offsets to all segmented kernels.  On the 128 x 128 reference
+case, cross setup becomes 1.14--1.42x faster for orders 2--6 while repeated
+assembly remains roughly equal to the flattened kernel.  This is recorded as a
+metadata-scaling improvement, not claimed as a large arithmetic speedup.
+
 ### P1 — Arbitrary-point field evaluation
 
 `Basis.interpolate` evaluates at existing quadrature points.  Probes, transfer,

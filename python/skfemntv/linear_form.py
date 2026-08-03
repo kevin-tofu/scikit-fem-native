@@ -33,8 +33,8 @@ class NativeLinearForm:
         self._cut=hasattr(basis,"cell_offsets")
         if self._cut:
             self._native=CutLinearFormAssembler(
-                np.ascontiguousarray(basis.cell_dofs,dtype=np.int64),
-                np.ascontiguousarray(basis.cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(basis.active_cell_offsets,dtype=np.int64),
                 np.ascontiguousarray(basis.shape,dtype=np.float64),
                 np.ascontiguousarray(basis.gradients,dtype=np.float64),
                 np.ascontiguousarray(basis.weights,dtype=np.float64),
