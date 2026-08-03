@@ -824,20 +824,27 @@ class TriangleSupermesh:
     def assemble_mortar(
         self,multiplier="slave",*,dual_side="slave",num_threads=None,
     ):
-        """Assemble sparse mortar blocks for one of four multiplier spaces.
+        """Assemble sparse mortar blocks for a selected multiplier space.
 
         ``multiplier`` accepts ``"slave"``, ``"master"``,
-        ``"overlap_p0"``, or ``"dual"``.  The dual basis is formed from
+        ``"overlap_p0"``, ``"slave_facet_p0"``, ``"master_facet_p0"``,
+        or ``"dual"``.  Facet-P0 rows collect every overlap contribution
+        belonging to one parent facet.  The dual basis is formed from small
         facet-local Gram matrices; no multiplier-sized dense matrix is formed.
         """
         aliases={
             "slave_p1":"slave","master_p1":"master","p0":"overlap_p0",
             "biorthogonal":"dual",
+            "slave_p0":"slave_facet_p0","master_p0":"master_facet_p0",
         }
         multiplier=aliases.get(multiplier,multiplier)
-        if multiplier not in {"slave","master","overlap_p0","dual"}:
+        if multiplier not in {
+            "slave","master","overlap_p0","slave_facet_p0",
+            "master_facet_p0","dual",
+        }:
             raise ValueError(
-                "multiplier must be slave, master, overlap_p0, or dual"
+                "multiplier must be slave, master, overlap_p0, "
+                "slave_facet_p0, master_facet_p0, or dual"
             )
         if dual_side not in {"slave","master"}:
             raise ValueError("dual_side must be slave or master")
@@ -848,14 +855,29 @@ class TriangleSupermesh:
                 "mortar coupling currently requires equal trace component counts"
             )
         components=master_components
-        if multiplier=="overlap_p0":
+        if multiplier in {
+            "overlap_p0","slave_facet_p0","master_facet_p0"
+        }:
             entities=len(self._weights)
+            if multiplier=="overlap_p0":
+                entity_indices=np.arange(entities,dtype=np.int64)
+                multiplier_entities=entities
+            else:
+                parents=(
+                    self._slave_parent_facets
+                    if multiplier=="slave_facet_p0"
+                    else self._master_parent_facets
+                )
+                _,entity_indices=np.unique(parents,return_inverse=True)
+                multiplier_entities=(
+                    int(entity_indices.max())+1 if len(entity_indices) else 0
+                )
             multiplier_dofs=(
-                components*np.arange(entities)[:,None,None]
+                components*entity_indices[:,None,None]
                 +np.arange(components)[None,None,:]
             )
             multiplier_shape=np.ones((entities,self._weights.shape[1],1))
-            multiplier_size=entities*components
+            multiplier_size=multiplier_entities*components
         else:
             side=dual_side if multiplier=="dual" else multiplier
             multiplier_dofs=(

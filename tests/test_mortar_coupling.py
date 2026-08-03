@@ -26,12 +26,38 @@ def test_public_mortar_result_contains_only_sparse_global_blocks():
 def test_all_multiplier_spaces_assemble_without_global_dense_storage():
     mp,mt,sp,st=_nonmatching_surface()
     supermesh=skfemntv.TriangleSupermesh(mp,mt,sp,st)
-    expected_rows={"slave":4,"master":3,"overlap_p0":2,"dual":4}
+    expected_rows={
+        "slave":4,"master":3,"overlap_p0":2,"slave_facet_p0":2,
+        "master_facet_p0":1,"dual":4,
+    }
     for multiplier,rows in expected_rows.items():
         result=supermesh.assemble_mortar(multiplier)
         assert result.master_matrix.shape==(rows,3)
         assert result.slave_matrix.shape==(rows,4)
         assert result.coupling_matrix.shape==(rows,7)
+
+
+def test_facet_p0_collects_overlap_cells_without_changing_integrals():
+    mp,mt,sp,st=_nonmatching_surface()
+    supermesh=skfemntv.TriangleSupermesh(mp,mt,sp,st)
+    overlap=supermesh.assemble_mortar("overlap_p0")
+    slave=supermesh.assemble_mortar("slave_facet_p0")
+    master=supermesh.assemble_mortar("master_p0")
+
+    assert overlap.coupling_matrix.shape[0]==2
+    assert slave.coupling_matrix.shape[0]==2
+    assert master.coupling_matrix.shape[0]==1
+    np.testing.assert_allclose(
+        master.master_matrix.toarray(),
+        np.asarray(overlap.master_matrix.sum(axis=0)),
+    )
+    np.testing.assert_allclose(
+        master.slave_matrix.toarray(),
+        np.asarray(overlap.slave_matrix.sum(axis=0)),
+    )
+    np.testing.assert_allclose(
+        slave.coupling_matrix@np.ones(7),0.,atol=2.e-14
+    )
 
 
 def test_local_dual_basis_is_biorthogonal_on_one_facet():

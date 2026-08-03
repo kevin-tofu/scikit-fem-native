@@ -76,7 +76,10 @@ def main():
     parser.add_argument("--repeat",type=int,default=3)
     parser.add_argument(
         "--multiplier",default="coupling",
-        choices=("coupling","slave","master","overlap_p0","dual"),
+        choices=(
+            "coupling","slave","master","overlap_p0",
+            "slave_facet_p0","master_facet_p0","dual",
+        ),
     )
     parser.add_argument("--output",type=Path)
     args=parser.parse_args()

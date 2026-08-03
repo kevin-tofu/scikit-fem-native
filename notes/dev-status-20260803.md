@@ -111,13 +111,19 @@ skfemntv APIs.
 - paired master/slave orientation diagnostics;
 - sparse cross/value/gradient blocks;
 - `MortarCouplingResult` with sparse master, slave, and coupling matrices;
-- slave P1, master P1, overlap-cell P0, and facet-local dual multiplier bases;
+- slave/master P1, overlap-cell P0, slave/master-facet P0, and facet-local dual
+  multiplier bases;
 - composable Poisson and elasticity Nitsche flux terms;
 - constant/linear reproduction, action-reaction, refinement, and scikit-fem
   comparison tests.
 
 Native kernels return sparse blocks, COO/CSR data, or quadrature-local arrays;
 they do not construct a multiplier-sized global dense matrix.
+
+Multiplier granularity is public modelling input.  Facet-P0 retains all
+supermesh quadrature while collecting rows by the selected parent facet, so it
+offers a lower-dimensional KKT/active-set path without removing overlap-P0 or
+nodal/dual alternatives.
 
 ## Parallelism and performance
 

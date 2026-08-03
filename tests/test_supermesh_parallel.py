@@ -44,7 +44,9 @@ def test_parallel_cross_scatter_is_bitwise_deterministic():
         assert np.array_equal(serial.data,parallel.data)
 
 
-@pytest.mark.parametrize("multiplier",["slave","master","overlap_p0","dual"])
+@pytest.mark.parametrize("multiplier",[
+    "slave","master","overlap_p0","slave_facet_p0","master_facet_p0","dual",
+])
 def test_parallel_mortar_spaces_match_serial(multiplier):
     integration=_disjoint_interfaces()
     serial=integration.assemble_mortar(multiplier,num_threads=1)

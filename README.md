@@ -960,10 +960,21 @@ Bs = result.slave_matrix
 B = result.coupling_matrix  # [Bm, -Bs]
 ```
 
-The multiplier selector accepts `"slave"` and `"master"` P1 traces,
-`"overlap_p0"`, and a facet-local `"dual"`/biorthogonal trace.  The latter
-uses only small parent-facet Gram matrices.  All global outputs are CSR blocks;
-the implementation does not form a multiplier-sized dense matrix.
+The multiplier selector is a modelling choice rather than a hidden heuristic:
+
+- `"slave"` / `"master"`: nodal P1 trace;
+- `"overlap_p0"`: one constant multiplier per overlap cell;
+- `"slave_facet_p0"` / `"master_facet_p0"`: one constant multiplier per
+  participating parent facet (aliases: `"slave_p0"` / `"master_p0"`);
+- `"dual"`: a facet-local dual/biorthogonal trace.
+
+Facet-P0 collects all supermesh overlap-cell integrals belonging to the same
+parent facet; it does not replace or coarsen the geometric integration.  This
+can substantially reduce multiplier rows and gives contact active sets a
+facet-level unit, while `overlap_p0` remains available when overlap-local
+traction freedom is required.  The dual basis uses only small parent-facet
+Gram matrices.  All global outputs are CSR blocks; the implementation does not
+form a multiplier-sized dense matrix.
 
 `supermesh.master_trace` and `supermesh.slave_trace` expose shape values,
 physical gradients, paired outward normals, quadrature weights, physical
