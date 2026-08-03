@@ -206,7 +206,7 @@ def test_two_sided_normal_flux_and_linear_jump_are_user_composable():
         ),
         atol=2.e-14,
     )
-    with pytest.raises(NotImplementedError,match="Tri3 and Tet4"):
+    with pytest.raises(NotImplementedError,match="Tri6"):
         skfemntv.LevelSet(lambda x:x[0]).interface_quadrature(
             skfemntv.MeshQuad()
         )

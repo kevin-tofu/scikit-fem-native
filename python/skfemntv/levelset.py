@@ -285,12 +285,11 @@ class LevelSet:
         classification: CellClassificationResult | None=None,
         intorder: int=1,
     ) -> CutCellQuadrature:
-        """Integrate a linear level-set side on affine Tri3 or Tet4 cells.
+        """Integrate a reconstructed level-set side on simplex cells.
 
-        One centroid rule is used per clipped simplex and therefore integrates
-        physical constant and linear fields exactly.  Higher-order geometry,
-        nonlinear interface reconstruction, and interface quadrature are
-        deliberately separate future stages.
+        Tri6 uses its four P1 subtriangles, preserving its quadratic nodal
+        level-set samples without introducing curved geometry.  Curved Tri6
+        geometry is rejected explicitly.
         """
         if side not in ("inside","outside"):
             raise ValueError("cut-quadrature side must be 'inside' or 'outside'")
@@ -300,11 +299,16 @@ class LevelSet:
         if intorder<1:
             raise ValueError("cut-quadrature intorder must be positive")
         dimension=int(mesh.dim())
-        expected=dimension+1
-        if dimension not in (2,3) or mesh.t.shape[0]!=expected:
+        node_count=int(mesh.t.shape[0])
+        if not (
+            (dimension==2 and node_count in (3,6))
+            or (dimension==3 and node_count==4)
+        ):
             raise NotImplementedError(
-                "cut quadrature currently supports affine Tri3 and Tet4 meshes"
+                "cut quadrature currently supports affine Tri3, straight-sided "
+                "Tri6, and affine Tet4 meshes"
             )
+        subcells=_simplex_subcells(mesh)
         values=self.values(mesh)
         if classification is None:
             classification=self.classify(mesh)
@@ -313,35 +317,47 @@ class LevelSet:
                 "classification and mesh have different cell counts"
             )
         tolerance=float(classification.diagnostics.tolerance)
-        reference=np.vstack((
-            np.zeros((1,dimension)),np.eye(dimension)
-        ))
         point_blocks=[];reference_blocks=[];weight_blocks=[]
         cell_blocks=[];normal_blocks=[]
         offsets=[0]
         sign=1. if side=="inside" else -1.
         for cell,nodes in enumerate(mesh.t.T):
-            node_values=sign*values[nodes]
-            vertices=_clip_simplex(reference,node_values,tolerance)
-            physical_nodes=mesh.p[:,nodes]
-            gradient=_linear_simplex_gradient(physical_nodes,values[nodes])
-            normal=sign*gradient
-            length=float(np.linalg.norm(normal))
-            if length>0.: normal=normal/length
-            else: normal=np.zeros(dimension,dtype=np.float64)
-            local_reference,local_weights=_polytope_quadrature(
-                vertices,physical_nodes,intorder
-            )
-            if len(local_weights):
-                local_points=_map_reference(physical_nodes,local_reference)
-                point_blocks.append(local_points)
-                reference_blocks.append(local_reference)
-                weight_blocks.append(local_weights)
-                cell_blocks.append(np.full(len(local_weights),cell,dtype=np.int64))
-                normal_blocks.append(np.broadcast_to(
-                    normal,(len(local_weights),dimension)
-                ).copy())
-            offsets.append(offsets[-1]+len(local_weights))
+            added=0
+            for local_ids,parent_vertices in subcells:
+                subnodes=nodes[local_ids]
+                node_values=sign*values[subnodes]
+                canonical=np.vstack((
+                    np.zeros((1,dimension)),np.eye(dimension)
+                ))
+                vertices=_clip_simplex(canonical,node_values,tolerance)
+                physical_nodes=mesh.p[:,subnodes]
+                gradient=_linear_simplex_gradient(
+                    physical_nodes,values[subnodes]
+                )
+                normal=sign*gradient
+                length=float(np.linalg.norm(normal))
+                if length>0.: normal=normal/length
+                else: normal=np.zeros(dimension,dtype=np.float64)
+                local_reference,local_weights=_polytope_quadrature(
+                    vertices,physical_nodes,intorder
+                )
+                if len(local_weights):
+                    parent_reference=_map_reference(
+                        parent_vertices.T,local_reference
+                    )
+                    point_blocks.append(_map_reference(
+                        physical_nodes,local_reference
+                    ))
+                    reference_blocks.append(parent_reference)
+                    weight_blocks.append(local_weights)
+                    cell_blocks.append(np.full(
+                        len(local_weights),cell,dtype=np.int64
+                    ))
+                    normal_blocks.append(np.broadcast_to(
+                        normal,(len(local_weights),dimension)
+                    ).copy())
+                    added+=len(local_weights)
+            offsets.append(offsets[-1]+added)
         points=_stack(point_blocks,(0,dimension),np.float64)
         reference_points=_stack(reference_blocks,(0,dimension),np.float64)
         weights=_stack(weight_blocks,(0,),np.float64)
@@ -371,24 +387,32 @@ class LevelSet:
         self,mesh,*,intorder: int=2,
         classification: CellClassificationResult | None=None,
     ) -> ImplicitInterfaceQuadrature:
-        """Reconstruct planar interfaces in affine Tri3 or Tet4 cells."""
+        """Reconstruct interfaces in supported simplex cells.
+
+        A straight-sided Tri6 is reconstructed piecewise-linearly on its four
+        P1 subtriangles.  This retains P2 level-set nodal information while
+        keeping the geometry and storage model explicit.
+        """
         if isinstance(intorder,bool) or not isinstance(intorder,(int,np.integer)):
             raise TypeError("interface-quadrature intorder must be an integer")
         intorder=int(intorder)
         if intorder<1:
             raise ValueError("interface-quadrature intorder must be positive")
-        dimension=int(mesh.dim());expected=dimension+1
-        if dimension not in (2,3) or mesh.t.shape[0]!=expected:
+        dimension=int(mesh.dim());node_count=int(mesh.t.shape[0])
+        if not (
+            (dimension==2 and node_count in (3,6))
+            or (dimension==3 and node_count==4)
+        ):
             raise NotImplementedError(
                 "implicit interface quadrature currently supports affine "
-                "Tri3 and Tet4 meshes"
+                "Tri3, straight-sided Tri6, and affine Tet4 meshes"
             )
+        subcells=_simplex_subcells(mesh)
         values=self.values(mesh)
         if classification is None:classification=self.classify(mesh)
         elif len(classification.labels)!=mesh.nelements:
             raise ValueError("classification and mesh have different cell counts")
         tolerance=float(classification.diagnostics.tolerance)
-        reference=np.vstack((np.zeros((1,dimension)),np.eye(dimension)))
         point_blocks=[];reference_blocks=[];weight_blocks=[]
         cell_blocks=[];normal_blocks=[];offsets=[0]
         for cell,nodes in enumerate(mesh.t.T):
@@ -398,25 +422,53 @@ class LevelSet:
                     f"level-set interface is not unique in cell {cell}: "
                     "all nodal values are within tolerance"
                 )
-            vertices=_interface_vertices(reference,cell_values,tolerance)
-            physical_nodes=mesh.p[:,nodes]
-            gradient=_linear_simplex_gradient(physical_nodes,cell_values)
-            length=float(np.linalg.norm(gradient))
-            normal=(gradient/length if length>0. else np.zeros(dimension))
-            local_reference,local_weights=_interface_rule(
-                vertices,physical_nodes,normal,intorder
-            )
-            if len(local_weights):
-                point_blocks.append(_map_reference(
-                    physical_nodes,local_reference
+            added=0
+            for subcell,(local_ids,parent_vertices) in enumerate(subcells):
+                subnodes=nodes[local_ids]
+                subvalues=values[subnodes]
+                zero_count=int(np.count_nonzero(
+                    np.abs(subvalues)<=tolerance
                 ))
-                reference_blocks.append(local_reference)
-                weight_blocks.append(local_weights)
-                cell_blocks.append(np.full(len(local_weights),cell,dtype=np.int64))
-                normal_blocks.append(np.broadcast_to(
-                    normal,(len(local_weights),dimension)
-                ).copy())
-            offsets.append(offsets[-1]+len(local_weights))
+                if np.all(np.abs(subvalues)<=tolerance):
+                    raise ValueError(
+                        f"level-set interface is not unique in cell {cell}, "
+                        f"subcell {subcell}: all nodal values are within tolerance"
+                    )
+                if node_count==6 and zero_count>=2:
+                    raise ValueError(
+                        f"level-set interface coincides with a Tri6 subcell edge "
+                        f"in cell {cell}, subcell {subcell}; perturb the level "
+                        "set or refine the mesh"
+                    )
+                canonical=np.vstack((
+                    np.zeros((1,dimension)),np.eye(dimension)
+                ))
+                vertices=_interface_vertices(
+                    canonical,subvalues,tolerance
+                )
+                physical_nodes=mesh.p[:,subnodes]
+                gradient=_linear_simplex_gradient(physical_nodes,subvalues)
+                length=float(np.linalg.norm(gradient))
+                normal=(gradient/length if length>0. else np.zeros(dimension))
+                local_reference,local_weights=_interface_rule(
+                    vertices,physical_nodes,normal,intorder
+                )
+                if len(local_weights):
+                    point_blocks.append(_map_reference(
+                        physical_nodes,local_reference
+                    ))
+                    reference_blocks.append(_map_reference(
+                        parent_vertices.T,local_reference
+                    ))
+                    weight_blocks.append(local_weights)
+                    cell_blocks.append(np.full(
+                        len(local_weights),cell,dtype=np.int64
+                    ))
+                    normal_blocks.append(np.broadcast_to(
+                        normal,(len(local_weights),dimension)
+                    ).copy())
+                    added+=len(local_weights)
+            offsets.append(offsets[-1]+added)
         points=_stack(point_blocks,(0,dimension),np.float64)
         reference_points=_stack(reference_blocks,(0,dimension),np.float64)
         weights=_stack(weight_blocks,(0,),np.float64)
@@ -444,6 +496,46 @@ def _stack(blocks,empty_shape,dtype):
         np.concatenate(blocks,axis=0)
         if blocks else np.empty(empty_shape,dtype=dtype)
     )
+
+
+def _simplex_subcells(mesh):
+    """Return local connectivity and parent-reference vertices per simplex."""
+    dimension=int(mesh.dim())
+    node_count=int(mesh.t.shape[0])
+    if dimension==2 and node_count==6:
+        _validate_straight_tri6(mesh)
+        parent=np.array([
+            [0.,0.],[1.,0.],[0.,1.],
+            [.5,0.],[.5,.5],[0.,.5],
+        ])
+        connectivity=((0,3,5),(3,1,4),(5,4,2),(3,4,5))
+        return tuple(
+            (np.asarray(nodes,dtype=np.int64),parent[np.asarray(nodes)])
+            for nodes in connectivity
+        )
+    canonical=np.vstack((np.zeros((1,dimension)),np.eye(dimension)))
+    return ((np.arange(dimension+1,dtype=np.int64),canonical),)
+
+
+def _validate_straight_tri6(mesh):
+    expected=np.stack((
+        .5*(mesh.p[:,mesh.t[0]]+mesh.p[:,mesh.t[1]]),
+        .5*(mesh.p[:,mesh.t[1]]+mesh.p[:,mesh.t[2]]),
+        .5*(mesh.p[:,mesh.t[0]]+mesh.p[:,mesh.t[2]]),
+    ),axis=1)
+    actual=np.stack((
+        mesh.p[:,mesh.t[3]],mesh.p[:,mesh.t[4]],mesh.p[:,mesh.t[5]],
+    ),axis=1)
+    scale=max(1.,float(np.max(np.abs(mesh.p),initial=0.)))
+    tolerance=128.*np.finfo(np.float64).eps*scale
+    error=np.max(np.abs(actual-expected),axis=(0,1))
+    bad=np.flatnonzero(error>tolerance)
+    if len(bad):
+        cell=int(bad[0])
+        raise NotImplementedError(
+            f"curved Tri6 geometry is not supported: cell {cell} has "
+            f"mid-edge deviation {error[cell]:.6e} exceeding {tolerance:.6e}"
+        )
 
 
 def _clip_simplex(vertices,values,tolerance):

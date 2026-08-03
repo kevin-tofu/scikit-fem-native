@@ -62,9 +62,9 @@ def test_cut_quadrature_has_csr_cell_offsets_without_padding():
         assert not array.flags.writeable
 
 
-def test_cut_quadrature_rejects_high_order_and_non_simplex_meshes():
-    for mesh in (skfemntv.MeshTri2(),skfemntv.MeshQuad(),skfemntv.MeshTet2()):
-        with pytest.raises(NotImplementedError,match="Tri3 and Tet4"):
+def test_cut_quadrature_rejects_unsupported_simplex_and_non_simplex_meshes():
+    for mesh in (skfemntv.MeshQuad(),skfemntv.MeshTet2()):
+        with pytest.raises(NotImplementedError,match="Tri6"):
             skfemntv.LevelSet(lambda x:x[0]).cut_quadrature(mesh)
 
 

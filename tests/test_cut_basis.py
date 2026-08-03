@@ -76,11 +76,11 @@ def test_cut_basis_supports_restricted_parent_basis_when_cells_are_present():
 def test_cut_basis_rejects_unsupported_elements_and_bad_values():
     mesh=skfemntv.MeshTri()
     quadrature=skfemntv.LevelSet(lambda x:x[0]).cut_quadrature(mesh)
-    with pytest.raises(NotImplementedError,match="TriP1 and TetP1"):
+    with pytest.raises(NotImplementedError,match="TriP1"):
         skfemntv.CutCellBasis(
             skfemntv.Basis(
                 skfemntv.MeshTri2(),
-                skfemntv.ElementVector(skfemntv.ElementTriP2(),dim=1),
+                skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1),
             ),
             skfemntv.LevelSet(lambda x:x[0]).cut_quadrature(mesh),
         )

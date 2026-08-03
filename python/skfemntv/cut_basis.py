@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 
-from .basis import Basis,DiscreteField,ElementTetP1,ElementTriP1,ElementVector
+from .basis import (
+    Basis,DiscreteField,ElementTetP1,ElementTriP1,ElementTriP2,ElementVector,
+)
 from .levelset import CutCellQuadrature,ImplicitInterfaceQuadrature
 
 
 class CutCellBasis:
-    """P1 H1 basis tabulated on CSR-like cut-volume quadrature points.
+    """H1 basis tabulated on CSR-like cut-volume quadrature points.
 
     Quadrature points are flattened rather than padded by cell.  The
     ``quadrature_dofs`` array maps every point to global element DOFs, while
@@ -21,19 +23,19 @@ class CutCellBasis:
             raise TypeError("CutCellBasis requires CutCellQuadrature")
         if len(quadrature.cell_offsets)!=basis.mesh.nelements+1:
             raise ValueError("basis and cut quadrature have different cell counts")
-        if not isinstance(basis.elem,ElementVector) or not isinstance(
-            basis.elem.elem,(ElementTriP1,ElementTetP1)
-        ):
+        scalar=basis.elem.elem if isinstance(basis.elem,ElementVector) else None
+        node_count=int(basis.mesh.t.shape[0])
+        supported=(
+            isinstance(scalar,ElementTriP1) and node_count==3
+            or isinstance(scalar,ElementTriP2) and node_count==6
+            or isinstance(scalar,ElementTetP1) and node_count==4
+        )
+        if not supported:
             raise NotImplementedError(
-                "CutCellBasis currently supports vector-wrapped TriP1 and TetP1"
+                "CutCellBasis currently supports vector-wrapped TriP1, "
+                "straight-sided TriP2, and TetP1"
             )
-        expected=basis.mesh.dim()+1
-        node_count=expected
         components=basis.elem._dim
-        if basis.mesh.t.shape[0]!=expected:
-            raise NotImplementedError(
-                "CutCellBasis currently supports affine Tri3 and Tet4 meshes"
-            )
         positions={int(cell):local for local,cell in enumerate(basis.tind)}
         try:
             local_cells=np.asarray(
@@ -57,22 +59,22 @@ class CutCellBasis:
         self.weights=quadrature.weights
         self.normal_vectors=quadrature.normals
         self.tind=np.flatnonzero(np.diff(self.cell_offsets)>0)
-        self.shape=np.column_stack((
-            1.-self.reference_coordinates.sum(axis=1),
-            self.reference_coordinates,
-        ))
-        self.gradients=np.empty((len(self.weights),expected,basis.mesh.dim()))
-        reference_gradients=np.vstack((
-            -np.ones(basis.mesh.dim()),np.eye(basis.mesh.dim())
+        self.shape,reference_gradients=_tabulate_reference(
+            scalar,self.reference_coordinates
+        )
+        self.gradients=np.empty((
+            len(self.weights),node_count,basis.mesh.dim()
         ))
         for cell in self.tind:
             selection=quadrature.cell_slice(int(cell))
             cell_nodes=basis.mesh.t[:,cell]
             jacobian=(
-                basis.mesh.p[:,cell_nodes[1:]]-basis.mesh.p[:,[cell_nodes[0]]]
+                basis.mesh.p[:,cell_nodes[1:basis.mesh.dim()+1]]
+                -basis.mesh.p[:,[cell_nodes[0]]]
             )
-            physical=reference_gradients@np.linalg.inv(jacobian)
-            self.gradients[selection]=physical
+            self.gradients[selection]=(
+                reference_gradients[selection]@np.linalg.inv(jacobian)
+            )
         self.quadrature_dofs=(
             basis.element_dofs[:,local_cells].T.copy()
             if len(local_cells) else
@@ -147,7 +149,7 @@ class CutCellBasis:
 
 
 class ImplicitFacetBasis(CutCellBasis):
-    """Trace of an affine P1 background basis on a reconstructed interface."""
+    """Trace of a supported background basis on a reconstructed interface."""
 
     def __init__(
         self,basis: Basis,quadrature: ImplicitInterfaceQuadrature,
@@ -166,3 +168,40 @@ class ImplicitFacetBasis(CutCellBasis):
             self.normal_vectors.flags.writeable=False
             self.normals=self.normal_vectors[:,None,:]
             self.normals.flags.writeable=False
+
+
+def _tabulate_reference(element,points):
+    dimension=points.shape[1]
+    if isinstance(element,(ElementTriP1,ElementTetP1)):
+        shape=np.column_stack((1.-points.sum(axis=1),points))
+        constant=np.vstack((-np.ones(dimension),np.eye(dimension)))
+        gradients=np.broadcast_to(
+            constant,(len(points),len(constant),dimension)
+        ).copy()
+        return shape,gradients
+    if isinstance(element,ElementTriP2):
+        x=points[:,0];y=points[:,1]
+        bary=np.column_stack((1.-x-y,x,y))
+        shape=np.column_stack((
+            bary[:,0]*(2.*bary[:,0]-1.),
+            bary[:,1]*(2.*bary[:,1]-1.),
+            bary[:,2]*(2.*bary[:,2]-1.),
+            4.*bary[:,0]*bary[:,1],
+            4.*bary[:,1]*bary[:,2],
+            4.*bary[:,0]*bary[:,2],
+        ))
+        dbary=np.array([[-1.,-1.],[1.,0.],[0.,1.]])
+        gradients=np.empty((len(points),6,2),dtype=np.float64)
+        for index in range(3):
+            gradients[:,index]=(4.*bary[:,index]-1.)[:,None]*dbary[index]
+        gradients[:,3]=4.*(
+            bary[:,0,None]*dbary[1]+bary[:,1,None]*dbary[0]
+        )
+        gradients[:,4]=4.*(
+            bary[:,1,None]*dbary[2]+bary[:,2,None]*dbary[1]
+        )
+        gradients[:,5]=4.*(
+            bary[:,0,None]*dbary[2]+bary[:,2,None]*dbary[0]
+        )
+        return shape,gradients
+    raise NotImplementedError("unsupported cut-cell reference element")

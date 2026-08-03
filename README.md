@@ -498,7 +498,7 @@ does not construct quadrature.  `ghost_facets` is only the active-interior
 candidate set incident to cut cells; stabilization layers, penalty parameters,
 and the weak form remain user choices.
 
-Affine Tri3 and Tet4 meshes also provide the first cut-volume quadrature stage:
+Affine Tri3/Tet4 and straight-sided Tri6 meshes provide cut-volume quadrature:
 
 ```python
 inside = level_set.cut_quadrature(mesh, side="inside", intorder=2)
@@ -521,11 +521,14 @@ Physical and reference points, positive physical weights, background cell IDs,
 and consistently oriented level-set normals are immutable local arrays.  The
 Order one integrates constant and linear physical fields exactly.  Order two
 uses positive standard simplex rules, and higher orders use positive
-Duffy-transformed Gauss rules.  Curved/high-order cuts and implicit-interface
-quadrature are not yet supported.  `CutCellBasis` tabulates affine TriP1/TetP1
-shape values and physical gradients directly on the flattened rule, maps every
-point to global element DOFs, and interpolates scalar or vector coefficients
-without constructing padded element-by-quadrature arrays.  `Functional`,
+Duffy-transformed Gauss rules.  A straight-sided Tri6 is divided into four P1
+subtriangles: this piecewise-linear reconstruction uses every P2 level-set
+sample while returning parent-reference coordinates for TriP2 evaluation.
+Curved Tri6 geometry is rejected with the cell ID and mid-edge deviation.
+`CutCellBasis` tabulates TriP1, TriP2, or TetP1 shape values and physical
+gradients directly on the flattened rule, maps every point to global element
+DOFs, and interpolates scalar or vector coefficients without padded
+element-by-quadrature arrays.  `Functional`,
 `LinearForm`, and `BilinearForm` use the same public form syntax and execute in
 the native C++ assemblers, including `num_threads=`.  Each real cut point is
 stored once; there is no Python assembly fallback or zero-weight padding.  The
@@ -533,8 +536,8 @@ segmented LinearForm and BilinearForm kernels consume `cell_offsets` directly,
 build DOF/CSR scatter metadata once per active cell, and parallelize cell
 ranges with thread-local vector reduction or race-free CSR coloring.
 
-Planar implicit-interface quadrature is available on the same affine Tri3 and
-Tet4 background meshes:
+Implicit-interface quadrature is available on the same Tri3, straight-sided
+Tri6, and Tet4 background meshes:
 
 ```python
 interface_rule = level_set.interface_quadrature(mesh, intorder=2)
@@ -549,7 +552,8 @@ def flux_moment(w):
 moment = skfem.asm(flux_moment, interface_basis)
 ```
 
-Tri cells reconstruct a line segment; Tet cells reconstruct and locally
+Tri3 cells reconstruct a line segment; Tri6 reconstructs up to four segments
+from its P1 subtriangles; Tet cells reconstruct and locally
 triangulate a triangular or quadrilateral section.  CSR offsets retain the
 background cell association without padding.  Surface weights are positive,
 and `w.n` is the normalized level-set gradient, oriented from negative-inside
