@@ -43,7 +43,9 @@ class ImplicitInterfacePair:
     def _basis(self,index):
         return self.negative if index==0 else self.positive
 
-    def _cross(self,row,column,kind_row,kind_column,coefficient):
+    def _cross(
+        self,row,column,kind_row,kind_column,coefficient,num_threads,
+    ):
         key=(row,column)
         assembler=self._cross_cache.get(key)
         if assembler is None:
@@ -51,18 +53,14 @@ class ImplicitInterfacePair:
                 self._basis(row),self._basis(column)
             )
             self._cross_cache[key]=assembler
-        return assembler.assemble_kinds(kind_row,kind_column,coefficient)
+        return assembler.assemble_kinds(
+            kind_row,kind_column,coefficient,num_threads=num_threads or 0,
+        )
 
     def assemble_traces(
         self,row_weights,column_weights,*,row_kind="value",
         column_kind="value",coefficient=1.,num_threads=None,
     ):
-        if num_threads is not None:
-            # Cross-basis assembly currently owns no per-call thread control.
-            # Refuse to imply otherwise.
-            raise NotImplementedError(
-                "per-call threads are not yet supported for implicit cross traces"
-            )
         valid={"value","gradient","normal_gradient"}
         if row_kind not in valid or column_kind not in valid:
             raise ValueError("trace kind must be value, gradient, or normal_gradient")
@@ -76,13 +74,13 @@ class ImplicitInterfacePair:
             for column in range(2):
                 block_row.append(
                     row_weights[row]*column_weights[column]*self._cross(
-                        row,column,row_kind,column_kind,coefficient
+                        row,column,row_kind,column_kind,coefficient,num_threads
                     )
                 )
             blocks.append(block_row)
         return bmat(blocks,format="csr")
 
-    def _linear(self,index,kind,coefficient):
+    def _linear(self,index,kind,coefficient,num_threads):
         basis=self._basis(index)
         assembler=self._linear_cache.get(index)
         if assembler is None:
@@ -112,7 +110,9 @@ class ImplicitInterfacePair:
             ).copy()
         else:
             raise ValueError("trace kind must be value, gradient, or normal_gradient")
-        result,_=assembler.assemble(value=value,gradient=gradient)
+        result,_=assembler.assemble(
+            value=value,gradient=gradient,num_threads=num_threads or 0
+        )
         if len(result)<basis.N:result=np.pad(result,(0,basis.N-len(result)))
         return result
 
@@ -120,15 +120,11 @@ class ImplicitInterfacePair:
         self,trace_weights,*,trace_kind="value",coefficient=1.,
         num_threads=None,
     ):
-        if num_threads is not None:
-            raise NotImplementedError(
-                "per-call threads are not yet supported for implicit linear traces"
-            )
         trace_weights=np.asarray(trace_weights,dtype=np.float64)
         if trace_weights.shape!=(2,):
             raise ValueError("implicit trace weights must contain two values")
-        negative=self._linear(0,trace_kind,coefficient)
-        positive=self._linear(1,trace_kind,coefficient)
+        negative=self._linear(0,trace_kind,coefficient,num_threads)
+        positive=self._linear(1,trace_kind,coefficient,num_threads)
         return np.concatenate((
             trace_weights[0]*negative,trace_weights[1]*positive
         ))

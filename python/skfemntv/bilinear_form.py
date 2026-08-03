@@ -200,7 +200,9 @@ class NativeCrossBilinearForm:
         matrix.resize(self.shape)
         return matrix.copy()
 
-    def assemble_kinds(self,row_kind,column_kind,coefficient=1.):
+    def assemble_kinds(
+        self,row_kind,column_kind,coefficient=1.,*,num_threads=0,
+    ):
         """Assemble arbitrary value/gradient/normal-gradient contractions."""
         valid={"value","gradient","normal_gradient"}
         if row_kind not in valid or column_kind not in valid:
@@ -282,6 +284,7 @@ class NativeCrossBilinearForm:
             native_tensor,
             "gradient" if row_gradient else "value",
             "gradient" if column_gradient else "value",
+            num_threads,
         )
         matrix=csr_matrix((
             self._native.values,self._native.indices,self._native.indptr,

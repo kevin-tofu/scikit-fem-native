@@ -263,3 +263,45 @@ def test_planar_interface_measure_is_stable_under_mesh_refinement(resolution):
 
     assert rule.weights.sum()==pytest.approx(1.,abs=2.e-14)
     assert rule.diagnostics.nonempty_cell_count==2*resolution
+
+
+def test_two_sided_trace_serial_parallel_agree():
+    mesh=skfemntv.MeshTri.init_tensor(
+        np.linspace(0.,1.,18),np.linspace(0.,1.,17)
+    )
+    rule=skfemntv.LevelSet(
+        lambda x:x[0]-.43,tolerance=0.
+    ).interface_quadrature(mesh,intorder=4)
+    element=skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1)
+    negative=skfemntv.ImplicitFacetBasis(
+        skfemntv.Basis(mesh,element),rule,side="negative"
+    )
+    positive=skfemntv.ImplicitFacetBasis(
+        skfemntv.Basis(mesh,element),rule,side="positive"
+    )
+    interface=skfemntv.ImplicitInterfacePair(negative,positive)
+
+    @skfemntv.BilinearForm
+    def penalty(u,v,w):
+        return 1.3*dot(jump(u),jump(v))
+
+    @skfemntv.LinearForm
+    def load(v,w):
+        return dot(w.force,jump(v))
+
+    serial=skfemntv.asm(
+        penalty,negative,positive,integration=interface,num_threads=1
+    )
+    parallel=skfemntv.asm(
+        penalty,negative,positive,integration=interface,num_threads=4
+    )
+    serial_load=skfemntv.asm(
+        load,negative,positive,integration=interface,
+        force=2.,num_threads=1,
+    )
+    parallel_load=skfemntv.asm(
+        load,negative,positive,integration=interface,
+        force=2.,num_threads=4,
+    )
+    np.testing.assert_allclose(parallel.toarray(),serial.toarray(),atol=2.e-14)
+    np.testing.assert_allclose(parallel_load,serial_load,atol=2.e-14)
