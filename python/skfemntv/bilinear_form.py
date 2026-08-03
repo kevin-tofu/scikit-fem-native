@@ -112,6 +112,8 @@ class NativeCrossBilinearForm:
         self.test_components=test_components
         self.trial_components=trial_components
         self.dimension=test_basis.mesh.dim()
+        self.test_normals=getattr(test_basis,"normals",None)
+        self.trial_normals=getattr(trial_basis,"normals",None)
 
     def assemble(self,kind,coefficient):
         coefficient=np.asarray(coefficient,dtype=np.float64)
@@ -173,6 +175,92 @@ class NativeCrossBilinearForm:
             shape=(self._native.rows,self._native.columns),
             copy=False,
         )
+        matrix.resize(self.shape)
+        return matrix.copy()
+
+    def assemble_kinds(self,row_kind,column_kind,coefficient=1.):
+        """Assemble arbitrary value/gradient/normal-gradient contractions."""
+        valid={"value","gradient","normal_gradient"}
+        if row_kind not in valid or column_kind not in valid:
+            raise ValueError("cross kind must be value, gradient, or normal_gradient")
+        if self.test_components!=self.trial_components:
+            raise ValueError("cross contractions require matching components")
+        scalar=np.broadcast_to(
+            np.asarray(coefficient,dtype=np.float64),self.coefficient_shape
+        )
+        row_gradient=row_kind!="value";column_gradient=column_kind!="value"
+        tensor_shape=(self.test_components,)
+        if row_gradient:tensor_shape+=(self.dimension,)
+        tensor_shape+=(self.trial_components,)
+        if column_gradient:tensor_shape+=(self.dimension,)
+        tensor=np.zeros(self.coefficient_shape+tensor_shape,dtype=np.float64)
+        row_normals=(
+            None if row_kind!="normal_gradient" else
+            np.asarray(self.test_normals,dtype=np.float64)
+        )
+        column_normals=(
+            None if column_kind!="normal_gradient" else
+            np.asarray(self.trial_normals,dtype=np.float64)
+        )
+        if row_kind=="normal_gradient" and row_normals is None:
+            raise ValueError("row normal_gradient requires test-basis normals")
+        if column_kind=="normal_gradient" and column_normals is None:
+            raise ValueError("column normal_gradient requires trial-basis normals")
+        for component in range(self.test_components):
+            if not row_gradient and not column_gradient:
+                tensor[...,component,component]=scalar
+            elif row_gradient and not column_gradient:
+                direction=(
+                    row_normals if row_normals is not None else
+                    np.ones(self.coefficient_shape+(self.dimension,))
+                )
+                for axis in range(self.dimension):
+                    factor=(
+                        direction[...,axis] if row_normals is not None
+                        else (1. if self.dimension==1 else None)
+                    )
+                    if factor is None:
+                        tensor[...,component,axis,component]=scalar
+                    else:
+                        tensor[...,component,axis,component]=scalar*factor
+            elif not row_gradient and column_gradient:
+                direction=(
+                    column_normals if column_normals is not None else
+                    np.ones(self.coefficient_shape+(self.dimension,))
+                )
+                for axis in range(self.dimension):
+                    factor=(
+                        direction[...,axis] if column_normals is not None
+                        else (1. if self.dimension==1 else None)
+                    )
+                    if factor is None:
+                        tensor[...,component,component,axis]=scalar
+                    else:
+                        tensor[...,component,component,axis]=scalar*factor
+            else:
+                for row_axis in range(self.dimension):
+                    for column_axis in range(self.dimension):
+                        if row_normals is None and column_normals is None:
+                            factor=1. if row_axis==column_axis else 0.
+                        else:
+                            factor=1.
+                            if row_normals is not None:
+                                factor=factor*row_normals[...,row_axis]
+                            elif row_axis!=column_axis:
+                                factor=0.
+                            if column_normals is not None:
+                                factor=factor*column_normals[...,column_axis]
+                        tensor[...,component,row_axis,component,column_axis]=(
+                            scalar*factor
+                        )
+        self._native.assemble(
+            np.ascontiguousarray(tensor),
+            "gradient" if row_gradient else "value",
+            "gradient" if column_gradient else "value",
+        )
+        matrix=csr_matrix((
+            self._native.values,self._native.indices,self._native.indptr,
+        ),shape=(self._native.rows,self._native.columns),copy=False)
         matrix.resize(self.shape)
         return matrix.copy()
 

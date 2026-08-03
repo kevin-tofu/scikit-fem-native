@@ -143,9 +143,20 @@ class CutCellBasis:
 class ImplicitFacetBasis(CutCellBasis):
     """Trace of an affine P1 background basis on a reconstructed interface."""
 
-    def __init__(self,basis: Basis,quadrature: ImplicitInterfaceQuadrature):
+    def __init__(
+        self,basis: Basis,quadrature: ImplicitInterfaceQuadrature,
+        *,side: str="negative",
+    ):
         if not isinstance(quadrature,ImplicitInterfaceQuadrature):
             raise TypeError(
                 "ImplicitFacetBasis requires ImplicitInterfaceQuadrature"
             )
+        if side not in {"negative","positive"}:
+            raise ValueError("implicit facet side must be negative or positive")
         super().__init__(basis,quadrature)
+        self.side=side
+        if side=="positive":
+            self.normal_vectors=-self.normal_vectors
+            self.normal_vectors.flags.writeable=False
+            self.normals=self.normal_vectors[:,None,:]
+            self.normals.flags.writeable=False

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 import skfemntv
-from skfemntv.helpers import dot
+from skfemntv.helpers import avg,dot,jump,normal_grad
 
 
 def test_tri3_interface_integrates_length_and_linear_field():
@@ -82,6 +82,71 @@ def test_interface_quadrature_rejects_ambiguous_and_unsupported_geometry():
         skfemntv.LevelSet(np.zeros(3),tolerance=0.).interface_quadrature(
             skfemntv.MeshTri()
         )
+
+
+def test_two_sided_implicit_traces_have_opposite_normals_and_block_dofs():
+    mesh=skfemntv.MeshTri()
+    rule=skfemntv.LevelSet(
+        lambda x:x[0]+x[1]-.5,tolerance=0.
+    ).interface_quadrature(mesh,intorder=2)
+    element=skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1)
+    negative=skfemntv.ImplicitFacetBasis(
+        skfemntv.Basis(mesh,element),rule,side="negative"
+    )
+    positive=skfemntv.ImplicitFacetBasis(
+        skfemntv.Basis(mesh,element),rule,side="positive"
+    )
+    interface=skfemntv.ImplicitInterfacePair(negative,positive)
+
+    np.testing.assert_allclose(
+        negative.normal_vectors,-positive.normal_vectors
+    )
+
+    @skfemntv.BilinearForm
+    def penalty(u,v,w):
+        return 3.*dot(jump(u),jump(v))
+
+    matrix=skfemntv.asm(
+        penalty,negative,positive,integration=interface
+    )
+    assert matrix.shape==(negative.N+positive.N,)*2
+    np.testing.assert_allclose(matrix.toarray(),matrix.toarray().T)
+    np.testing.assert_allclose(
+        matrix@np.ones(negative.N+positive.N),0.,atol=2.e-14
+    )
+
+
+def test_two_sided_normal_flux_and_linear_jump_are_user_composable():
+    mesh=skfemntv.MeshTri()
+    rule=skfemntv.LevelSet(
+        lambda x:x[0]+x[1]-.5,tolerance=0.
+    ).interface_quadrature(mesh,intorder=2)
+    element=skfemntv.ElementVector(skfemntv.ElementTriP1(),dim=1)
+    negative=skfemntv.ImplicitFacetBasis(
+        skfemntv.Basis(mesh,element),rule,side="negative"
+    )
+    positive=skfemntv.ImplicitFacetBasis(
+        skfemntv.Basis(mesh,element),rule,side="positive"
+    )
+    interface=skfemntv.ImplicitInterfacePair(negative,positive)
+
+    @skfemntv.BilinearForm
+    def consistency(u,v,w):
+        return dot(avg(normal_grad(u)),jump(v))
+
+    @skfemntv.LinearForm
+    def jump_load(v,w):
+        return dot(w.load,jump(v))
+
+    matrix=skfemntv.asm(
+        consistency,negative,positive,integration=interface
+    )
+    vector=skfemntv.asm(
+        jump_load,negative,positive,integration=interface,load=2.
+    )
+    assert matrix.shape==(6,6)
+    assert vector.shape==(6,)
+    np.testing.assert_allclose(vector[:3],-vector[3:],atol=2.e-14)
     with pytest.raises(NotImplementedError,match="Tri3 and Tet4"):
         skfemntv.LevelSet(lambda x:x[0]).interface_quadrature(
             skfemntv.MeshQuad()

@@ -59,6 +59,7 @@ from .levelset import (
     LevelSet,LevelSetDiagnostics,
 )
 from .cut_basis import CutCellBasis,ImplicitFacetBasis
+from .implicit_interface import ImplicitInterfacePair
 from .forms import (
     BilinearForm,
     Functional,
@@ -178,6 +179,7 @@ __all__ = [
     "CutCellBasis",
     "ImplicitInterfaceQuadrature",
     "ImplicitFacetBasis",
+    "ImplicitInterfacePair",
     "LevelSet",
     "LevelSetDiagnostics",
     "NeoHookeanTet4",

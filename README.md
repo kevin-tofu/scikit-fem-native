@@ -556,6 +556,33 @@ and `w.n` is the normalized level-set gradient, oriented from negative-inside
 to positive-outside.  Cells whose level set is zero at every node are rejected
 as ambiguous rather than assigned an arbitrary interface.
 
+Embedded two-material interfaces can use independent negative- and
+positive-side spaces.  The pair assembles a block system and reuses the same
+`jump`, `avg`, and `normal_grad` form vocabulary as supermesh coupling:
+
+```python
+negative = skfem.ImplicitFacetBasis(
+    negative_basis, interface_rule, side="negative",
+)
+positive = skfem.ImplicitFacetBasis(
+    positive_basis, interface_rule, side="positive",
+)
+interface = skfem.ImplicitInterfacePair(negative, positive)
+
+@skfem.BilinearForm
+def consistency(u, v, w):
+    return dot(avg(normal_grad(u)), jump(v))
+
+block = skfem.asm(
+    consistency, negative, positive, integration=interface,
+)
+```
+
+The matrix has `(negative.N + positive.N)` rows and columns.  The negative
+normal is `grad(phi) / |grad(phi)|`; the positive normal is its exact opposite.
+The package supplies traces and contractions but does not prescribe Nitsche
+signs, material weighting, or penalty parameters.
+
 The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python

@@ -243,6 +243,15 @@ length, area, linear-moment, normal, interpolation, and surface-mass tests are
 included.  All-zero cells fail explicitly because their codimension-one
 interface is not unique.
 
+Two-sided embedded traces are implemented by side-oriented
+`ImplicitFacetBasis` values and `ImplicitInterfacePair`.  Negative and positive
+parents remain independent global DOF spaces and assemble into a 2-by-2 sparse
+block system.  Normals are exactly opposite.  Existing `jump`, weighted `avg`,
+`grad`, and `normal_grad` tracing is reused for bilinear and linear forms;
+tests cover constant-jump null modes, symmetric jump penalty, average normal
+flux, and action/reaction linear loads.  Formulation signs, coefficients, and
+penalties remain user-owned.
+
 ### P1 — Arbitrary-point field evaluation
 
 `Basis.interpolate` evaluates at existing quadrature points.  Probes, transfer,
@@ -328,8 +337,8 @@ case requires them:
 2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
 3. Benchmark segmented cut assembly by cut ratio, integration order, and thread
    count, including setup/pattern and repeated-assembly timings.
-4. Add two-sided implicit-interface traces for user-defined Nitsche and jump/
-   average forms on embedded material interfaces.
+4. Add a segmented native cross-trace kernel so high-order implicit-interface
+   rules do not repeat CSR metadata per quadrature point.
 5. Add curved/high-order interface reconstruction with convergence tests.
 
 ## Branch checkpoints
