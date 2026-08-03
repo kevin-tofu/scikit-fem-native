@@ -76,6 +76,95 @@ residual and Jacobian, tangential grouping, and Coulomb history kernels.
 kktkit should continue to own load stepping and active-set policy; skfemntv
 should own numerical contact evaluation and its derivatives.
 
+## Nonlinear assembly roadmap
+
+The tied-Mortar work covers only one part of assembly.  Replacing kktkit's
+nonlinear FEM paths requires a stable stateful assembly contract before adding
+more materials or elements.
+
+### Unified residual and consistent tangent
+
+One element traversal should evaluate internal residual, consistent tangent,
+strain/stress fields, energy, trial material state, and diagnostics from the
+same displacement and integration-point state.  Residual and tangent must not
+perform independent material updates.
+
+A target interface is:
+
+```python
+result = assembler.assemble_nonlinear(
+    displacement=u,
+    committed_state=state,
+    compute_tangent=True,
+    dt=dt,
+)
+```
+
+The result should contain `residual`, `tangent`, `trial_state`, field outputs,
+energy, and immutable diagnostics.
+
+### Trial, commit, and rollback
+
+Plasticity, viscoelasticity, damage, and friction require explicit state
+ownership:
+
+```text
+committed state -> trial update -> Newton convergence -> commit
+                                             failure -> rollback/cutback
+```
+
+Integration-point ordering must remain stable across assembly calls and
+geometry updates.  kktkit may own load-step and cutback policy, while skfemntv
+owns committed/trial material-state representation and update kernels.
+
+### Updated geometry and follower loads
+
+Large-deformation assembly needs current coordinates, deformation gradients,
+current normals, geometric stiffness, current-area integration, follower-load
+residuals, and their external-force tangent.  Supermesh/contact updates should
+reuse search topology and rebuild only changed overlap pairs where possible.
+
+### Nonlinear contact tangent
+
+Contact assembly must eventually provide gap residual, normal variation,
+contact geometric tangent, active-row data, normal/tangential traction,
+friction return mapping, and a consistent friction tangent.  Generic QR must
+not destroy normal/tangent row grouping or active-set identity.
+
+### Element, material, and formulation coverage
+
+Target element coverage is Tet4/Tet10, Hex8/Hex20, wedge, and pyramid for
+linear and geometric-nonlinear elasticity, hyperelasticity, plasticity, mass,
+and damping.  The material interface should return stress, algorithmic tangent,
+and trial state for a common deformation/state input.
+
+Near-incompressible problems additionally require mixed displacement-pressure
+or controlled alternatives such as selective integration, B-bar/F-bar, and
+appropriate stabilization/hourglass treatment.
+
+### Transient nonlinear assembly
+
+Dynamic replacement requires consistent/lumped mass, damping,
+Newmark/generalized-alpha residual and effective tangent, state-history reuse,
+multiple RHS support, and factorization/preconditioner reuse.
+
+### Nonlinear diagnostics
+
+Report element and integration-point counts, residual/tangent/material-update
+timings, state memory, inverted elements, minimum Jacobian determinant,
+maximum strain/stress, plastic-point count, local return-map iterations,
+non-finite element IDs, and tangent symmetry/consistency errors.
+
+### Recommended nonlinear implementation order
+
+1. Unified residual+tangent+trial-state result.
+2. Explicit commit/rollback state API.
+3. Neo-Hookean equivalence through the kktkit public API.
+4. J2 plasticity equivalence over load steps and cutbacks.
+5. Updated geometry, geometric stiffness, and follower loads.
+6. Nonlinear Mortar/contact residual and consistent tangent.
+7. Mixed near-incompressible formulations.
+
 ## Validation policy
 
 Every native replacement needs two levels of regression:
