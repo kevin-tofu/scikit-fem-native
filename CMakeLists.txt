@@ -18,6 +18,8 @@ pybind11_add_module(
   cpp/src/assembly/supermesh_builder.cpp
   cpp/src/assembly/bilinear_form_assembler.cpp
   cpp/src/assembly/cross_bilinear_assembler.cpp
+  cpp/src/assembly/cut_form_assembler.cpp
+  cpp/src/assembly/cut_cross_assembler.cpp
   cpp/src/assembly/basis_geometry.cpp
 )
 target_compile_features(_skfn PRIVATE cxx_std_17)

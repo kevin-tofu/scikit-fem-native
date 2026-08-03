@@ -38,6 +38,47 @@ NATIVE_PARALLEL_SCRIPT=(
 SUPERMESH_PARALLEL_SCRIPT=(
     Path(__file__).parents[1]/"benchmarks"/"supermesh_parallel.py"
 )
+MORTAR_STRATEGIES_SCRIPT=(
+    Path(__file__).parents[1]
+    /"benchmarks"/"mortar-strategies"/"mortar_strategies.py"
+)
+CUT_ASSEMBLY_SCRIPT=(
+    Path(__file__).parents[1]/"benchmarks"/"cutfem"/"cut_assembly.py"
+)
+IMPLICIT_CROSS_SCRIPT=(
+    Path(__file__).parents[1]/"benchmarks"/"cutfem"/"implicit_cross.py"
+)
+
+
+def test_cut_assembly_benchmark_smoke(tmp_path):
+    output=tmp_path/"cut.csv";plot=tmp_path/"cut.png"
+    result=subprocess.run(
+        [
+            sys.executable,str(CUT_ASSEMBLY_SCRIPT),
+            "--resolution","3","--fractions",".5",
+            "--intorders","1","2","--threads","2","--repeat","1",
+            "--output",str(output),"--plot-output",str(plot),
+        ],
+        cwd=CUT_ASSEMBLY_SCRIPT.parents[2],capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    assert "assembly speedup" in result.stdout
+    assert len(output.read_text().splitlines())==3
+    assert plot.stat().st_size>10_000
+
+
+def test_implicit_cross_benchmark_smoke(tmp_path):
+    output=tmp_path/"cross.csv";plot=tmp_path/"cross.png"
+    result=subprocess.run(
+        [sys.executable,str(IMPLICIT_CROSS_SCRIPT),"--resolution","3",
+         "--intorders","1","2","--threads","2","--repeat","1",
+         "--output",str(output),"--plot-output",str(plot)],
+        cwd=IMPLICIT_CROSS_SCRIPT.parents[2],capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    assert "oracle error" in result.stdout
+    assert len(output.read_text().splitlines())==5
+    assert plot.stat().st_size>10_000
 
 
 def test_poisson_benchmark_smoke(tmp_path):
@@ -198,3 +239,22 @@ def test_supermesh_parallel_benchmark_smoke(tmp_path):
     assert "overlap_cells" in result.stdout
     assert "| coupling | 2 |" in result.stdout
     assert len(output.read_text().splitlines())==3
+
+
+def test_mortar_strategies_benchmark_smoke(tmp_path):
+    output=tmp_path/"mortar-strategies.csv"
+    result=subprocess.run(
+        [
+            sys.executable,str(MORTAR_STRATEGIES_SCRIPT),
+            "--cells","2","--repeat","1","--threads","2",
+            "--output",str(output),
+        ],
+        cwd=MORTAR_STRATEGIES_SCRIPT.parents[2],
+        capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    for strategy in (
+        "fine","coarse-p0","algebraic-qr","algebraic-svd"
+    ):
+        assert f"| {strategy} |" in result.stdout
+    assert len(output.read_text().splitlines())==5

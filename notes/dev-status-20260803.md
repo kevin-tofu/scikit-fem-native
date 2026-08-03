@@ -111,13 +111,33 @@ skfemntv APIs.
 - paired master/slave orientation diagnostics;
 - sparse cross/value/gradient blocks;
 - `MortarCouplingResult` with sparse master, slave, and coupling matrices;
-- slave P1, master P1, overlap-cell P0, and facet-local dual multiplier bases;
+- slave/master P1, overlap-cell P0, slave/master-facet P0, and facet-local dual
+  multiplier bases;
 - composable Poisson and elasticity Nitsche flux terms;
 - constant/linear reproduction, action-reaction, refinement, and scikit-fem
   comparison tests.
 
 Native kernels return sparse blocks, COO/CSR data, or quadrature-local arrays;
 they do not construct a multiplier-sized global dense matrix.
+
+Multiplier granularity is public modelling input.  Facet-P0 retains all
+supermesh quadrature while collecting rows by the selected parent facet, so it
+offers a lower-dimensional KKT/active-set path without removing overlap-P0 or
+nodal/dual alternatives.
+
+`MortarMultiplierMetadata` preserves the selected space, entity kind, side,
+original entity IDs, compact row-to-entity mapping, component IDs, and
+structurally supported rows.  Its `rows_for` selector lets an external contact
+active set select constraints by original facet/overlap/trace entity without
+making KKT construction or a particular linear solver part of skfemntv.
+
+`MortarKKTBlocks` is a solver-independent sparse block descriptor containing
+CSR `K`, active CSR `C`, primal/constraint right-hand sides, full multiplier
+metadata, and the active-to-full multiplier row map.  It deliberately has no
+full-KKT constructor, factorization, active-set policy, or solve method.  The
+all-row path borrows existing CSR blocks without copying; active selection
+materializes only selected constraint rows.  Primal ordering is explicitly the
+mortar coupling column ordering `[master, slave]`.
 
 ## Parallelism and performance
 
@@ -197,8 +217,90 @@ facets.  Each `FacetRegion` carries immutable parent-side and normal-sign
 metadata, and every FacetBasis topology path consumes mixed orientations.  The
 Component-aware DOF selection is implemented through `DofsView` groups,
 scikit-fem-style `all/keep/drop`, numeric vector components, and composite
-field/component selectors.  The next region addition is classification
-metadata needed by level sets.
+field/component selectors.
+
+Level-set classification metadata is implemented by `LevelSet`,
+`CellClassificationResult`, and `CellClassification`.  Callable and nodal
+fields produce immutable global labels plus inside, outside, cut, touching,
+and active `CellRegion` values.  All mesh topologies use every connectivity
+node, including high-order nodes.  Field-scale-aware tolerance, non-finite
+value diagnostics, and direct restricted-Basis use are tested.  Active facets,
+active-boundary facets with parent-side metadata, active-interior facets,
+cut-adjacent ghost-penalty candidates, and component-aware active global DOFs
+are available without imposing a CutFEM formulation.  Cut-volume and
+implicit-interface quadrature remain separate stages.
+
+Cut-volume integration is implemented for affine Tri3/Tet4 and straight-sided
+Tri6/Tet10 cells.  Tri6 uses four P1 subtriangles and Tet10 uses eight P1
+subtetrahedra, so all quadratic level-set nodal samples influence the
+reconstructed cut while points remain in the parent reference frame.  Curved
+quadratic simplex geometry is rejected diagnostically.
+`CutCellQuadrature` stores CSR-like cell offsets, physical/reference points,
+positive physical weights, background cell IDs, and oriented level-set normals
+with memory proportional to generated quadrature points.  Inside and outside
+rules partition the parent-cell measure, and analytic tests cover exact
+constant/linear integration.  Positive order-two simplex rules and general
+higher-order Duffy rules cover polynomial volume integration without changing
+the CSR storage.  True curved geometry remains intentionally unsupported
+rather than silently approximated.
+
+`CutCellBasis` is implemented as the first variable-quadrature assembly
+geometry provider.  It tabulates affine TriP1/TriP2/TetP1/TetP2 shape values and physical
+gradients at flattened cut points, maps each point to global parent-element
+DOFs, supports restricted parent bases, and interpolates scalar/vector fields.
+It does not pad cells to a common point count.  Functional uses the flattened
+native reduction directly.  Dedicated segmented C++ LinearForm and
+BilinearForm assemblers consume `cell_offsets`; DOF tuples, CSR patterns, and
+scatter maps are built once per cell rather than once per quadrature point.
+Linear assembly uses thread-local vectors followed by a parallel DOF reduction,
+while bilinear assembly uses cell coloring for race-free CSR scatter.  Both
+support per-call thread selection.  Full-domain regression tests match regular
+Basis assembly, and cut-domain serial/parallel matrices agree.
+
+Implicit-interface reconstruction is implemented for affine Tri3/Tet4 and
+straight-sided Tri6/Tet10 backgrounds.  `ImplicitInterfaceQuadrature` represents
+line segments (piecewise segments for Tri6) and
+triangulated triangle/quadrilateral sections with CSR cell offsets, positive
+surface weights, physical/reference points, and normals oriented by
+`grad(phi)`.  `ImplicitFacetBasis` tabulates the background P1/P2 trace and uses
+the same native Functional, LinearForm, and BilinearForm paths.  Analytic
+length, area, linear-moment, normal, interpolation, and surface-mass tests are
+included.  All-zero cells fail explicitly because their codimension-one
+interface is not unique.
+
+Two-sided embedded traces are implemented by side-oriented
+`ImplicitFacetBasis` values and `ImplicitInterfacePair`.  Negative and positive
+parents remain independent global DOF spaces and assemble into a 2-by-2 sparse
+block system.  Normals are exactly opposite.  Existing `jump`, weighted `avg`,
+`grad`, and `normal_grad` tracing is reused for bilinear and linear forms;
+tests cover constant-jump null modes, symmetric jump penalty, average normal
+flux, and action/reaction linear loads.  Formulation signs, coefficients, and
+penalties remain user-owned.
+
+Because upstream scikit-fem has no direct implicit-cut reference object, these
+tests do not rely only on native-versus-native comparisons.  An independent
+NumPy element-loop oracle assembles all four trace blocks for value/value,
+gradient/gradient, and normal-gradient/value contractions.  Analytic planar
+length/area and moment identities, constant-jump null modes, action/reaction,
+opposite normals, and refinement-invariant planar measure provide additional
+independent checks.  Flattened-versus-segmented native comparisons are treated
+as performance regressions, not the sole correctness oracle.
+
+Implicit cross benchmarking exposed and fixed an initial setup regression: the
+first segmented implementation allocated metadata for every background cell,
+including non-intersected cells.  `CutCellBasis` now provides compact nonempty
+cell DOFs and offsets to all segmented kernels.  On the 128 x 128 reference
+case, cross setup becomes 1.14--1.42x faster for orders 2--6 while repeated
+assembly remains roughly equal to the flattened kernel.  This is recorded as a
+metadata-scaling improvement, not claimed as a large arithmetic speedup.
+
+A deterministic geometry-invariant suite now covers every nonzero Tri3/Tet4
+nodal sign pattern, randomized Tet planes, positive weights, finite arrays, CSR
+offset integrity, inside/outside measure partition, global node relabeling,
+rigid transforms, uniform scaling, transformed first moments, and normal
+covariance.  Circle area/perimeter and sphere volume/surface errors decrease
+under refinement.  The tests compare physical invariants rather than requiring
+an arbitrary polygon triangulation to preserve quadrature-point ordering.
 
 ### P1 — Arbitrary-point field evaluation
 
@@ -281,16 +383,18 @@ case requires them:
 
 ## Recommended next work
 
-1. Add classification metadata needed by level-set regions.
-2. Add arbitrary-point value/gradient evaluation.
-3. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
-4. Add level-set classification independently of integration.
-5. Add CSR-like cut-cell quadrature and constant/linear exactness tests.
-6. Build `CutCellBasis` and `ImplicitFacetBasis` as assembly geometry providers.
+1. Add arbitrary-point value/gradient evaluation.
+2. Close form-algebra gaps needed by anisotropic and multi-coefficient forms.
+3. Benchmark segmented cut assembly by cut ratio, integration order, and thread
+   count, including setup/pattern and repeated-assembly timings.
+4. Benchmark segmented implicit cross traces by interface size, integration
+   order, contraction kind, and thread count.
+5. Add curved/high-order interface reconstruction with convergence tests.
 
 ## Branch checkpoints
 
 - `fae02db`: geometry validation and initial development-status documents;
 - `57adef0`: first-class regions and named subdomains;
 - `e99d17d`: normal-oriented facet regions;
-- component-aware DOF selection follows as the next branch checkpoint.
+- `2efecb7`: component-aware DOF selection;
+- level-set classification is implemented on `feature/levelset`.

@@ -473,6 +473,135 @@ The cached `mesh.facets`, `mesh.t2f`, and `mesh.f2t` arrays are shared by
 repeated Basis construction.  `mesh.interior_facets()` is a small skfemntv
 convenience returning `np.flatnonzero(mesh.f2t[1] != -1)`.
 
+Level-set sign classification is separate from cut-cell integration.  A
+callable or one scalar per global mesh node classifies every cell as inside,
+outside, cut, or touching.  The returned regions preserve global cell IDs and
+can be passed directly to `Basis`:
+
+```python
+level_set = skfem.LevelSet(lambda x: x[0] ** 2 + x[1] ** 2 - .25)
+classification = level_set.classify(mesh)
+active_basis = skfem.Basis(
+    mesh, element, elements=classification.active,
+)
+active_dofs = classification.active_dofs(active_basis)
+background_facets = classification.active_facets(mesh)
+active_boundary = classification.active_boundary_facets(mesh)
+ghost_candidates = classification.ghost_facets(mesh)
+```
+
+The convention is negative-inside.  Every connectivity node is sampled, so
+high-order edge, face, and interior nodes participate in classification.
+`CUT` means that both signs were sampled; `TOUCHING` means at least one value
+is within tolerance without a sampled sign crossing.  Classification itself
+does not construct quadrature.  `ghost_facets` is only the active-interior
+candidate set incident to cut cells; stabilization layers, penalty parameters,
+and the weak form remain user choices.
+
+Affine Tri3/Tet4 and straight-sided Tri6/Tet10 meshes provide cut-volume
+quadrature:
+
+```python
+inside = level_set.cut_quadrature(mesh, side="inside", intorder=2)
+outside = level_set.cut_quadrature(mesh, side="outside", intorder=2)
+
+for cell in classification.cut:
+    local = inside.cell_slice(cell)
+    x = inside.points[local]
+    weight = inside.weights[local]
+
+cut_basis = skfem.CutCellBasis(
+    skfem.Basis(mesh, element), inside,
+)
+field = cut_basis.interpolate(solution)
+integral = cut_basis.integrate(field.value)
+```
+
+`cell_offsets` stores variable quadrature counts without per-cell padding.
+Physical and reference points, positive physical weights, background cell IDs,
+and consistently oriented level-set normals are immutable local arrays.  The
+Order one integrates constant and linear physical fields exactly.  Order two
+uses positive standard simplex rules, and higher orders use positive
+Duffy-transformed Gauss rules.  A straight-sided Tri6 is divided into four P1
+subtriangles; Tet10 similarly uses eight P1 subtetrahedra.  This piecewise-linear
+reconstruction uses every P2 level-set sample while returning parent-reference
+coordinates for P2 evaluation.  Curved Tri6/Tet10 geometry is rejected with
+the cell ID and mid-edge deviation.  `CutCellBasis` tabulates TriP1, TriP2,
+TetP1, or TetP2 shape values and physical
+gradients directly on the flattened rule, maps every point to global element
+DOFs, and interpolates scalar or vector coefficients without padded
+element-by-quadrature arrays.  `Functional`,
+`LinearForm`, and `BilinearForm` use the same public form syntax and execute in
+the native C++ assemblers, including `num_threads=`.  Each real cut point is
+stored once; there is no Python assembly fallback or zero-weight padding.  The
+segmented LinearForm and BilinearForm kernels consume `cell_offsets` directly,
+build DOF/CSR scatter metadata once per active cell, and parallelize cell
+ranges with thread-local vector reduction or race-free CSR coloring.
+
+Implicit-interface quadrature is available on the same Tri3, straight-sided
+Tri6, Tet4, and straight-sided Tet10 background meshes:
+
+```python
+interface_rule = level_set.interface_quadrature(mesh, intorder=2)
+interface_basis = skfem.ImplicitFacetBasis(
+    skfem.Basis(mesh, element), interface_rule,
+)
+
+@skfem.Functional
+def flux_moment(w):
+    return w.x[0] * w.n[0]
+
+moment = skfem.asm(flux_moment, interface_basis)
+```
+
+Tri3 cells reconstruct a line segment; Tri6 reconstructs up to four segments
+from its P1 subtriangles; Tet4/Tet10 cells reconstruct and locally triangulate
+triangular or quadrilateral sections (piecewise across Tet10 subtetrahedra).
+CSR offsets retain the
+background cell association without padding.  Surface weights are positive,
+and `w.n` is the normalized level-set gradient, oriented from negative-inside
+to positive-outside.  Cells whose level set is zero at every node are rejected
+as ambiguous rather than assigned an arbitrary interface.
+
+Embedded two-material interfaces can use independent negative- and
+positive-side spaces.  The pair assembles a block system and reuses the same
+`jump`, `avg`, and `normal_grad` form vocabulary as supermesh coupling:
+
+```python
+negative = skfem.ImplicitFacetBasis(
+    negative_basis, interface_rule, side="negative",
+)
+positive = skfem.ImplicitFacetBasis(
+    positive_basis, interface_rule, side="positive",
+)
+interface = skfem.ImplicitInterfacePair(negative, positive)
+
+@skfem.BilinearForm
+def consistency(u, v, w):
+    return dot(avg(normal_grad(u)), jump(v))
+
+block = skfem.asm(
+    consistency, negative, positive, integration=interface,
+)
+```
+
+The matrix has `(negative.N + positive.N)` rows and columns.  The negative
+normal is `grad(phi) / |grad(phi)|`; the positive normal is its exact opposite.
+The package supplies traces and contractions but does not prescribe Nitsche
+signs, material weighting, or penalty parameters.
+
+Two-sided cross blocks use a segmented C++ kernel: rectangular CSR patterns,
+scatter maps, and coloring are built once per intersected background cell, not
+once per interface quadrature point.  Correctness is checked against an
+independent NumPy local-assembly oracle because scikit-fem has no direct
+implicit-interface object serving as a complete reference.
+
+Geometry regression tests additionally enumerate all simplex sign patterns and
+exercise randomized planes, rigid transforms, scaling, node relabeling,
+inside/outside conservation, and circle/sphere refinement.  Quadrature-point
+ordering is not treated as physical data; measures, moments, normals, and
+assembled operators are the invariants.
+
 The supported form subset is intentionally source-compatible with scikit-fem:
 
 ```python
@@ -829,12 +958,62 @@ result = supermesh.assemble_mortar("slave")
 Bm = result.master_matrix
 Bs = result.slave_matrix
 B = result.coupling_matrix  # [Bm, -Bs]
+
+# Active-set rows remain tied to modelling entities, not overlap ordering.
+metadata = result.multiplier
+active_rows = metadata.rows_for(active_entity_ids, components=[0])
+C_active = B[active_rows]
 ```
 
-The multiplier selector accepts `"slave"` and `"master"` P1 traces,
-`"overlap_p0"`, and a facet-local `"dual"`/biorthogonal trace.  The latter
-uses only small parent-facet Gram matrices.  All global outputs are CSR blocks;
-the implementation does not form a multiplier-sized dense matrix.
+The multiplier selector is a modelling choice rather than a hidden heuristic:
+
+- `"slave"` / `"master"`: nodal P1 trace;
+- `"overlap_p0"`: one constant multiplier per overlap cell;
+- `"slave_facet_p0"` / `"master_facet_p0"`: one constant multiplier per
+  participating parent facet (aliases: `"slave_p0"` / `"master_p0"`);
+- `"dual"`: a facet-local dual/biorthogonal trace.
+
+Facet-P0 collects all supermesh overlap-cell integrals belonging to the same
+parent facet; it does not replace or coarsen the geometric integration.  This
+can substantially reduce multiplier rows and gives contact active sets a
+facet-level unit, while `overlap_p0` remains available when overlap-local
+traction freedom is required.  The dual basis uses only small parent-facet
+Gram matrices.  All global outputs are CSR blocks; the implementation does not
+form a multiplier-sized dense matrix.
+
+Every result contains immutable `MortarMultiplierMetadata`.  Its `space`,
+`entity_kind`, and `side` state how the multiplier was modelled.
+`entity_ids[row_entities[row]]` maps a compact matrix row back to its original
+parent-facet, overlap-cell, or trace-entity ID, and `row_components` records the
+component.  `supported_rows` excludes structurally empty trace rows.
+`rows_for(...)` returns sorted immutable row indices for an entity/component
+active set without rebuilding the mortar integration or imposing a solver.
+
+Solver-independent KKT blocks can be described without allocating the
+monolithic saddle-point matrix:
+
+```python
+rows = result.multiplier.rows_for(active_facet_ids)
+blocks = result.kkt_blocks(
+    primal_matrix,                 # CSR, ordered [master, slave]
+    primal_rhs,
+    constraint_rhs=gap_rhs,
+    rows=rows,
+)
+
+K = blocks.primal_matrix
+C = blocks.coupling_matrix
+f = blocks.primal_rhs
+g = blocks.constraint_rhs
+```
+
+`MortarKKTBlocks` never constructs `bmat([[K, C.T], [C, None]])` and provides
+no factorization or solve policy.  With all rows selected it borrows the
+original `K` and `C` CSR objects; selecting an active set materializes only the
+selected CSR rows.  `multiplier_rows` maps those local constraint rows back to
+the full mortar result.  This is suitable for SciPy Schur prototypes, PETSc
+field splits, or application-specific contact solvers without coupling
+assembly to any one of them.
 
 `supermesh.master_trace` and `supermesh.slave_trace` expose shape values,
 physical gradients, paired outward normals, quadrature weights, physical

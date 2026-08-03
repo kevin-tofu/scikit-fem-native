@@ -48,6 +48,8 @@ from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
 from .supermesh import (
     MortarCouplingResult,
+    MortarKKTBlocks,
+    MortarMultiplierMetadata,
     MortarTraceData,
     SupermeshDiagnostics,
     SupermeshSearch,
@@ -57,6 +59,13 @@ from .interface import InterfaceField
 from .regions import (
     CellRegion,EntityRegion,FacetRegion,NodeRegion,RegionDiagnostics,
 )
+from .levelset import (
+    CellClassification,CellClassificationResult,CutCellQuadrature,
+    CutQuadratureDiagnostics,ImplicitInterfaceQuadrature,
+    LevelSet,LevelSetDiagnostics,
+)
+from .cut_basis import CutCellBasis,ImplicitFacetBasis
+from .implicit_interface import ImplicitInterfacePair
 from .forms import (
     BilinearForm,
     Functional,
@@ -164,6 +173,8 @@ __all__ = [
     "UnsupportedNativeForm",
     "TriangleSupermesh",
     "MortarCouplingResult",
+    "MortarKKTBlocks",
+    "MortarMultiplierMetadata",
     "MortarTraceData",
     "SupermeshDiagnostics",
     "SupermeshSearch",
@@ -173,6 +184,16 @@ __all__ = [
     "FacetRegion",
     "NodeRegion",
     "RegionDiagnostics",
+    "CellClassification",
+    "CellClassificationResult",
+    "CutCellQuadrature",
+    "CutQuadratureDiagnostics",
+    "CutCellBasis",
+    "ImplicitInterfaceQuadrature",
+    "ImplicitFacetBasis",
+    "ImplicitInterfacePair",
+    "LevelSet",
+    "LevelSetDiagnostics",
     "NeoHookeanTet4",
     "NeoHookeanHex8",
     "NeoHookean",

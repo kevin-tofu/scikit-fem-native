@@ -3,7 +3,10 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from ._skfn import BilinearFormAssembler,CrossBilinearAssembler
+from ._skfn import (
+    BilinearFormAssembler,CrossBilinearAssembler,CutBilinearFormAssembler,
+    CutCrossAssembler,
+)
 
 
 class NativeBilinearForm:
@@ -14,15 +17,23 @@ class NativeBilinearForm:
         components = basis.elem._dim
         nodes = len(scalar.doflocs)
         entities, quadrature = basis.dx.shape
-        dofs = basis.element_dofs.T.reshape(entities, nodes, components)
-        self._native = BilinearFormAssembler(
-            np.asarray(dofs, dtype=np.int64, order="C"),
-            np.asarray(basis.tabulated_shape, dtype=np.float64, order="C"),
-            np.asarray(
-                basis.tabulated_gradients, dtype=np.float64, order="C"
-            ),
-            np.asarray(basis.dx, dtype=np.float64, order="C"),
-        )
+        self._cut=hasattr(basis,"cell_offsets")
+        if self._cut:
+            self._native=CutBilinearFormAssembler(
+                np.ascontiguousarray(basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(basis.active_cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(basis.shape,dtype=np.float64),
+                np.ascontiguousarray(basis.gradients,dtype=np.float64),
+                np.ascontiguousarray(basis.weights,dtype=np.float64),
+            )
+        else:
+            dofs = basis.element_dofs.T.reshape(entities, nodes, components)
+            self._native = BilinearFormAssembler(
+                np.asarray(dofs,dtype=np.int64,order="C"),
+                np.asarray(basis.tabulated_shape,dtype=np.float64,order="C"),
+                np.asarray(basis.tabulated_gradients,dtype=np.float64,order="C"),
+                np.asarray(basis.dx,dtype=np.float64,order="C"),
+            )
         self._coefficient_shape = (entities, quadrature)
         self._matrix = csr_matrix(
             (
@@ -38,6 +49,9 @@ class NativeBilinearForm:
     def assemble(self,*,value=None,gradient=None,num_threads=0):
         value = self._coefficient("value", value)
         gradient = self._coefficient("gradient", gradient)
+        if self._cut:
+            if value is not None:value=value.reshape(-1)
+            if gradient is not None:gradient=gradient.reshape(-1)
         self._native.assemble(value,gradient,num_threads)
         return self._matrix
 
@@ -79,26 +93,49 @@ class NativeCrossBilinearForm:
                 "trial and test quadrature coordinates must match"
             )
         entities=test_basis.dx.shape[0]
-        test_dofs=test_basis.element_dofs.T.reshape(
-            entities,len(test_scalar.doflocs),test_components
+        self._cut=(
+            hasattr(test_basis,"cell_offsets")
+            and hasattr(trial_basis,"cell_offsets")
         )
-        trial_dofs=trial_basis.element_dofs.T.reshape(
-            entities,len(trial_scalar.doflocs),trial_components
-        )
-        self._native=CrossBilinearAssembler(
-            np.ascontiguousarray(test_dofs,dtype=np.int64),
-            np.ascontiguousarray(trial_dofs,dtype=np.int64),
-            np.ascontiguousarray(test_basis.tabulated_shape),
-            np.ascontiguousarray(trial_basis.tabulated_shape),
-            np.ascontiguousarray(test_basis.dx),
-            np.ascontiguousarray(test_basis.tabulated_gradients),
-            np.ascontiguousarray(trial_basis.tabulated_gradients),
-        )
+        if self._cut:
+            if not np.array_equal(
+                test_basis.active_cell_offsets,
+                trial_basis.active_cell_offsets,
+            ):
+                raise ValueError("cut cross bases have different cell offsets")
+            self._native=CutCrossAssembler(
+                np.ascontiguousarray(test_basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(trial_basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(test_basis.active_cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(test_basis.shape),
+                np.ascontiguousarray(trial_basis.shape),
+                np.ascontiguousarray(test_basis.weights),
+                np.ascontiguousarray(test_basis.gradients),
+                np.ascontiguousarray(trial_basis.gradients),
+            )
+        else:
+            test_dofs=test_basis.element_dofs.T.reshape(
+                entities,len(test_scalar.doflocs),test_components
+            )
+            trial_dofs=trial_basis.element_dofs.T.reshape(
+                entities,len(trial_scalar.doflocs),trial_components
+            )
+            self._native=CrossBilinearAssembler(
+                np.ascontiguousarray(test_dofs,dtype=np.int64),
+                np.ascontiguousarray(trial_dofs,dtype=np.int64),
+                np.ascontiguousarray(test_basis.tabulated_shape),
+                np.ascontiguousarray(trial_basis.tabulated_shape),
+                np.ascontiguousarray(test_basis.dx),
+                np.ascontiguousarray(test_basis.tabulated_gradients),
+                np.ascontiguousarray(trial_basis.tabulated_gradients),
+            )
         self.shape=(test_basis.N,trial_basis.N)
         self.coefficient_shape=test_basis.dx.shape
         self.test_components=test_components
         self.trial_components=trial_components
         self.dimension=test_basis.mesh.dim()
+        self.test_normals=getattr(test_basis,"normals",None)
+        self.trial_normals=getattr(trial_basis,"normals",None)
 
     def assemble(self,kind,coefficient):
         coefficient=np.asarray(coefficient,dtype=np.float64)
@@ -149,9 +186,10 @@ class NativeCrossBilinearForm:
             row_kind=column_kind=(
                 "gradient" if kind=="gradient" else "value"
             )
-        self._native.assemble(
-            np.ascontiguousarray(coefficient),row_kind,column_kind
+        native_coefficient=np.ascontiguousarray(
+            np.squeeze(coefficient,axis=1) if self._cut else coefficient
         )
+        self._native.assemble(native_coefficient,row_kind,column_kind)
         matrix=csr_matrix(
             (
                 self._native.values,self._native.indices,
@@ -160,6 +198,98 @@ class NativeCrossBilinearForm:
             shape=(self._native.rows,self._native.columns),
             copy=False,
         )
+        matrix.resize(self.shape)
+        return matrix.copy()
+
+    def assemble_kinds(
+        self,row_kind,column_kind,coefficient=1.,*,num_threads=0,
+    ):
+        """Assemble arbitrary value/gradient/normal-gradient contractions."""
+        valid={"value","gradient","normal_gradient"}
+        if row_kind not in valid or column_kind not in valid:
+            raise ValueError("cross kind must be value, gradient, or normal_gradient")
+        if self.test_components!=self.trial_components:
+            raise ValueError("cross contractions require matching components")
+        scalar=np.broadcast_to(
+            np.asarray(coefficient,dtype=np.float64),self.coefficient_shape
+        )
+        row_gradient=row_kind!="value";column_gradient=column_kind!="value"
+        tensor_shape=(self.test_components,)
+        if row_gradient:tensor_shape+=(self.dimension,)
+        tensor_shape+=(self.trial_components,)
+        if column_gradient:tensor_shape+=(self.dimension,)
+        tensor=np.zeros(self.coefficient_shape+tensor_shape,dtype=np.float64)
+        row_normals=(
+            None if row_kind!="normal_gradient" else
+            np.asarray(self.test_normals,dtype=np.float64)
+        )
+        column_normals=(
+            None if column_kind!="normal_gradient" else
+            np.asarray(self.trial_normals,dtype=np.float64)
+        )
+        if row_kind=="normal_gradient" and row_normals is None:
+            raise ValueError("row normal_gradient requires test-basis normals")
+        if column_kind=="normal_gradient" and column_normals is None:
+            raise ValueError("column normal_gradient requires trial-basis normals")
+        for component in range(self.test_components):
+            if not row_gradient and not column_gradient:
+                tensor[...,component,component]=scalar
+            elif row_gradient and not column_gradient:
+                direction=(
+                    row_normals if row_normals is not None else
+                    np.ones(self.coefficient_shape+(self.dimension,))
+                )
+                for axis in range(self.dimension):
+                    factor=(
+                        direction[...,axis] if row_normals is not None
+                        else (1. if self.dimension==1 else None)
+                    )
+                    if factor is None:
+                        tensor[...,component,axis,component]=scalar
+                    else:
+                        tensor[...,component,axis,component]=scalar*factor
+            elif not row_gradient and column_gradient:
+                direction=(
+                    column_normals if column_normals is not None else
+                    np.ones(self.coefficient_shape+(self.dimension,))
+                )
+                for axis in range(self.dimension):
+                    factor=(
+                        direction[...,axis] if column_normals is not None
+                        else (1. if self.dimension==1 else None)
+                    )
+                    if factor is None:
+                        tensor[...,component,component,axis]=scalar
+                    else:
+                        tensor[...,component,component,axis]=scalar*factor
+            else:
+                for row_axis in range(self.dimension):
+                    for column_axis in range(self.dimension):
+                        if row_normals is None and column_normals is None:
+                            factor=1. if row_axis==column_axis else 0.
+                        else:
+                            factor=1.
+                            if row_normals is not None:
+                                factor=factor*row_normals[...,row_axis]
+                            elif row_axis!=column_axis:
+                                factor=0.
+                            if column_normals is not None:
+                                factor=factor*column_normals[...,column_axis]
+                        tensor[...,component,row_axis,component,column_axis]=(
+                            scalar*factor
+                        )
+        native_tensor=np.ascontiguousarray(
+            np.squeeze(tensor,axis=1) if self._cut else tensor
+        )
+        self._native.assemble(
+            native_tensor,
+            "gradient" if row_gradient else "value",
+            "gradient" if column_gradient else "value",
+            num_threads,
+        )
+        matrix=csr_matrix((
+            self._native.values,self._native.indices,self._native.indptr,
+        ),shape=(self._native.rows,self._native.columns),copy=False)
         matrix.resize(self.shape)
         return matrix.copy()
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ._skfn import LinearFormAssembler
+from ._skfn import CutLinearFormAssembler,LinearFormAssembler
 
 
 @dataclass(frozen=True)
@@ -30,15 +30,23 @@ class NativeLinearForm:
         gradients=np.asarray(
             basis.tabulated_gradients,dtype=np.float64,order="C"
         )
-        dofs = basis.element_dofs.T.reshape(
-            entity_count, nodes, components
-        )
-        self._native = LinearFormAssembler(
-            np.asarray(dofs, dtype=np.int64, order="C"),
-            shape,
-            gradients,
-            np.asarray(basis.dx, dtype=np.float64, order="C"),
-        )
+        self._cut=hasattr(basis,"cell_offsets")
+        if self._cut:
+            self._native=CutLinearFormAssembler(
+                np.ascontiguousarray(basis.active_cell_dofs,dtype=np.int64),
+                np.ascontiguousarray(basis.active_cell_offsets,dtype=np.int64),
+                np.ascontiguousarray(basis.shape,dtype=np.float64),
+                np.ascontiguousarray(basis.gradients,dtype=np.float64),
+                np.ascontiguousarray(basis.weights,dtype=np.float64),
+            )
+        else:
+            dofs = basis.element_dofs.T.reshape(
+                entity_count, nodes, components
+            )
+            self._native = LinearFormAssembler(
+                np.asarray(dofs, dtype=np.int64, order="C"),shape,gradients,
+                np.asarray(basis.dx,dtype=np.float64,order="C"),
+            )
         self._shape = (entity_count, quadrature_count, components)
         self._gradient_shape = (
             entity_count,
@@ -62,10 +70,21 @@ class NativeLinearForm:
         gradient = self._coefficient(
             "gradient", gradient, self._gradient_shape
         )
-        result, seconds = self._native.assemble(value,gradient,num_threads)
+        if self._cut:
+            if value is not None and value.ndim==3:
+                value=value[:,0,:]
+            if gradient is not None and gradient.ndim==4:
+                gradient=gradient[:,0,:,:]
+            result,seconds=self._native.assemble(value,gradient,num_threads)
+            entity_count=self._native.cell_count
+            point_count=self._native.point_count
+        else:
+            result,seconds=self._native.assemble(value,gradient,num_threads)
+            entity_count=self._native.entity_count
+            point_count=self._native.quadrature_point_count
         return result, LinearFormDiagnostics(
-            entity_count=self._native.entity_count,
-            quadrature_point_count=self._native.quadrature_point_count,
+            entity_count=entity_count,
+            quadrature_point_count=point_count,
             assembly_seconds=seconds,
         )
 
