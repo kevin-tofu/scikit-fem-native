@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.sparse import bmat, csr_matrix, hstack
+from scipy.sparse import bmat, csr_matrix, hstack, isspmatrix_csr
 
 from .basis import DiscreteField
 from ._skfn import (
@@ -290,6 +290,51 @@ class MortarMultiplierMetadata:
 
 
 @dataclass(frozen=True)
+class MortarKKTBlocks:
+    """Solver-independent ``K``/``C`` blocks without a monolithic KKT matrix."""
+
+    primal_matrix: csr_matrix
+    coupling_matrix: csr_matrix
+    primal_rhs: np.ndarray
+    constraint_rhs: np.ndarray
+    multiplier_metadata: MortarMultiplierMetadata
+    multiplier_rows: np.ndarray
+
+    def __post_init__(self):
+        if not isspmatrix_csr(self.primal_matrix):
+            raise TypeError("primal_matrix must be a CSR matrix")
+        if not isspmatrix_csr(self.coupling_matrix):
+            raise TypeError("coupling_matrix must be a CSR matrix")
+        primal_size=self.primal_matrix.shape[0]
+        if self.primal_matrix.shape!=(primal_size,primal_size):
+            raise ValueError("primal_matrix must be square")
+        if self.coupling_matrix.shape[1]!=primal_size:
+            raise ValueError("primal and coupling matrix sizes differ")
+        if self.primal_rhs.shape!=(primal_size,):
+            raise ValueError("primal_rhs has the wrong shape")
+        multiplier_size=self.coupling_matrix.shape[0]
+        if self.constraint_rhs.shape!=(multiplier_size,):
+            raise ValueError("constraint_rhs has the wrong shape")
+        if self.multiplier_rows.shape!=(multiplier_size,):
+            raise ValueError("multiplier_rows has the wrong shape")
+        if not np.all(np.isfinite(self.primal_rhs)):
+            raise ValueError("primal_rhs contains non-finite values")
+        if not np.all(np.isfinite(self.constraint_rhs)):
+            raise ValueError("constraint_rhs contains non-finite values")
+        self.primal_rhs.flags.writeable=False
+        self.constraint_rhs.flags.writeable=False
+        self.multiplier_rows.flags.writeable=False
+
+    @property
+    def primal_size(self):
+        return self.primal_matrix.shape[0]
+
+    @property
+    def multiplier_size(self):
+        return self.coupling_matrix.shape[0]
+
+
+@dataclass(frozen=True)
 class MortarCouplingResult:
     """Sparse mortar constraint blocks, ``[master, -slave]``."""
 
@@ -299,6 +344,54 @@ class MortarCouplingResult:
     overlap_area: float
     diagnostics: SupermeshDiagnostics
     multiplier: MortarMultiplierMetadata
+
+    def kkt_blocks(
+        self,primal_matrix,primal_rhs,*,constraint_rhs=None,rows=None,
+    ):
+        """Describe selected KKT blocks without constructing ``[[K,C.T],[C,0]]``."""
+        if not isspmatrix_csr(primal_matrix):
+            raise TypeError("primal_matrix must be a CSR matrix")
+        if rows is None:
+            selected=np.arange(
+                self.coupling_matrix.shape[0],dtype=np.int64
+            )
+            coupling=self.coupling_matrix
+        else:
+            selected=np.asarray(rows,dtype=np.int64)
+            if selected.ndim!=1:
+                raise ValueError("multiplier rows must be one-dimensional")
+            if len(np.unique(selected))!=len(selected):
+                raise ValueError("multiplier rows must be unique")
+            if np.any(selected<0) or np.any(
+                selected>=self.coupling_matrix.shape[0]
+            ):
+                raise IndexError("multiplier row is out of bounds")
+            coupling=csr_matrix(self.coupling_matrix[selected])
+        primal_rhs=_readonly_vector(primal_rhs,"primal_rhs")
+        if constraint_rhs is None:
+            constraints=np.zeros(len(selected),dtype=np.float64)
+        else:
+            supplied=_readonly_vector(constraint_rhs,"constraint_rhs")
+            if supplied.shape==(self.coupling_matrix.shape[0],):
+                constraints=np.array(supplied[selected],copy=True)
+            elif supplied.shape==(len(selected),):
+                constraints=supplied
+            else:
+                raise ValueError("constraint_rhs has the wrong shape")
+        selected=np.array(selected,dtype=np.int64,copy=True)
+        return MortarKKTBlocks(
+            primal_matrix,coupling,primal_rhs,constraints,
+            self.multiplier,selected,
+        )
+
+
+def _readonly_vector(values,name):
+    array=np.asarray(values,dtype=np.float64)
+    if array.ndim!=1:
+        raise ValueError(f"{name} must be one-dimensional")
+    result=array.view()
+    result.flags.writeable=False
+    return result
 
 
 def _aabb_candidates(master_xyz, slave_xyz, tolerance):

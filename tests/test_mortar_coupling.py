@@ -1,5 +1,6 @@
 import numpy as np
-from scipy.sparse import csr_matrix
+import pytest
+from scipy.sparse import csr_matrix,eye
 
 import skfemntv
 
@@ -100,6 +101,57 @@ def test_vector_facet_p0_metadata_can_select_entity_and_component():
     assert len(rows)==1
     assert metadata.row_components[rows[0]]==1
     assert metadata.entity_ids[metadata.row_entities[rows[0]]]==entity
+
+
+def test_kkt_blocks_keep_sparse_blocks_separate_and_select_active_rows():
+    mp,mt,sp,st=_nonmatching_surface()
+    result=skfemntv.TriangleSupermesh(
+        mp,mt,sp,st
+    ).assemble_mortar("slave_facet_p0")
+    stiffness=eye(7,format="csr")
+    force=np.arange(7,dtype=np.float64)
+
+    all_blocks=result.kkt_blocks(stiffness,force)
+    assert isinstance(all_blocks,skfemntv.MortarKKTBlocks)
+    assert all_blocks.primal_matrix is stiffness
+    assert all_blocks.coupling_matrix is result.coupling_matrix
+    assert all_blocks.primal_size==7
+    assert all_blocks.multiplier_size==2
+    assert all_blocks.multiplier_metadata is result.multiplier
+    np.testing.assert_array_equal(all_blocks.multiplier_rows,[0,1])
+    np.testing.assert_array_equal(all_blocks.constraint_rhs,[0.,0.])
+
+    rows=result.multiplier.rows_for([1])
+    active=result.kkt_blocks(
+        stiffness,force,constraint_rhs=np.array([3.,4.]),rows=rows
+    )
+    assert active.coupling_matrix.shape==(1,7)
+    np.testing.assert_allclose(
+        active.coupling_matrix.toarray(),
+        result.coupling_matrix[[1]].toarray(),
+    )
+    np.testing.assert_array_equal(active.constraint_rhs,[4.])
+    np.testing.assert_array_equal(active.multiplier_rows,[1])
+    for array in (
+        all_blocks.primal_rhs,all_blocks.constraint_rhs,
+        all_blocks.multiplier_rows,active.constraint_rhs,
+    ):
+        assert not array.flags.writeable
+
+
+def test_kkt_blocks_validate_sparse_shapes_and_row_selection():
+    mp,mt,sp,st=_nonmatching_surface()
+    result=skfemntv.TriangleSupermesh(mp,mt,sp,st).assemble_mortar()
+    stiffness=eye(7,format="csr")
+
+    with pytest.raises(TypeError,match="CSR"):
+        result.kkt_blocks(np.eye(7),np.ones(7))
+    with pytest.raises(ValueError,match="unique"):
+        result.kkt_blocks(stiffness,np.ones(7),rows=[0,0])
+    with pytest.raises(IndexError,match="bounds"):
+        result.kkt_blocks(stiffness,np.ones(7),rows=[99])
+    with pytest.raises(ValueError,match="primal_rhs"):
+        result.kkt_blocks(stiffness,np.ones(6))
 
 
 def test_local_dual_basis_is_biorthogonal_on_one_facet():

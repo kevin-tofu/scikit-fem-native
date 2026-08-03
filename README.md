@@ -989,6 +989,32 @@ component.  `supported_rows` excludes structurally empty trace rows.
 `rows_for(...)` returns sorted immutable row indices for an entity/component
 active set without rebuilding the mortar integration or imposing a solver.
 
+Solver-independent KKT blocks can be described without allocating the
+monolithic saddle-point matrix:
+
+```python
+rows = result.multiplier.rows_for(active_facet_ids)
+blocks = result.kkt_blocks(
+    primal_matrix,                 # CSR, ordered [master, slave]
+    primal_rhs,
+    constraint_rhs=gap_rhs,
+    rows=rows,
+)
+
+K = blocks.primal_matrix
+C = blocks.coupling_matrix
+f = blocks.primal_rhs
+g = blocks.constraint_rhs
+```
+
+`MortarKKTBlocks` never constructs `bmat([[K, C.T], [C, None]])` and provides
+no factorization or solve policy.  With all rows selected it borrows the
+original `K` and `C` CSR objects; selecting an active set materializes only the
+selected CSR rows.  `multiplier_rows` maps those local constraint rows back to
+the full mortar result.  This is suitable for SciPy Schur prototypes, PETSc
+field splits, or application-specific contact solvers without coupling
+assembly to any one of them.
+
 `supermesh.master_trace` and `supermesh.slave_trace` expose shape values,
 physical gradients, paired outward normals, quadrature weights, physical
 coordinates, DOF maps, and parent facet/element indices at the same physical

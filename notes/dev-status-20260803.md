@@ -131,6 +131,14 @@ structurally supported rows.  Its `rows_for` selector lets an external contact
 active set select constraints by original facet/overlap/trace entity without
 making KKT construction or a particular linear solver part of skfemntv.
 
+`MortarKKTBlocks` is a solver-independent sparse block descriptor containing
+CSR `K`, active CSR `C`, primal/constraint right-hand sides, full multiplier
+metadata, and the active-to-full multiplier row map.  It deliberately has no
+full-KKT constructor, factorization, active-set policy, or solve method.  The
+all-row path borrows existing CSR blocks without copying; active selection
+materializes only selected constraint rows.  Primal ordering is explicitly the
+mortar coupling column ordering `[master, slave]`.
+
 ## Parallelism and performance
 
 Native thread controls are available globally, through a context manager, and
