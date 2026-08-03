@@ -125,6 +125,12 @@ supermesh quadrature while collecting rows by the selected parent facet, so it
 offers a lower-dimensional KKT/active-set path without removing overlap-P0 or
 nodal/dual alternatives.
 
+`MortarMultiplierMetadata` preserves the selected space, entity kind, side,
+original entity IDs, compact row-to-entity mapping, component IDs, and
+structurally supported rows.  Its `rows_for` selector lets an external contact
+active set select constraints by original facet/overlap/trace entity without
+making KKT construction or a particular linear solver part of skfemntv.
+
 ## Parallelism and performance
 
 Native thread controls are available globally, through a context manager, and

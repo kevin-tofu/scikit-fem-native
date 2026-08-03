@@ -958,6 +958,11 @@ result = supermesh.assemble_mortar("slave")
 Bm = result.master_matrix
 Bs = result.slave_matrix
 B = result.coupling_matrix  # [Bm, -Bs]
+
+# Active-set rows remain tied to modelling entities, not overlap ordering.
+metadata = result.multiplier
+active_rows = metadata.rows_for(active_entity_ids, components=[0])
+C_active = B[active_rows]
 ```
 
 The multiplier selector is a modelling choice rather than a hidden heuristic:
@@ -975,6 +980,14 @@ facet-level unit, while `overlap_p0` remains available when overlap-local
 traction freedom is required.  The dual basis uses only small parent-facet
 Gram matrices.  All global outputs are CSR blocks; the implementation does not
 form a multiplier-sized dense matrix.
+
+Every result contains immutable `MortarMultiplierMetadata`.  Its `space`,
+`entity_kind`, and `side` state how the multiplier was modelled.
+`entity_ids[row_entities[row]]` maps a compact matrix row back to its original
+parent-facet, overlap-cell, or trace-entity ID, and `row_components` records the
+component.  `supported_rows` excludes structurally empty trace rows.
+`rows_for(...)` returns sorted immutable row indices for an entity/component
+active set without rebuilding the mortar integration or imposing a solver.
 
 `supermesh.master_trace` and `supermesh.slave_trace` expose shape values,
 physical gradients, paired outward normals, quadrature weights, physical

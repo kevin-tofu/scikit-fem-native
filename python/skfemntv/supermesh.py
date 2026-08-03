@@ -237,6 +237,59 @@ class MortarTraceData:
 
 
 @dataclass(frozen=True)
+class MortarMultiplierMetadata:
+    """Stable mapping from multiplier rows to modelling entities."""
+
+    space: str
+    entity_kind: str
+    side: str | None
+    entity_ids: np.ndarray
+    row_entities: np.ndarray
+    row_components: np.ndarray
+    supported_rows: np.ndarray
+
+    def __post_init__(self):
+        arrays=(
+            self.entity_ids,self.row_entities,self.row_components,
+            self.supported_rows,
+        )
+        if any(np.asarray(array).ndim!=1 for array in arrays):
+            raise ValueError("mortar multiplier metadata arrays must be 1D")
+        if len(self.row_entities)!=len(self.row_components):
+            raise ValueError("mortar row metadata lengths differ")
+        for array in arrays:
+            array.flags.writeable=False
+
+    @property
+    def row_count(self):
+        return len(self.row_entities)
+
+    def rows_for(
+        self,entity_ids=None,*,components=None,supported_only=True,
+    ):
+        """Return sorted multiplier rows for an active-set selection."""
+        selected=np.ones(self.row_count,dtype=bool)
+        if entity_ids is not None:
+            requested=np.asarray(entity_ids,dtype=np.int64)
+            if requested.ndim!=1:
+                raise ValueError("entity_ids must be one-dimensional")
+            row_ids=self.entity_ids[self.row_entities]
+            selected&=np.isin(row_ids,requested)
+        if components is not None:
+            requested=np.asarray(components,dtype=np.int64)
+            if requested.ndim!=1:
+                raise ValueError("components must be one-dimensional")
+            selected&=np.isin(self.row_components,requested)
+        if supported_only:
+            support=np.zeros(self.row_count,dtype=bool)
+            support[self.supported_rows]=True
+            selected&=support
+        result=np.flatnonzero(selected).astype(np.int64,copy=False)
+        result.flags.writeable=False
+        return result
+
+
+@dataclass(frozen=True)
 class MortarCouplingResult:
     """Sparse mortar constraint blocks, ``[master, -slave]``."""
 
@@ -245,6 +298,7 @@ class MortarCouplingResult:
     coupling_matrix: csr_matrix
     overlap_area: float
     diagnostics: SupermeshDiagnostics
+    multiplier: MortarMultiplierMetadata
 
 
 def _aabb_candidates(master_xyz, slave_xyz, tolerance):
@@ -855,6 +909,7 @@ class TriangleSupermesh:
                 "mortar coupling currently requires equal trace component counts"
             )
         components=master_components
+        entity_ids=None;entity_kind="trace_entity";metadata_side=None
         if multiplier in {
             "overlap_p0","slave_facet_p0","master_facet_p0"
         }:
@@ -862,15 +917,23 @@ class TriangleSupermesh:
             if multiplier=="overlap_p0":
                 entity_indices=np.arange(entities,dtype=np.int64)
                 multiplier_entities=entities
+                entity_ids=np.arange(entities,dtype=np.int64)
+                entity_kind="overlap_cell"
             else:
                 parents=(
                     self._slave_parent_facets
                     if multiplier=="slave_facet_p0"
                     else self._master_parent_facets
                 )
-                _,entity_indices=np.unique(parents,return_inverse=True)
+                entity_ids,entity_indices=np.unique(
+                    parents,return_inverse=True
+                )
                 multiplier_entities=(
                     int(entity_indices.max())+1 if len(entity_indices) else 0
+                )
+                entity_kind="parent_facet"
+                metadata_side=(
+                    "slave" if multiplier=="slave_facet_p0" else "master"
                 )
             multiplier_dofs=(
                 components*entity_indices[:,None,None]
@@ -880,6 +943,7 @@ class TriangleSupermesh:
             multiplier_size=multiplier_entities*components
         else:
             side=dual_side if multiplier=="dual" else multiplier
+            metadata_side=side
             multiplier_dofs=(
                 self._row_dofs if side=="master" else self._column_dofs
             )
@@ -888,6 +952,9 @@ class TriangleSupermesh:
                 copy=True,
             )
             multiplier_size=self.master_size if side=="master" else self.slave_size
+            entity_ids=np.arange(
+                multiplier_size//components,dtype=np.int64
+            )
             if multiplier=="dual":
                 parents=(
                     self._master_parent_facets if side=="master"
@@ -914,9 +981,24 @@ class TriangleSupermesh:
             multiplier_size,self.slave_size,num_threads,
         )
         coupling=csr_matrix(hstack((master_matrix,-slave_matrix),format="csr"))
+        entity_count=len(entity_ids)
+        row_entities=np.repeat(
+            np.arange(entity_count,dtype=np.int64),components
+        )
+        row_components=np.tile(
+            np.arange(components,dtype=np.int64),entity_count
+        )
+        supported_rows=np.flatnonzero(
+            np.diff(coupling.indptr)>0
+        ).astype(np.int64,copy=False)
+        metadata=MortarMultiplierMetadata(
+            multiplier,entity_kind,metadata_side,
+            np.asarray(entity_ids,dtype=np.int64),row_entities,
+            row_components,supported_rows,
+        )
         return MortarCouplingResult(
             master_matrix,slave_matrix,coupling,
-            self.diagnostics.overlap_area,self.diagnostics,
+            self.diagnostics.overlap_area,self.diagnostics,metadata,
         )
 
     def _assemble_mortar_block(

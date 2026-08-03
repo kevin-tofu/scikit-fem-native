@@ -60,6 +60,48 @@ def test_facet_p0_collects_overlap_cells_without_changing_integrals():
     )
 
 
+def test_multiplier_metadata_maps_compact_rows_to_parent_facets():
+    mp,mt,sp,st=_nonmatching_surface()
+    result=skfemntv.TriangleSupermesh(
+        mp,mt,sp,st
+    ).assemble_mortar("slave_facet_p0")
+    metadata=result.multiplier
+
+    assert isinstance(metadata,skfemntv.MortarMultiplierMetadata)
+    assert metadata.space=="slave_facet_p0"
+    assert metadata.entity_kind=="parent_facet"
+    assert metadata.side=="slave"
+    np.testing.assert_array_equal(metadata.entity_ids,[0,1])
+    np.testing.assert_array_equal(metadata.row_entities,[0,1])
+    np.testing.assert_array_equal(metadata.row_components,[0,0])
+    np.testing.assert_array_equal(metadata.supported_rows,[0,1])
+    np.testing.assert_array_equal(metadata.rows_for([1]),[1])
+    for array in (
+        metadata.entity_ids,metadata.row_entities,metadata.row_components,
+        metadata.supported_rows,metadata.rows_for([0]),
+    ):
+        assert not array.flags.writeable
+
+
+def test_vector_facet_p0_metadata_can_select_entity_and_component():
+    mesh=skfemntv.MeshTet()
+    basis=skfemntv.FacetBasis(
+        mesh,skfemntv.ElementVector(skfemntv.ElementTetP1(),dim=2),
+        intorder=2,
+    )
+    result=skfemntv.TriangleSupermesh.from_facets(
+        basis,basis
+    ).assemble_mortar("master_facet_p0")
+    metadata=result.multiplier
+
+    assert metadata.row_count==2*len(metadata.entity_ids)
+    entity=int(metadata.entity_ids[1])
+    rows=metadata.rows_for([entity],components=[1])
+    assert len(rows)==1
+    assert metadata.row_components[rows[0]]==1
+    assert metadata.entity_ids[metadata.row_entities[rows[0]]]==entity
+
+
 def test_local_dual_basis_is_biorthogonal_on_one_facet():
     points=np.array([[0.,1.,0.],[0.,0.,1.],[0.,0.,0.]])
     triangles=np.array([[0],[1],[2]])

@@ -44,6 +44,7 @@ from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
 from .supermesh import (
     MortarCouplingResult,
+    MortarMultiplierMetadata,
     MortarTraceData,
     SupermeshDiagnostics,
     SupermeshSearch,
@@ -163,6 +164,7 @@ __all__ = [
     "UnsupportedNativeForm",
     "TriangleSupermesh",
     "MortarCouplingResult",
+    "MortarMultiplierMetadata",
     "MortarTraceData",
     "SupermeshDiagnostics",
     "SupermeshSearch",
