@@ -38,6 +38,10 @@ NATIVE_PARALLEL_SCRIPT=(
 SUPERMESH_PARALLEL_SCRIPT=(
     Path(__file__).parents[1]/"benchmarks"/"supermesh_parallel.py"
 )
+MORTAR_STRATEGIES_SCRIPT=(
+    Path(__file__).parents[1]
+    /"benchmarks"/"mortar-strategies"/"mortar_strategies.py"
+)
 CUT_ASSEMBLY_SCRIPT=(
     Path(__file__).parents[1]/"benchmarks"/"cutfem"/"cut_assembly.py"
 )
@@ -235,3 +239,22 @@ def test_supermesh_parallel_benchmark_smoke(tmp_path):
     assert "overlap_cells" in result.stdout
     assert "| coupling | 2 |" in result.stdout
     assert len(output.read_text().splitlines())==3
+
+
+def test_mortar_strategies_benchmark_smoke(tmp_path):
+    output=tmp_path/"mortar-strategies.csv"
+    result=subprocess.run(
+        [
+            sys.executable,str(MORTAR_STRATEGIES_SCRIPT),
+            "--cells","2","--repeat","1","--threads","2",
+            "--output",str(output),
+        ],
+        cwd=MORTAR_STRATEGIES_SCRIPT.parents[2],
+        capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    for strategy in (
+        "fine","coarse-p0","algebraic-qr","algebraic-svd"
+    ):
+        assert f"| {strategy} |" in result.stdout
+    assert len(output.read_text().splitlines())==5
