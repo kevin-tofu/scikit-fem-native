@@ -35,7 +35,7 @@ Repository = "https://github.com/kevin-tofu/skfem-native"
 Issues = "https://github.com/kevin-tofu/skfem-native/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=8", "scikit-fem>=10", "matplotlib>=3.8"]
+test = ["pytest>=8", "scikit-fem>=10", "shapely>=2", "matplotlib>=3.8"]
 benchmark = ["scikit-fem>=10", "shapely>=2", "matplotlib>=3.8"]
 
 [tool.scikit-build]
@@ -54,7 +54,7 @@ sdist.include = [
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = ["*-musllinux_*", "*-win32", "cp3??t-*"]
-test-requires = ["pytest>=8", "scikit-fem>=10", "matplotlib>=3.8"]
+test-requires = ["pytest>=8", "scikit-fem>=10", "shapely>=2", "matplotlib>=3.8"]
 test-command = "pytest {project}/tests -q"
 
 [tool.pytest.ini_options]
