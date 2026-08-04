@@ -1242,6 +1242,7 @@ class TriangleSupermesh:
         matrix.resize((rows,columns))
         return matrix
 
+
     def interpolate(self,master_coefficients,slave_coefficients):
         """Interpolate both interface fields at overlap quadrature points."""
         return (
@@ -1523,3 +1524,13 @@ class TriangleSupermesh:
         )
         matrix.resize((rows,columns))
         return matrix
+
+
+class InterfaceSupermesh(TriangleSupermesh):
+    """Facet-interface supermesh supporting triangular and quadrilateral faces.
+
+    Quadrilateral and high-order faces are tessellated into search triangles
+    while their parent ``FacetBasis`` shapes and gradients remain the fields
+    used for integration.  ``TriangleSupermesh`` remains as a compatibility
+    name for direct triangle-soup construction.
+    """

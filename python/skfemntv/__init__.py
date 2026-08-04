@@ -47,6 +47,7 @@ from .evaluation import EvaluationDiagnostics, NativeEvaluation
 from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
 from .supermesh import (
+    InterfaceSupermesh,
     MortarCouplingResult,
     MortarReductionDiagnostics,
     MortarKKTBlocks,
@@ -57,6 +58,11 @@ from .supermesh import (
     TriangleSupermesh,
 )
 from .interface import InterfaceField
+from .nitsche import (
+    NitscheStabilizationDiagnostics,
+    SymmetricNitscheResult,
+    assemble_symmetric_nitsche,
+)
 from .regions import (
     CellRegion,EntityRegion,FacetRegion,NodeRegion,RegionDiagnostics,
 )
@@ -173,6 +179,7 @@ __all__ = [
     "asm",
     "UnsupportedNativeForm",
     "TriangleSupermesh",
+    "InterfaceSupermesh",
     "MortarCouplingResult",
     "MortarReductionDiagnostics",
     "MortarKKTBlocks",
@@ -181,6 +188,9 @@ __all__ = [
     "SupermeshDiagnostics",
     "SupermeshSearch",
     "InterfaceField",
+    "NitscheStabilizationDiagnostics",
+    "SymmetricNitscheResult",
+    "assemble_symmetric_nitsche",
     "EntityRegion",
     "CellRegion",
     "FacetRegion",
