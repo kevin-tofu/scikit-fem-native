@@ -223,6 +223,73 @@ class SupermeshDiagnostics:
 
 
 @dataclass(frozen=True)
+class ContactFacetSearchResult:
+    """Parent facets participating in piecewise-3D projected overlap."""
+
+    master_parent_facets: np.ndarray
+    slave_parent_facets: np.ndarray
+    projection_tolerance: float
+    candidate_pair_count: int
+    overlap_pair_count: int
+    maximum_plane_gap: float
+
+
+def contact_projection_tolerance(
+    master_points, master_triangles, slave_points, slave_triangles,
+    *, tolerance=1e-10, relative_tolerance=0.05,
+):
+    """Choose a gap tolerance from the median contact-facet edge length."""
+
+    lengths=[]
+    for points,triangles in (
+        (master_points,master_triangles),(slave_points,slave_triangles)
+    ):
+        points=np.asarray(points,dtype=float)
+        triangles=np.asarray(triangles,dtype=np.int64)
+        if points.shape[0]!=3: points=points.T
+        if triangles.shape[0]!=3: triangles=triangles.T
+        xyz=np.transpose(points[:,triangles],(2,1,0))
+        for first,second in ((0,1),(1,2),(2,0)):
+            lengths.extend(np.linalg.norm(
+                xyz[:,second]-xyz[:,first],axis=1
+            ).tolist())
+    positive=np.asarray(lengths,dtype=float)
+    positive=positive[positive>float(tolerance)]
+    characteristic=(float(np.median(positive)) if positive.size else 0.)
+    return max(float(tolerance),float(relative_tolerance)*characteristic)
+
+
+def find_contact_facets(
+    master_points, master_triangles, slave_points, slave_triangles,
+    *, tolerance=1e-10, projection_tolerance=None,
+    relative_projection_tolerance=0.05, num_threads=None,
+):
+    """Find overlapping parent facets using the native piecewise-3D search."""
+
+    projection=(
+        contact_projection_tolerance(
+            master_points,master_triangles,slave_points,slave_triangles,
+            tolerance=tolerance,
+            relative_tolerance=relative_projection_tolerance,
+        )
+        if projection_tolerance is None else float(projection_tolerance)
+    )
+    built=build_triangle_supermesh(
+        np.ascontiguousarray(master_points,dtype=np.float64),
+        np.ascontiguousarray(master_triangles,dtype=np.int64),
+        np.ascontiguousarray(slave_points,dtype=np.float64),
+        np.ascontiguousarray(slave_triangles,dtype=np.int64),
+        float(tolerance),projection,_native_num_threads(num_threads),
+    )
+    return ContactFacetSearchResult(
+        np.unique(np.asarray(built["master_indices"],dtype=np.int64)),
+        np.unique(np.asarray(built["slave_indices"],dtype=np.int64)),
+        projection,int(built["candidate_count"]),
+        int(built["overlap_count"]),float(built["maximum_plane_gap"]),
+    )
+
+
+@dataclass(frozen=True)
 class MortarTraceData:
     """One side of an interface evaluated at shared physical quadrature points."""
 

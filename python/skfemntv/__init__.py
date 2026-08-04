@@ -47,6 +47,7 @@ from .evaluation import EvaluationDiagnostics, NativeEvaluation
 from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
 from .supermesh import (
+    ContactFacetSearchResult,
     MortarCouplingResult,
     MortarKKTBlocks,
     MortarMultiplierMetadata,
@@ -54,6 +55,8 @@ from .supermesh import (
     SupermeshDiagnostics,
     SupermeshSearch,
     TriangleSupermesh,
+    contact_projection_tolerance,
+    find_contact_facets,
 )
 from .interface import InterfaceField
 from .regions import (
@@ -174,6 +177,9 @@ __all__ = [
     "asm",
     "UnsupportedNativeForm",
     "TriangleSupermesh",
+    "ContactFacetSearchResult",
+    "contact_projection_tolerance",
+    "find_contact_facets",
     "MortarCouplingResult",
     "MortarKKTBlocks",
     "MortarMultiplierMetadata",
