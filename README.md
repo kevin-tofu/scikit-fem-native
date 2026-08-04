@@ -195,6 +195,22 @@ Update the single project-version source before creating a GitHub Release:
 ./scripts/upgrade_version.py 0.1.1
 ```
 
+Build and validate the release distributions locally:
+
+```bash
+./scripts/build.sh
+```
+
+After committing and pushing the version bump on `main`, create the tag and
+GitHub Release with:
+
+```bash
+./scripts/release.sh 0.1.1 --skip-build
+```
+
+The GitHub Release starts the Trusted Publishing workflow; PyPI upload is not
+performed directly from a developer workstation.
+
 The script accepts normalized PEP 440 releases, updates only
 `[project].version` in `pyproject.toml`, and rejects invalid or unchanged
 versions.  The release tag must then be `v0.1.1`.
