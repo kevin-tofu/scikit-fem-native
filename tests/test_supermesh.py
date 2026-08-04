@@ -212,6 +212,33 @@ def test_projection_tolerance_and_gap_diagnostics():
     assert supermesh.diagnostics.noncoplanar_rejection_count==0
 
 
+def test_contact_facet_search_uses_adaptive_projection_tolerance():
+    points,triangles=master_surface()
+    offset=points.copy();offset[2]+=1e-2
+
+    result=skfemntv.find_contact_facets(
+        points,triangles,offset,triangles
+    )
+
+    np.testing.assert_array_equal(result.master_parent_facets,[0])
+    np.testing.assert_array_equal(result.slave_parent_facets,[0])
+    assert result.projection_tolerance>1e-2
+    assert result.overlap_pair_count==1
+
+
+def test_contact_facet_search_uses_proximity_not_facet_winding():
+    points,triangles=master_surface()
+    reversed_triangles=triangles[[0,2,1]]
+    offset=points.copy();offset[2]+=1e-4
+
+    result=skfemntv.find_contact_facets(
+        points,triangles,offset,reversed_triangles
+    )
+
+    np.testing.assert_array_equal(result.master_parent_facets,[0])
+    np.testing.assert_array_equal(result.slave_parent_facets,[0])
+
+
 def test_tet10_to_tet4_coupling_preserves_constant_trace():
     linear_mesh=skfemntv.MeshTet()
     quadratic_mesh=skfemntv.MeshTet2.from_mesh(linear_mesh)

@@ -48,6 +48,7 @@ from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm
 from .supermesh import (
     InterfaceSupermesh,
+    ContactFacetSearchResult,
     MortarCouplingResult,
     MortarReductionDiagnostics,
     MortarKKTBlocks,
@@ -56,6 +57,8 @@ from .supermesh import (
     SupermeshDiagnostics,
     SupermeshSearch,
     TriangleSupermesh,
+    contact_projection_tolerance,
+    find_contact_facets,
 )
 from .interface import InterfaceField
 from .nitsche import (
@@ -99,6 +102,7 @@ from .runtime import (
 )
 from .material import (
     J2Assembler,J2Evaluation,J2Plasticity,J2State,MaterialAssembler,
+    MaterialStateHistory,
     MaterialState,
     StandardLinearSolid,StandardLinearSolidEvaluation,
     StandardLinearSolidState,
@@ -127,6 +131,7 @@ __all__ = [
     "J2Assembler",
     "J2Plasticity",
     "J2State",
+    "MaterialStateHistory",
     "MaterialAssembler",
     "MaterialState",
     "StandardLinearSolid",
@@ -180,6 +185,9 @@ __all__ = [
     "UnsupportedNativeForm",
     "TriangleSupermesh",
     "InterfaceSupermesh",
+    "ContactFacetSearchResult",
+    "contact_projection_tolerance",
+    "find_contact_facets",
     "MortarCouplingResult",
     "MortarReductionDiagnostics",
     "MortarKKTBlocks",
