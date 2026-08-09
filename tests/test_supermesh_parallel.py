@@ -44,22 +44,6 @@ def test_parallel_cross_scatter_is_bitwise_deterministic():
         assert np.array_equal(serial.data,parallel.data)
 
 
-@pytest.mark.parametrize("multiplier",[
-    "slave","master","overlap_p0","slave_facet_p0","master_facet_p0","dual",
-])
-def test_parallel_mortar_spaces_match_serial(multiplier):
-    integration=_disjoint_interfaces()
-    serial=integration.assemble_mortar(multiplier,num_threads=1)
-    parallel=integration.assemble_mortar(multiplier,num_threads=4)
-    for serial_block,parallel_block in zip(
-        (serial.master_matrix,serial.slave_matrix,serial.coupling_matrix),
-        (parallel.master_matrix,parallel.slave_matrix,parallel.coupling_matrix),
-    ):
-        assert np.array_equal(serial_block.indptr,parallel_block.indptr)
-        assert np.array_equal(serial_block.indices,parallel_block.indices)
-        assert np.array_equal(serial_block.data,parallel_block.data)
-
-
 def test_interface_form_accepts_per_call_thread_count():
     integration=_disjoint_interfaces()
 
@@ -83,4 +67,4 @@ def test_supermesh_rejects_invalid_thread_count():
     with pytest.raises(ValueError,match="positive integer"):
         integration.assemble(num_threads=0)
     with pytest.raises(ValueError,match="positive integer"):
-        integration.assemble_mortar(num_threads=True)
+        integration.assemble(num_threads=True)

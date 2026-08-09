@@ -344,7 +344,7 @@ class CrossTabulation:
         object.__setattr__(self,"shape_values",shape)
 
 
-@dataclass(frozen=True)
+@dataclass
 class SupermeshSearch:
     """Reusable planar triangle topology and overlap integration state."""
 
