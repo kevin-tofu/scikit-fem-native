@@ -3,10 +3,12 @@ import pytest
 import skfem
 from skfem.helpers import ddot as skfem_ddot
 from skfem.helpers import dot as skfem_dot
+from skfem.helpers import div as skfem_div
 from skfem.helpers import grad as skfem_grad
+from skfem.helpers import sym_grad as skfem_sym_grad
 
 import skfemntv
-from skfemntv.helpers import ddot, dot, grad
+from skfemntv.helpers import ddot, div, dot, grad, sym_grad
 
 
 def test_native_linear_form_preserves_constant_coefficient_shape():
@@ -109,6 +111,32 @@ def test_gradient_linear_form_uses_native_path():
         reference_basis(basis), tensor=tensor
     )
     np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=2e-14)
+
+
+def test_linear_elasticity_form_matches_skfem():
+    basis=vector_basis()
+    lame_lambda=2.3
+    lame_mu=.7
+
+    @skfemntv.BilinearForm
+    def native_form(u,v,w):
+        return (
+            2.*lame_mu*ddot(sym_grad(u),sym_grad(v))
+            +lame_lambda*div(u)*div(v)
+        )
+
+    @skfem.BilinearForm
+    def reference_form(u,v,w):
+        return (
+            2.*lame_mu*skfem_ddot(skfem_sym_grad(u),skfem_sym_grad(v))
+            +lame_lambda*skfem_div(u)*skfem_div(v)
+        )
+
+    actual=skfemntv.asm(native_form,basis)
+    expected=skfem.asm(reference_form,reference_basis(basis))
+    np.testing.assert_allclose(
+        actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
+    )
 
 
 def test_coordinate_linear_form_uses_quadrature_context():

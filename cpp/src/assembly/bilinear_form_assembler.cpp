@@ -37,27 +37,35 @@ public:
         build_pattern();build_coloring();
     }
     py::tuple assemble(py::object value_coefficient,
-                       py::object gradient_coefficient,int requested_threads){
+                       py::object gradient_coefficient,
+                       py::object symmetric_gradient_coefficient,
+                       py::object divergence_coefficient,int requested_threads){
         const double*value=nullptr;const double*gradient=nullptr;
-        py::array_t<double,py::array::c_style>vh,gh;
+        const double*symmetric_gradient=nullptr;const double*divergence=nullptr;
+        py::array_t<double,py::array::c_style>vh,gh,sh,dh;
         if(!value_coefficient.is_none()){vh=py::cast<py::array_t<double,py::array::c_style>>(value_coefficient);
             auto b=vh.request();validate_coefficient(b,"value");value=(double*)b.ptr;}
         if(!gradient_coefficient.is_none()){gh=py::cast<py::array_t<double,py::array::c_style>>(gradient_coefficient);
             auto b=gh.request();validate_coefficient(b,"gradient");gradient=(double*)b.ptr;}
-        if(!value&&!gradient)throw std::invalid_argument("at least one coefficient is required");
+        if(!symmetric_gradient_coefficient.is_none()){sh=py::cast<py::array_t<double,py::array::c_style>>(symmetric_gradient_coefficient);
+            auto b=sh.request();validate_coefficient(b,"symmetric_gradient");symmetric_gradient=(double*)b.ptr;}
+        if(!divergence_coefficient.is_none()){dh=py::cast<py::array_t<double,py::array::c_style>>(divergence_coefficient);
+            auto b=dh.request();validate_coefficient(b,"divergence");divergence=(double*)b.ptr;}
+        if(!value&&!gradient&&!symmetric_gradient&&!divergence)
+            throw std::invalid_argument("at least one coefficient is required");
         auto start=std::chrono::steady_clock::now();std::fill(values_.begin(),values_.end(),0.);
         {py::gil_scoped_release release;
         if(native_fem::effective_threads(
                static_cast<std::size_t>(entities_),requested_threads)<=1){
             for(int e=0;e<entities_;++e)
-                assemble_element(e,value,gradient);
+                assemble_element(e,value,gradient,symmetric_gradient,divergence);
         }else{
             for(const auto&color:colors_){
                 native_fem::parallel_for_workers(
                     color.size(),requested_threads,
                     [&](std::size_t,std::size_t begin,std::size_t end){
                     for(std::size_t index=begin;index<end;++index)
-                        assemble_element(color[index],value,gradient);
+                        assemble_element(color[index],value,gradient,symmetric_gradient,divergence);
                 });
             }
         }}
@@ -68,18 +76,30 @@ public:
     py::array values(){return view(values_);}std::size_t ndofs()const{return ndofs_;}
     std::size_t color_count()const{return colors_.size();}
 private:
-    void assemble_element(int e,const double*value,const double*gradient){
+    void assemble_element(int e,const double*value,const double*gradient,
+                          const double*symmetric_gradient,const double*divergence){
         for(int q=0;q<quadrature_;++q)
             for(int a=0;a<nodes_;++a)for(int b=0;b<nodes_;++b){
-                double entry=0.;const int eq=e*quadrature_+q;
-                if(value)entry+=value[eq]*shape_[(eq*nodes_)+a]*shape_[(eq*nodes_)+b];
+                double diagonal_entry=0.;const int eq=e*quadrature_+q;
+                if(value)diagonal_entry+=value[eq]*shape_[(eq*nodes_)+a]*shape_[(eq*nodes_)+b];
                 if(gradient)for(int j=0;j<dimension_;++j)
-                    entry+=gradient[eq]*gradients_[(eq*nodes_+a)*dimension_+j]*
+                    diagonal_entry+=gradient[eq]*gradients_[(eq*nodes_+a)*dimension_+j]*
                         gradients_[(eq*nodes_+b)*dimension_+j];
-                entry*=weights_[eq];
-                for(int c=0;c<components_;++c){
-                    int i=a*components_+c,k=b*components_+c;
-                    values_[scatter_[(e*local_dofs_+i)*local_dofs_+k]]+=entry;
+                for(int c=0;c<components_;++c)for(int d=0;d<components_;++d){
+                    double entry=(c==d?diagonal_entry:0.);
+                    if(symmetric_gradient){
+                        double contraction=gradients_[(eq*nodes_+a)*dimension_+d]*
+                            gradients_[(eq*nodes_+b)*dimension_+c];
+                        if(c==d)for(int j=0;j<dimension_;++j)
+                            contraction+=gradients_[(eq*nodes_+a)*dimension_+j]*
+                                gradients_[(eq*nodes_+b)*dimension_+j];
+                        entry+=.5*symmetric_gradient[eq]*contraction;
+                    }
+                    if(divergence)entry+=divergence[eq]*
+                        gradients_[(eq*nodes_+a)*dimension_+c]*
+                        gradients_[(eq*nodes_+b)*dimension_+d];
+                    int i=a*components_+c,k=b*components_+d;
+                    values_[scatter_[(e*local_dofs_+i)*local_dofs_+k]]+=entry*weights_[eq];
                 }
             }
     }
@@ -129,7 +149,7 @@ void native_fem::bind_bilinear_form_assembler(py::module_&m){py::class_<Bilinear
         py::array_t<double,py::array::c_style|py::array::forcecast>,
         py::array_t<double,py::array::c_style|py::array::forcecast>,
         py::array_t<double,py::array::c_style|py::array::forcecast>>())
-    .def("assemble",&BilinearFormAssembler::assemble,py::arg("value_coefficient")=py::none(),py::arg("gradient_coefficient")=py::none(),py::arg("num_threads")=0)
+    .def("assemble",&BilinearFormAssembler::assemble,py::arg("value_coefficient")=py::none(),py::arg("gradient_coefficient")=py::none(),py::arg("symmetric_gradient_coefficient")=py::none(),py::arg("divergence_coefficient")=py::none(),py::arg("num_threads")=0)
     .def_property_readonly("indptr",&BilinearFormAssembler::indptr)
     .def_property_readonly("indices",&BilinearFormAssembler::indices)
     .def_property_readonly("values",&BilinearFormAssembler::values)

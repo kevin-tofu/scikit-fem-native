@@ -46,13 +46,27 @@ class NativeBilinearForm:
         )
         self._matrix.resize((basis.N,basis.N))
 
-    def assemble(self,*,value=None,gradient=None,num_threads=0):
+    def assemble(self,*,value=None,gradient=None,symmetric_gradient=None,
+                 divergence=None,num_threads=0):
         value = self._coefficient("value", value)
         gradient = self._coefficient("gradient", gradient)
+        symmetric_gradient = self._coefficient(
+            "symmetric_gradient", symmetric_gradient
+        )
+        divergence = self._coefficient("divergence", divergence)
         if self._cut:
+            if symmetric_gradient is not None or divergence is not None:
+                raise ValueError(
+                    "cut-basis symmetric-gradient and divergence assembly "
+                    "is not supported"
+                )
             if value is not None:value=value.reshape(-1)
             if gradient is not None:gradient=gradient.reshape(-1)
-        self._native.assemble(value,gradient,num_threads)
+            self._native.assemble(value,gradient,num_threads)
+        else:
+            self._native.assemble(
+                value,gradient,symmetric_gradient,divergence,num_threads
+            )
         return self._matrix
 
     def _coefficient(self, name, coefficient):
