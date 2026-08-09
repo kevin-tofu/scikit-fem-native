@@ -31,6 +31,7 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
           if-no-files-found: error
+          retention-days: 1
 
   wheels:
     name: Build wheels on ${{ matrix.os }}
@@ -69,6 +70,7 @@ jobs:
           name: wheels-${{ matrix.artifact }}
           path: wheelhouse/*.whl
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     name: Publish to PyPI
