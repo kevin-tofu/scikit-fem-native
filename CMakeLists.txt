@@ -8,11 +8,6 @@ pybind11_add_module(
   _skfn
   cpp/src/bindings.cpp
   cpp/src/runtime.cpp
-  cpp/src/material/j2.cpp
-  cpp/src/material/linear_elastic.cpp
-  cpp/src/material/standard_linear_solid.cpp
-  cpp/src/assembly/h1_assembler.cpp
-  cpp/src/assembly/tabulated_assembler.cpp
   cpp/src/assembly/linear_form_assembler.cpp
   cpp/src/assembly/functional_assembler.cpp
   cpp/src/assembly/supermesh_builder.cpp

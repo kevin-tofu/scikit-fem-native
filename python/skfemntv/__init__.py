@@ -3,7 +3,6 @@ from importlib.metadata import (
     version as _distribution_version,
 )
 
-from .assembler import NativeAssembler
 from .basis import (
     Basis,
     DiscreteField,
@@ -43,16 +42,12 @@ from .basis import (
     MeshWedge1,
     MeshPyramid1,
 )
-from .evaluation import EvaluationDiagnostics, NativeEvaluation
 from .linear_form import LinearFormDiagnostics, NativeLinearForm
-from .bilinear_form import NativeBilinearForm
+from .bilinear_form import NativeBilinearForm, NativeCrossBilinearForm
 from .supermesh import (
+    CrossTabulation,
     InterfaceSupermesh,
     ContactFacetSearchResult,
-    MortarCouplingResult,
-    MortarReductionDiagnostics,
-    MortarKKTBlocks,
-    MortarMultiplierMetadata,
     MortarTraceData,
     SupermeshDiagnostics,
     SupermeshSearch,
@@ -61,11 +56,6 @@ from .supermesh import (
     find_contact_facets,
 )
 from .interface import InterfaceField
-from .nitsche import (
-    NitscheStabilizationDiagnostics,
-    SymmetricNitscheResult,
-    assemble_symmetric_nitsche,
-)
 from .regions import (
     CellRegion,EntityRegion,FacetRegion,NodeRegion,RegionDiagnostics,
 )
@@ -83,14 +73,6 @@ from .forms import (
     UnsupportedNativeForm,
     asm,
 )
-from .kernels import (
-    LinearElasticHex8,
-    LinearElasticTet4,
-    LinearElasticity,
-    NeoHookean,
-    NeoHookeanHex8,
-    NeoHookeanTet4,
-)
 from .runtime import (
     BACKEND,
     CAPABILITIES,
@@ -99,13 +81,6 @@ from .runtime import (
     has_capability,
     set_num_threads,
     thread_limit,
-)
-from .material import (
-    J2Assembler,J2Evaluation,J2Plasticity,J2State,MaterialAssembler,
-    MaterialStateHistory,
-    MaterialState,
-    StandardLinearSolid,StandardLinearSolidEvaluation,
-    StandardLinearSolidState,
 )
 
 try:
@@ -116,29 +91,15 @@ except _PackageNotFoundError:
 __all__ = [
     "__version__",
     "BACKEND",
+    "CrossTabulation",
+    "NativeCrossBilinearForm",
     "CAPABILITIES",
     "available_num_threads",
     "get_num_threads",
     "has_capability",
     "set_num_threads",
     "thread_limit",
-    "EvaluationDiagnostics",
-    "LinearElasticTet4",
-    "LinearElasticHex8",
-    "LinearElasticity",
     "LinearFormDiagnostics",
-    "J2Evaluation",
-    "J2Assembler",
-    "J2Plasticity",
-    "J2State",
-    "MaterialStateHistory",
-    "MaterialAssembler",
-    "MaterialState",
-    "StandardLinearSolid",
-    "StandardLinearSolidEvaluation",
-    "StandardLinearSolidState",
-    "NativeAssembler",
-    "NativeEvaluation",
     "NativeLinearForm",
     "NativeBilinearForm",
     "LinearForm",
@@ -188,17 +149,10 @@ __all__ = [
     "ContactFacetSearchResult",
     "contact_projection_tolerance",
     "find_contact_facets",
-    "MortarCouplingResult",
-    "MortarReductionDiagnostics",
-    "MortarKKTBlocks",
-    "MortarMultiplierMetadata",
     "MortarTraceData",
     "SupermeshDiagnostics",
     "SupermeshSearch",
     "InterfaceField",
-    "NitscheStabilizationDiagnostics",
-    "SymmetricNitscheResult",
-    "assemble_symmetric_nitsche",
     "EntityRegion",
     "CellRegion",
     "FacetRegion",
@@ -214,7 +168,4 @@ __all__ = [
     "ImplicitInterfacePair",
     "LevelSet",
     "LevelSetDiagnostics",
-    "NeoHookeanTet4",
-    "NeoHookeanHex8",
-    "NeoHookean",
 ]

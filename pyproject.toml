@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "skfem-native"
-version = "0.1.8"
+version = "0.2.0"
 description = "A small native assembly engine for nonlinear finite elements"
 readme = "README.md"
 requires-python = ">=3.10"

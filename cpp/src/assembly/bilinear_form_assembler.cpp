@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "native_fem/continuum_kernel.hpp"
 #include "native_fem/python_bindings.hpp"
 #include "native_fem/parallel.hpp"
 

@@ -291,6 +291,22 @@ def find_contact_facets(
     )
 
 
+def _aabb_candidates(master_xyz,slave_xyz,tolerance):
+    """Yield overlapping triangle AABB pairs without formulation knowledge."""
+    master_xyz=np.asarray(master_xyz,dtype=np.float64)
+    slave_xyz=np.asarray(slave_xyz,dtype=np.float64)
+    master_min=master_xyz.min(axis=1)-float(tolerance)
+    master_max=master_xyz.max(axis=1)+float(tolerance)
+    slave_min=slave_xyz.min(axis=1)-float(tolerance)
+    slave_max=slave_xyz.max(axis=1)+float(tolerance)
+    for master_index,(lower,upper) in enumerate(zip(master_min,master_max)):
+        selected=np.flatnonzero(np.all(
+            (slave_max>=lower)&(slave_min<=upper),axis=1
+        ))
+        for slave_index in selected:
+            yield master_index,int(slave_index)
+
+
 @dataclass(frozen=True)
 class MortarTraceData:
     """One side of an interface evaluated at shared physical quadrature points."""
@@ -306,267 +322,29 @@ class MortarTraceData:
 
 
 @dataclass(frozen=True)
-class MortarMultiplierMetadata:
-    """Stable mapping from multiplier rows to modelling entities."""
+class CrossTabulation:
+    """Formulation-neutral test-space tabulation on shared quadrature points."""
 
-    space: str
-    entity_kind: str
-    side: str | None
-    entity_ids: np.ndarray
-    row_entities: np.ndarray
-    row_components: np.ndarray
-    supported_rows: np.ndarray
+    dofs: np.ndarray
+    shape_values: np.ndarray
+    size: int
 
     def __post_init__(self):
-        arrays=(
-            self.entity_ids,self.row_entities,self.row_components,
-            self.supported_rows,
-        )
-        if any(np.asarray(array).ndim!=1 for array in arrays):
-            raise ValueError("mortar multiplier metadata arrays must be 1D")
-        if len(self.row_entities)!=len(self.row_components):
-            raise ValueError("mortar row metadata lengths differ")
-        for array in arrays:
-            array.flags.writeable=False
-
-    @property
-    def row_count(self):
-        return len(self.row_entities)
-
-    def rows_for(
-        self,entity_ids=None,*,components=None,supported_only=True,
-    ):
-        """Return sorted multiplier rows for an active-set selection."""
-        selected=np.ones(self.row_count,dtype=bool)
-        if entity_ids is not None:
-            requested=np.asarray(entity_ids,dtype=np.int64)
-            if requested.ndim!=1:
-                raise ValueError("entity_ids must be one-dimensional")
-            row_ids=self.entity_ids[self.row_entities]
-            selected&=np.isin(row_ids,requested)
-        if components is not None:
-            requested=np.asarray(components,dtype=np.int64)
-            if requested.ndim!=1:
-                raise ValueError("components must be one-dimensional")
-            selected&=np.isin(self.row_components,requested)
-        if supported_only:
-            support=np.zeros(self.row_count,dtype=bool)
-            support[self.supported_rows]=True
-            selected&=support
-        result=np.flatnonzero(selected).astype(np.int64,copy=False)
-        result.flags.writeable=False
-        return result
+        dofs=np.asarray(self.dofs,dtype=np.int64)
+        shape=np.asarray(self.shape_values,dtype=np.float64)
+        if dofs.ndim!=3 or shape.ndim!=3:
+            raise ValueError("cross tabulation arrays must have three axes")
+        if dofs.shape[0]!=shape.shape[0]:
+            raise ValueError("cross tabulation entity counts differ")
+        if dofs.shape[1]!=shape.shape[2]:
+            raise ValueError("cross tabulation local basis sizes differ")
+        if int(self.size)<0:
+            raise ValueError("cross tabulation size must be non-negative")
+        object.__setattr__(self,"dofs",dofs)
+        object.__setattr__(self,"shape_values",shape)
 
 
 @dataclass(frozen=True)
-class MortarReductionDiagnostics:
-    """Rank-reduction accounting for a solver-ready Mortar block."""
-
-    method: str
-    backend: str
-    tolerance: float
-    raw_row_count: int
-    supported_row_count: int
-    independent_row_count: int
-    numerical_rank: int
-    selected_raw_rows: np.ndarray
-    elapsed_seconds: float = 0.
-    fallback_reason: str | None = None
-
-    def __post_init__(self):
-        self.selected_raw_rows.flags.writeable=False
-
-
-def _spqr_tolerance(matrix,tolerance):
-    norms=np.sqrt(matrix.multiply(matrix).sum(axis=1)).A.ravel()
-    scale=float(norms.max(initial=0.))
-    return float(tolerance*scale if tolerance<1. and scale else tolerance)
-
-
-def _spqr_selected_rows(matrix,permutation,rank):
-    pivots=np.asarray(permutation,dtype=np.int64).ravel()
-    if len(pivots)!=matrix.shape[0]:
-        raise ValueError("SPQR returned an invalid row permutation")
-    return np.sort(pivots[:max(0,min(int(rank),matrix.shape[0]))])
-
-
-def _global_qr_rows(matrix,tolerance,dense_max_rows):
-    """Return independent row indices, backend, and optional fallback reason."""
-    absolute_tolerance=_spqr_tolerance(matrix,tolerance)
-    failures=[]
-    try:
-        from sksparse.spqr import spqr
-        factorization=spqr(
-            matrix.T.tocsc(),mode="r",order="default",tol=absolute_tolerance
-        )
-        if len(factorization)==2:
-            factor,permutation=factorization
-        elif len(factorization)==3:
-            _q,factor,permutation=factorization
-        else:
-            raise TypeError("unsupported sksparse.spqr result")
-        diagonal=np.abs(np.asarray(factor.diagonal(),dtype=float))
-        rank=int(np.count_nonzero(diagonal>absolute_tolerance))
-        return _spqr_selected_rows(matrix,permutation,rank),"sksparse-spqr",None
-    except Exception as exc:
-        failures.append(f"sksparse.spqr: {type(exc).__name__}")
-    try:
-        import sparseqr
-        _q,_r,permutation,rank=sparseqr.qr(
-            matrix.T.tocsc(),economy=True,tolerance=absolute_tolerance
-        )
-        return (
-            _spqr_selected_rows(matrix,permutation,rank),"sparseqr",
-            "; ".join(failures),
-        )
-    except Exception as exc:
-        failures.append(f"sparseqr: {type(exc).__name__}")
-    if matrix.shape[0]>dense_max_rows:
-        raise ValueError(
-            "global_qr sparse backends are unavailable and dense reference "
-            "exceeds dense_reduction_max_rows ("+"; ".join(failures)+")"
-        )
-    active_columns=np.unique(matrix.indices).astype(np.int64)
-    dense=matrix[:,active_columns].toarray()
-    _q,factor,pivots=qr(
-        dense.T,mode="economic",pivoting=True,check_finite=False
-    )
-    diagonal=np.abs(np.diag(factor))
-    scale=float(diagonal.max(initial=0.))
-    rank=int(np.count_nonzero(diagonal>tolerance*scale))
-    selected=np.sort(np.asarray(pivots[:rank],dtype=np.int64))
-    return selected,"scipy-dense-pivoted-qr","; ".join(failures)
-
-
-@dataclass(frozen=True)
-class MortarKKTBlocks:
-    """Solver-independent ``K``/``C`` blocks without a monolithic KKT matrix."""
-
-    primal_matrix: csr_matrix
-    coupling_matrix: csr_matrix
-    primal_rhs: np.ndarray
-    constraint_rhs: np.ndarray
-    multiplier_metadata: MortarMultiplierMetadata
-    multiplier_rows: np.ndarray
-
-    def __post_init__(self):
-        if not isspmatrix_csr(self.primal_matrix):
-            raise TypeError("primal_matrix must be a CSR matrix")
-        if not isspmatrix_csr(self.coupling_matrix):
-            raise TypeError("coupling_matrix must be a CSR matrix")
-        primal_size=self.primal_matrix.shape[0]
-        if self.primal_matrix.shape!=(primal_size,primal_size):
-            raise ValueError("primal_matrix must be square")
-        if self.coupling_matrix.shape[1]!=primal_size:
-            raise ValueError("primal and coupling matrix sizes differ")
-        if self.primal_rhs.shape!=(primal_size,):
-            raise ValueError("primal_rhs has the wrong shape")
-        multiplier_size=self.coupling_matrix.shape[0]
-        if self.constraint_rhs.shape!=(multiplier_size,):
-            raise ValueError("constraint_rhs has the wrong shape")
-        if self.multiplier_rows.shape!=(multiplier_size,):
-            raise ValueError("multiplier_rows has the wrong shape")
-        if not np.all(np.isfinite(self.primal_rhs)):
-            raise ValueError("primal_rhs contains non-finite values")
-        if not np.all(np.isfinite(self.constraint_rhs)):
-            raise ValueError("constraint_rhs contains non-finite values")
-        self.primal_rhs.flags.writeable=False
-        self.constraint_rhs.flags.writeable=False
-        self.multiplier_rows.flags.writeable=False
-
-    @property
-    def primal_size(self):
-        return self.primal_matrix.shape[0]
-
-    @property
-    def multiplier_size(self):
-        return self.coupling_matrix.shape[0]
-
-
-@dataclass(frozen=True)
-class MortarCouplingResult:
-    """Sparse mortar constraint blocks, ``[master, -slave]``."""
-
-    master_matrix: csr_matrix
-    slave_matrix: csr_matrix
-    coupling_matrix: csr_matrix
-    overlap_area: float
-    diagnostics: SupermeshDiagnostics
-    multiplier: MortarMultiplierMetadata
-    reduction: MortarReductionDiagnostics | None = None
-
-    def kkt_blocks(
-        self,primal_matrix,primal_rhs,*,constraint_rhs=None,rows=None,
-    ):
-        """Describe selected KKT blocks without constructing ``[[K,C.T],[C,0]]``."""
-        if not isspmatrix_csr(primal_matrix):
-            raise TypeError("primal_matrix must be a CSR matrix")
-        if rows is None:
-            selected=np.arange(
-                self.coupling_matrix.shape[0],dtype=np.int64
-            )
-            coupling=self.coupling_matrix
-        else:
-            selected=np.asarray(rows,dtype=np.int64)
-            if selected.ndim!=1:
-                raise ValueError("multiplier rows must be one-dimensional")
-            if len(np.unique(selected))!=len(selected):
-                raise ValueError("multiplier rows must be unique")
-            if np.any(selected<0) or np.any(
-                selected>=self.coupling_matrix.shape[0]
-            ):
-                raise IndexError("multiplier row is out of bounds")
-            coupling=csr_matrix(self.coupling_matrix[selected])
-        primal_rhs=_readonly_vector(primal_rhs,"primal_rhs")
-        if constraint_rhs is None:
-            constraints=np.zeros(len(selected),dtype=np.float64)
-        else:
-            supplied=_readonly_vector(constraint_rhs,"constraint_rhs")
-            if supplied.shape==(self.coupling_matrix.shape[0],):
-                constraints=np.array(supplied[selected],copy=True)
-            elif supplied.shape==(len(selected),):
-                constraints=supplied
-            else:
-                raise ValueError("constraint_rhs has the wrong shape")
-        selected=np.array(selected,dtype=np.int64,copy=True)
-        return MortarKKTBlocks(
-            primal_matrix,coupling,primal_rhs,constraints,
-            self.multiplier,selected,
-        )
-
-
-def _readonly_vector(values,name):
-    array=np.asarray(values,dtype=np.float64)
-    if array.ndim!=1:
-        raise ValueError(f"{name} must be one-dimensional")
-    result=array.view()
-    result.flags.writeable=False
-    return result
-
-
-def _aabb_candidates(master_xyz, slave_xyz, tolerance):
-    master_min=master_xyz.min(axis=1)-tolerance
-    master_max=master_xyz.max(axis=1)+tolerance
-    slave_min=slave_xyz.min(axis=1)-tolerance
-    slave_max=slave_xyz.max(axis=1)+tolerance
-    master_order=np.argsort(master_min[:,0])
-    slave_order=np.argsort(slave_min[:,0])
-    active=[];start=0
-    for master in master_order:
-        while start<len(slave_order) and slave_min[slave_order[start],0]<=master_max[master,0]:
-            active.append(int(slave_order[start]));start+=1
-        active=[slave for slave in active if slave_max[slave,0]>=master_min[master,0]]
-        for slave in active:
-            if (
-                slave_min[slave,0]<=master_max[master,0]
-                and slave_max[slave,1]>=master_min[master,1]
-                and slave_min[slave,1]<=master_max[master,1]
-                and slave_max[slave,2]>=master_min[master,2]
-                and slave_min[slave,2]<=master_max[master,2]
-            ):
-                yield int(master),slave
-
-
 class SupermeshSearch:
     """Reusable planar triangle topology and overlap integration state."""
 
@@ -1118,184 +896,28 @@ class TriangleSupermesh:
     def slave_trace(self):
         return self.trace_data("slave")
 
-    def assemble_mortar(
-        self,multiplier="slave",*,dual_side="slave",num_threads=None,
-        reduction="none",rank_tolerance=1.e-10,dense_reduction_max_rows=4096,
+    def assemble_cross_tabulation(
+        self,test: CrossTabulation,trial: CrossTabulation,*,num_threads=None,
     ):
-        """Assemble sparse mortar blocks for a selected multiplier space.
+        """Assemble one rectangular value-value block from supplied tables.
 
-        ``multiplier`` accepts ``"slave"``, ``"master"``,
-        ``"overlap_p0"``, ``"slave_facet_p0"``, ``"master_facet_p0"``,
-        or ``"dual"``.  Facet-P0 rows collect every overlap contribution
-        belonging to one parent facet.  The dual basis is formed from small
-        facet-local Gram matrices; no multiplier-sized dense matrix is formed.
-
-        ``reduction="global_qr"`` selects a globally independent subset of
-        supported rows.  Its dense pivoted-QR backend is a guarded correctness
-        reference and raises above ``dense_reduction_max_rows`` rather than
-        silently allocating a multiplier-sized dense matrix.
+        This operation has no knowledge of Mortar spaces or contact laws.  The
+        caller owns the test-space construction and supplies its evaluated
+        shape functions and global row numbering.
         """
-        aliases={
-            "slave_p1":"slave","master_p1":"master","p0":"overlap_p0",
-            "biorthogonal":"dual",
-            "slave_p0":"slave_facet_p0","master_p0":"master_facet_p0",
-        }
-        multiplier=aliases.get(multiplier,multiplier)
-        if multiplier not in {
-            "slave","master","overlap_p0","slave_facet_p0",
-            "master_facet_p0","dual",
-        }:
-            raise ValueError(
-                "multiplier must be slave, master, overlap_p0, "
-                "slave_facet_p0, master_facet_p0, or dual"
-            )
-        if dual_side not in {"slave","master"}:
-            raise ValueError("dual_side must be slave or master")
-        if reduction not in {"none","global_qr"}:
-            raise ValueError("reduction must be none or global_qr")
-        if rank_tolerance<=0.:
-            raise ValueError("rank_tolerance must be positive")
-        if dense_reduction_max_rows<1:
-            raise ValueError("dense_reduction_max_rows must be positive")
-        master_components=self._row_dofs.shape[2]
-        slave_components=self._column_dofs.shape[2]
-        if master_components!=slave_components:
-            raise ValueError(
-                "mortar coupling currently requires equal trace component counts"
-            )
-        components=master_components
-        entity_ids=None;entity_kind="trace_entity";metadata_side=None
-        if multiplier in {
-            "overlap_p0","slave_facet_p0","master_facet_p0"
-        }:
-            entities=len(self._weights)
-            if multiplier=="overlap_p0":
-                entity_indices=np.arange(entities,dtype=np.int64)
-                multiplier_entities=entities
-                entity_ids=np.arange(entities,dtype=np.int64)
-                entity_kind="overlap_cell"
-            else:
-                parents=(
-                    self._slave_parent_facets
-                    if multiplier=="slave_facet_p0"
-                    else self._master_parent_facets
-                )
-                entity_ids,entity_indices=np.unique(
-                    parents,return_inverse=True
-                )
-                multiplier_entities=(
-                    int(entity_indices.max())+1 if len(entity_indices) else 0
-                )
-                entity_kind="parent_facet"
-                metadata_side=(
-                    "slave" if multiplier=="slave_facet_p0" else "master"
-                )
-            multiplier_dofs=(
-                components*entity_indices[:,None,None]
-                +np.arange(components)[None,None,:]
-            )
-            multiplier_shape=np.ones((entities,self._weights.shape[1],1))
-            multiplier_size=multiplier_entities*components
-        else:
-            side=dual_side if multiplier=="dual" else multiplier
-            metadata_side=side
-            multiplier_dofs=(
-                self._row_dofs if side=="master" else self._column_dofs
-            )
-            multiplier_shape=np.array(
-                self._row_shape if side=="master" else self._column_shape,
-                copy=True,
-            )
-            multiplier_size=self.master_size if side=="master" else self.slave_size
-            entity_ids=np.arange(
-                multiplier_size//components,dtype=np.int64
-            )
-            if multiplier=="dual":
-                parents=(
-                    self._master_parent_facets if side=="master"
-                    else self._slave_parent_facets
-                )
-                for parent in np.unique(parents):
-                    selected=np.flatnonzero(parents==parent)
-                    local=multiplier_shape[selected]
-                    weights=self._weights[selected]
-                    gram=np.einsum("eq,eqi,eqj->ij",weights,local,local)
-                    active=np.flatnonzero(np.max(np.abs(local),axis=(0,1))>1e-13)
-                    local_gram=gram[np.ix_(active,active)]
-                    lump=np.einsum("eq,eqi->i",weights,local) [active]
-                    transform=np.diag(lump)@np.linalg.pinv(local_gram,rcond=1e-13)
-                    multiplier_shape[np.ix_(selected,np.arange(local.shape[1]),active)]=(
-                        local[:,:,active]@transform.T
-                    )
-        master_matrix=self._assemble_mortar_block(
-            multiplier_dofs,self._row_dofs,multiplier_shape,self._row_shape,
-            multiplier_size,self.master_size,num_threads,
-        )
-        slave_matrix=self._assemble_mortar_block(
-            multiplier_dofs,self._column_dofs,multiplier_shape,self._column_shape,
-            multiplier_size,self.slave_size,num_threads,
-        )
-        coupling=csr_matrix(hstack((master_matrix,-slave_matrix),format="csr"))
-        entity_count=len(entity_ids)
-        row_entities=np.repeat(
-            np.arange(entity_count,dtype=np.int64),components
-        )
-        row_components=np.tile(
-            np.arange(components,dtype=np.int64),entity_count
-        )
-        supported_rows=np.flatnonzero(
-            np.diff(coupling.indptr)>0
-        ).astype(np.int64,copy=False)
-        metadata=MortarMultiplierMetadata(
-            multiplier,entity_kind,metadata_side,
-            np.asarray(entity_ids,dtype=np.int64),row_entities,
-            row_components,supported_rows,
-        )
-        reduction_diagnostics=None
-        if reduction=="global_qr":
-            started=time.perf_counter()
-            supported=coupling[supported_rows].tocsr()
-            selected_supported,backend,fallback_reason=_global_qr_rows(
-                supported,rank_tolerance,dense_reduction_max_rows
-            )
-            rank=len(selected_supported)
-            selected_raw=np.asarray(
-                supported_rows[selected_supported],dtype=np.int64
-            )
-            master_matrix=csr_matrix(master_matrix[selected_raw])
-            slave_matrix=csr_matrix(slave_matrix[selected_raw])
-            coupling=csr_matrix(coupling[selected_raw])
-            selected_entity_ids=entity_ids[row_entities[selected_raw]]
-            compact_entities,inverse=np.unique(
-                selected_entity_ids,return_inverse=True
-            )
-            metadata=MortarMultiplierMetadata(
-                multiplier,entity_kind,metadata_side,
-                np.asarray(compact_entities,dtype=np.int64),
-                np.asarray(inverse,dtype=np.int64),
-                np.asarray(row_components[selected_raw],dtype=np.int64),
-                np.arange(rank,dtype=np.int64),
-            )
-            reduction_diagnostics=MortarReductionDiagnostics(
-                "global_qr",backend,float(rank_tolerance),
-                int(len(row_entities)),int(len(supported_rows)),rank,rank,
-                selected_raw,time.perf_counter()-started,fallback_reason,
-            )
-        return MortarCouplingResult(
-            master_matrix,slave_matrix,coupling,
-            self.diagnostics.overlap_area,self.diagnostics,metadata,
-            reduction_diagnostics,
-        )
-
-    def _assemble_mortar_block(
-        self,row_dofs,column_dofs,row_shape,column_shape,rows,columns,
-        num_threads,
-    ):
+        if not isinstance(test,CrossTabulation):
+            raise TypeError("test must be CrossTabulation")
+        if not isinstance(trial,CrossTabulation):
+            raise TypeError("trial must be CrossTabulation")
+        if test.dofs.shape[0]!=trial.dofs.shape[0]:
+            raise ValueError("test and trial entity counts differ")
+        if test.shape_values.shape[:2]!=trial.shape_values.shape[:2]:
+            raise ValueError("test and trial quadrature shapes differ")
         native=CrossBilinearAssembler(
-            np.ascontiguousarray(row_dofs,dtype=np.int64),
-            np.ascontiguousarray(column_dofs,dtype=np.int64),
-            np.ascontiguousarray(row_shape,dtype=np.float64),
-            np.ascontiguousarray(column_shape,dtype=np.float64),
+            np.ascontiguousarray(test.dofs,dtype=np.int64),
+            np.ascontiguousarray(trial.dofs,dtype=np.int64),
+            np.ascontiguousarray(test.shape_values,dtype=np.float64),
+            np.ascontiguousarray(trial.shape_values,dtype=np.float64),
             np.ascontiguousarray(self._weights,dtype=np.float64),
         )
         native.assemble(
@@ -1306,9 +928,8 @@ class TriangleSupermesh:
             (native.values,native.indices,native.indptr),
             shape=(native.rows,native.columns),copy=True,
         )
-        matrix.resize((rows,columns))
+        matrix.resize((int(test.size),int(trial.size)))
         return matrix
-
 
     def interpolate(self,master_coefficients,slave_coefficients):
         """Interpolate both interface fields at overlap quadrature points."""

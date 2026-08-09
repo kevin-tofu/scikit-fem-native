@@ -293,6 +293,39 @@ class NativeCrossBilinearForm:
         matrix.resize(self.shape)
         return matrix.copy()
 
+    def assemble_tensor(
+        self,row_kind,column_kind,coefficient,*,num_threads=0,
+    ):
+        """Assemble a caller-supplied value/gradient contraction tensor."""
+        valid={"value","gradient"}
+        if row_kind not in valid or column_kind not in valid:
+            raise ValueError("tensor kind must be value or gradient")
+        row_axes=(self.test_components,)+(
+            (self.dimension,) if row_kind=="gradient" else ()
+        )
+        column_axes=(self.trial_components,)+(
+            (self.dimension,) if column_kind=="gradient" else ()
+        )
+        expected=self.coefficient_shape+row_axes+column_axes
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        try:
+            coefficient=np.broadcast_to(coefficient,expected)
+        except ValueError as error:
+            raise ValueError(
+                f"tensor coefficient must broadcast to {expected}"
+            ) from error
+        native_coefficient=np.ascontiguousarray(
+            np.squeeze(coefficient,axis=1) if self._cut else coefficient
+        )
+        self._native.assemble(
+            native_coefficient,row_kind,column_kind,num_threads
+        )
+        matrix=csr_matrix((
+            self._native.values,self._native.indices,self._native.indptr,
+        ),shape=(self._native.rows,self._native.columns),copy=False)
+        matrix.resize(self.shape)
+        return matrix.copy()
+
 
 class NativeCompositeBilinearForm:
     """Reusable rectangular native blocks for a composite H1 basis."""
