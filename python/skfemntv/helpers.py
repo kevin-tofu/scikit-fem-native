@@ -16,6 +16,10 @@ def transpose(value):
 
 def sym_grad(value):
     gradient = grad(value)
+    if gradient.__class__.__name__ in {"_TrialGradient","_TestGradient"}:
+        from .forms import _SymmetricGradient
+        role="trial" if gradient.__class__.__name__=="_TrialGradient" else "test"
+        return _SymmetricGradient(role,gradient.factor)
     return 0.5 * (gradient + transpose(gradient))
 
 

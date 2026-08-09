@@ -120,12 +120,30 @@ class _TrialGradient:
 
 
 @dataclass(frozen=True)
+class _SymmetricGradient:
+    role: str
+    factor: float = 1.
+
+
+@dataclass(frozen=True)
 class _Divergence:
     role: str
     factor: float = 1.
     coefficient: Any = None
 
     def __mul__(self,other):
+        if np.isscalar(other):
+            return _Divergence(
+                self.role,self.factor*other,self.coefficient
+            )
+        if isinstance(other,_Divergence) and self.role!=other.role:
+            if self.coefficient is not None or other.coefficient is not None:
+                raise UnsupportedNativeForm(
+                    "weighted divergence products are not supported"
+                )
+            return _BilinearTerm(
+                "divergence",factor=self.factor*other.factor
+            )
         if self.role=="trial" and isinstance(other,_TestValue):
             return _BilinearTerm(
                 "column_divergence",
@@ -914,6 +932,8 @@ def _native_bilinear_assemble(form,basis,kwargs,num_threads=0):
         )
     value=None
     gradient=None
+    symmetric_gradient=None
+    divergence=None
     for term in terms:
         coefficient=term.factor
         if term.coefficient is not None:
@@ -936,6 +956,16 @@ def _native_bilinear_assemble(form,basis,kwargs,num_threads=0):
             gradient=(
                 coefficient if gradient is None else gradient+coefficient
             )
+        elif term.kind=="symmetric_gradient":
+            symmetric_gradient=(
+                coefficient if symmetric_gradient is None
+                else symmetric_gradient+coefficient
+            )
+        elif term.kind=="divergence":
+            divergence=(
+                coefficient if divergence is None
+                else divergence+coefficient
+            )
         else:
             raise UnsupportedNativeForm(
                 f"unsupported bilinear term kind {term.kind!r}"
@@ -945,7 +975,9 @@ def _native_bilinear_assemble(form,basis,kwargs,num_threads=0):
         native = NativeBilinearForm(basis)
         form._native_cache[basis] = native
     return native.assemble(
-        value=value,gradient=gradient,num_threads=num_threads
+        value=value,gradient=gradient,
+        symmetric_gradient=symmetric_gradient,divergence=divergence,
+        num_threads=num_threads
     )
 
 
@@ -1531,6 +1563,14 @@ def dot(left, right):
 
 
 def ddot(left, right):
+    if (
+        isinstance(left,_SymmetricGradient)
+        and isinstance(right,_SymmetricGradient)
+        and left.role!=right.role
+    ):
+        return _BilinearTerm(
+            "symmetric_gradient",factor=left.factor*right.factor
+        )
     if isinstance(left,_Coefficient) and isinstance(right,_CompositeField):
         if right.role=="test" and right.kind=="gradient":
             return _CompositeLinearTerm(right.field,"gradient",left.name)
