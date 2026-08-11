@@ -8,13 +8,14 @@ version = "0.2.1"
 description = "A small native assembly engine for nonlinear finite elements"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "BSD-3-Clause"
+license = "LGPL-3.0-only"
 license-files = ["LICENSE"]
 dependencies = ["numpy>=1.24", "scipy>=1.10"]
 keywords = ["finite-element", "assembly", "scientific-computing"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",
