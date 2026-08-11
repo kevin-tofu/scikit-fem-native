@@ -1,0 +1,16 @@
+:root {
+  --skfem-accent: #00a38f;
+}
+
+.sidebar-brand-text {
+  letter-spacing: -0.025em;
+  font-weight: 700;
+}
+
+.content h1 {
+  letter-spacing: -0.035em;
+}
+
+.sd-card {
+  border-top: 3px solid var(--skfem-accent);
+}

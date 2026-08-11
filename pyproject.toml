@@ -37,6 +37,13 @@ Issues = "https://github.com/kevin-tofu/skfem-native/issues"
 [project.optional-dependencies]
 test = ["pytest>=8", "scikit-fem>=10", "shapely>=2", "matplotlib>=3.8"]
 benchmark = ["scikit-fem>=10", "shapely>=2", "matplotlib>=3.8"]
+docs = [
+  "sphinx>=8",
+  "furo>=2024.8.6",
+  "myst-parser>=4",
+  "sphinx-copybutton>=0.5.2",
+  "sphinx-design>=0.6.1",
+]
 
 [tool.scikit-build]
 wheel.packages = ["python/skfemntv"]

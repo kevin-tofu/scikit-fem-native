@@ -1,32 +1,19 @@
-# skfem-native 0.2
+# skfem-native
 
-`skfemntv` is a native numerical assembly backend for finite-element
-applications.  Version 0.2 deliberately does not own application formulations,
-material models, contact laws, or nonlinear solution policies.
+`skfem-native` provides `skfemntv`, a native numerical assembly backend with a
+scikit-fem-style Python API.  It keeps finite-element formulations in readable
+Python while accelerating reusable assembly, geometry, and sparse-scatter
+kernels in native code.
 
-## Ownership boundary
+## Installation
 
-The calling application owns:
+```bash
+python -m pip install skfem-native
+```
 
-- weak forms and coefficient fields
-- constitutive updates and state histories
-- contact and interface formulations
-- multiplier spaces and algebraic reduction
-- stabilization, solver, and load-step policies
+The distribution is named `skfem-native`; import it as `skfemntv`.
 
-`skfemntv` owns:
-
-- meshes, elements, bases, and tabulation
-- quadrature and geometry diagnostics
-- generic functional, linear, bilinear, and cross-bilinear assembly
-- caller-supplied tensor coefficient assembly
-- cut-cell and implicit-interface quadrature
-- interface supermesh construction and contact-facet search
-- sparse scatter and threaded native kernels
-
-## Assembly API
-
-Forms use the same call shape as scikit-fem:
+## Quick start
 
 ```python
 import skfemntv
@@ -42,38 +29,39 @@ def diffusion(u, v, w):
 matrix = skfemntv.asm(diffusion, basis)
 ```
 
-Applications with pretabulated coefficient tensors can use
-`NativeLinearForm`, `NativeBilinearForm`, `NativeCrossBilinearForm`, and
-`NativeCrossBilinearForm.assemble_tensor()`.
+Applications can select `skfem.asm` or `skfemntv.asm` at their backend
+boundary while preserving the weak-form call site.  `skfemntv` is not yet a
+complete replacement for every scikit-fem feature, so backend selection should
+remain explicit.
 
-Nonmatching interfaces use `TriangleSupermesh` or `InterfaceSupermesh` for
-geometry and shared quadrature.  The application supplies its own test-space
-shape values through `CrossTabulation`; skfemntv does not select Mortar, dual,
-Nitsche, or contact formulations.
+## Capabilities
 
-## Removed in 0.2
+- functional, linear, bilinear, and cross-bilinear assembly
+- meshes, elements, bases, tabulation, and quadrature
+- caller-supplied tensor coefficient assembly
+- threaded native kernels and sparse scatter
+- cut-cell and implicit-interface quadrature
+- interface supermeshes and contact-facet search
 
-The following 0.1 APIs were removed rather than deprecated:
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the motivation, architecture boundary,
+and development principles.
 
-- `NativeAssembler`
-- `MaterialAssembler`
-- `J2Plasticity` and J2 state/history APIs
-- `StandardLinearSolid`
-- `LinearElasticity` and element-specific aliases
-- `NeoHookean` and element-specific aliases
-- `TriangleSupermesh.assemble_mortar()`
-- Mortar result, metadata, reduction, and KKT types
-- `assemble_symmetric_nitsche()`
+## Documentation
 
-These belong in the application layer.  kktkit, for example, defines one J2
-return mapping and sends the resulting stress and tangent tensors to either the
-scikit-fem or skfemntv assembly backend.
+Build the Sphinx documentation locally:
+
+```bash
+python -m pip install -e '.[docs]'
+sphinx-build -M html docs docs/_build
+```
+
+Open `docs/_build/html/index.html` after the build completes.
 
 ## Development
 
 ```bash
-python -m pip install -e .
+python -m pip install -e '.[test]'
 pytest -q
 ```
 
-The project version is `0.2.0`.
+The current project version is `0.2.0`.
