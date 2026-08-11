@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from importlib.metadata import version as package_version
+from pathlib import Path
+import tomllib
 
 
 project = "skfem-native"
 author = "skfem-native contributors"
-release = package_version("skfem-native")
+with (Path(__file__).parents[1] / "pyproject.toml").open("rb") as stream:
+    release = tomllib.load(stream)["project"]["version"]
 version = release
 
 extensions = [
