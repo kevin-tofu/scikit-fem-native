@@ -497,20 +497,19 @@ class MeshQuad2(MeshQuad):
 
     @classmethod
     def from_mesh(cls,mesh):
-        points=[mesh.p[:,i].copy() for i in range(mesh.p.shape[1])]
-        edge_nodes={};cells=[]
-        for vertices in mesh.t.T:
-            cell=list(map(int,vertices))
-            for a,b in ((0,1),(1,2),(2,3),(3,0)):
-                edge=tuple(sorted((int(vertices[a]),int(vertices[b]))))
-                if edge not in edge_nodes:
-                    edge_nodes[edge]=len(points)
-                    points.append(.5*(mesh.p[:,edge[0]]+mesh.p[:,edge[1]]))
-                cell.append(edge_nodes[edge])
-            cell.append(len(points))
-            points.append(mesh.p[:,vertices].mean(axis=1))
-            cells.append(cell)
-        return cls(np.asarray(points).T,np.asarray(cells,dtype=np.int64).T)
+        vertex_count=mesh.p.shape[1]
+        facet_count=mesh.facets.shape[1]
+        facet_points=.5*(
+            mesh.p[:,mesh.facets[0]]+mesh.p[:,mesh.facets[1]]
+        )
+        interior_points=mesh.p[:,mesh.t[:4]].mean(axis=1)
+        points=np.hstack((mesh.p,facet_points,interior_points))
+        cells=np.vstack((
+            mesh.t[:4],
+            vertex_count+mesh.t2f,
+            vertex_count+facet_count+np.arange(mesh.nelements)[None,:],
+        )).astype(np.int64,copy=False)
+        return cls(points,cells)
 
     def __init__(self,p=None,t=None):
         if p is None or t is None:
@@ -532,18 +531,15 @@ class MeshQuad8(MeshQuad):
 
     @classmethod
     def from_mesh(cls,mesh:MeshQuad):
-        points=[mesh.p[:,i].copy() for i in range(mesh.p.shape[1])]
-        edge_nodes={};cells=[]
-        for corners in mesh.t.T:
-            cell=[int(node) for node in corners]
-            for first,second in ((0,1),(1,2),(2,3),(3,0)):
-                edge=tuple(sorted((int(corners[first]),int(corners[second]))))
-                if edge not in edge_nodes:
-                    edge_nodes[edge]=len(points)
-                    points.append(.5*(mesh.p[:,edge[0]]+mesh.p[:,edge[1]]))
-                cell.append(edge_nodes[edge])
-            cells.append(cell)
-        return cls(np.asarray(points).T,np.asarray(cells,dtype=np.int64).T)
+        vertex_count=mesh.p.shape[1]
+        facet_points=.5*(
+            mesh.p[:,mesh.facets[0]]+mesh.p[:,mesh.facets[1]]
+        )
+        points=np.hstack((mesh.p,facet_points))
+        cells=np.vstack((
+            mesh.t[:4],vertex_count+mesh.t2f,
+        )).astype(np.int64,copy=False)
+        return cls(points,cells)
 
     def __init__(self,p=None,t=None):
         if p is None or t is None:

@@ -37,4 +37,5 @@ clarity and adaptability of Python weak forms.
 
    getting-started
    assembly
+   gallery
    development

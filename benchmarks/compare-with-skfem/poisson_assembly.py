@@ -300,14 +300,12 @@ def write_plot(
             "plotting requires: python -m pip install '.[benchmark]'"
         ) from error
     dofs=np.array([result.dofs for result in results])
-    figure,axes=plt.subplots(2,2,figsize=(11,8),constrained_layout=True)
+    figure,axes=plt.subplots(1,2,figsize=(11,4.5),constrained_layout=True)
     comparisons=(
-        (axes[0,0],"Poisson stiffness assembly","skfn_matrix_ms",
+        (axes[0],"Poisson stiffness assembly","skfn_matrix_ms",
          "skfem_matrix_ms"),
-        (axes[0,1],"Right-hand-side assembly","skfn_rhs_ms",
+        (axes[1],"Right-hand-side assembly","skfn_rhs_ms",
          "skfem_rhs_ms"),
-        (axes[1,0],"Basis construction","skfn_basis_ms",
-         "skfem_basis_ms"),
     )
     for axis,title,native,reference in comparisons:
         axis.loglog(
@@ -321,65 +319,18 @@ def write_plot(
         axis.set(title=title,xlabel="Degrees of freedom",ylabel="Time [ms]")
         axis.grid(True,which="both",alpha=.3)
         axis.legend()
-    axes[0,1].loglog(
+    axes[1].loglog(
         dofs,[result.skfn_parallel_rhs_ms for result in results],
         "^-",label=f"skfemntv ({results[0].native_threads} threads)",
         linewidth=2,
     )
-    axes[0,1].legend()
-    axes[0,0].loglog(
+    axes[1].legend()
+    axes[0].loglog(
         dofs,[result.skfn_parallel_matrix_ms for result in results],
         "^-",label=f"skfemntv ({results[0].native_threads} threads)",
         linewidth=2,
     )
-    axes[0,0].legend()
-    axes[1,0].loglog(
-        dofs,[result.skfn_parallel_basis_ms for result in results],
-        "^-",label=f"skfemntv ({results[0].native_threads} threads)",
-        linewidth=2,
-    )
-    axes[1,0].legend()
-    speedup=axes[1,1]
-    speedup.semilogx(
-        dofs,[result.matrix_speedup for result in results],
-        "o-",label="stiffness K (1 thread)",linewidth=2,
-    )
-    speedup.semilogx(
-        dofs,[
-            result.skfem_matrix_ms/result.skfn_parallel_matrix_ms
-            for result in results
-        ],
-        "p-",label=f"stiffness K ({results[0].native_threads} threads)",
-        linewidth=2,
-    )
-    speedup.semilogx(
-        dofs,[result.rhs_speedup for result in results],
-        "s-",label="RHS f (1 thread)",linewidth=2,
-    )
-    speedup.semilogx(
-        dofs,[
-            result.skfem_rhs_ms/result.skfn_parallel_rhs_ms
-            for result in results
-        ],
-        "d-",label=f"RHS f ({results[0].native_threads} threads)",
-        linewidth=2,
-    )
-    speedup.semilogx(
-        dofs,[result.total_speedup for result in results],
-        "^-",label="K + f",linewidth=2,
-    )
-    speedup.semilogx(
-        dofs,[result.parallel_total_speedup for result in results],
-        "v-",label=f"K + f ({results[0].native_threads} threads)",
-        linewidth=2,
-    )
-    speedup.axhline(1.,color="black",linewidth=1,linestyle="--")
-    speedup.set(
-        title="skfemntv speedup vs. scikit-fem (>1 is faster)",
-        xlabel="Degrees of freedom",ylabel="Speedup [x]",
-    )
-    speedup.grid(True,which="both",alpha=.3)
-    speedup.legend()
+    axes[0].legend()
     figure.suptitle(
         f"Poisson P1 assembly scaling — median of {repeat} timed runs "
         f"after {warmup} warm-ups"
@@ -399,6 +350,10 @@ def main() -> None:
     parser.add_argument("--repeat",type=int,default=1)
     parser.add_argument("--warmup",type=int,default=2)
     parser.add_argument("--native-threads",type=int,default=4)
+    parser.add_argument(
+        "--input",type=Path,
+        help="plot or reformat an existing CSV without running benchmarks",
+    )
     parser.add_argument("--output",type=Path)
     parser.add_argument(
         "--append",action="store_true",
@@ -414,18 +369,21 @@ def main() -> None:
         parser.error("sizes, repeat, and native threads must be positive")
     if arguments.append and arguments.output is None:
         parser.error("--append requires --output")
+    if arguments.append and arguments.input is not None:
+        parser.error("--append and --input cannot be combined")
 
     print(environment(),file=sys.stderr)
-    results=(
+    results=read_csv(arguments.input) if arguments.input is not None else (
         read_csv(arguments.output)
         if arguments.append and arguments.output.exists() else []
     )
-    for size in arguments.sizes:
-        print(f"benchmarking {size} x {size} cells...",file=sys.stderr)
-        results.append(benchmark(
-            size,arguments.repeat,arguments.warmup,
-            arguments.native_threads,
-        ))
+    if arguments.input is None:
+        for size in arguments.sizes:
+            print(f"benchmarking {size} x {size} cells...",file=sys.stderr)
+            results.append(benchmark(
+                size,arguments.repeat,arguments.warmup,
+                arguments.native_threads,
+            ))
     results=sorted(
         {result.resolution:result for result in results}.values(),
         key=lambda result:result.resolution,

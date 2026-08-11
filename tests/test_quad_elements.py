@@ -211,7 +211,11 @@ def test_quad2_reproduces_quadratic_field_and_curved_edge_geometry():
     expected=x[0]**2+x[0]*x[1]-2.*x[1]**2
     np.testing.assert_allclose(field.value,expected,rtol=2e-13,atol=2e-13)
 
-    mesh.p[:,5]=[1.15,.5]
+    curved_node=np.flatnonzero(np.all(
+        np.isclose(mesh.p,np.array([[1.],[.5]])),axis=0
+    ))
+    assert curved_node.size==1
+    mesh.p[:,curved_node[0]]=[1.15,.5]
     facet=skfemntv.FacetBasis(
         mesh,skfemntv.ElementVector(skfemntv.ElementQuad2()),intorder=4
     )

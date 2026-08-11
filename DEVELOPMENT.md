@@ -52,6 +52,23 @@ Nitsche, or another contact formulation.
 5. Keep diagnostics available at Python boundaries.
 6. Remove misleading abstractions rather than preserving accidental APIs.
 
+## Public degree-of-freedom ordering
+
+Supported backends must expose the same global degree-of-freedom ordering as
+scikit-fem.  The canonical order groups DOFs by topological entity: vertices,
+then shared edges or facets, then element interiors.  Local native kernels may
+use explicit high-order connectivity, but that representation must not leak as
+a different public vector or matrix ordering.
+
+Entity-based numbering is preferred over assigning new nodes while traversing
+elements because it is independent of first encounter, keeps boundary and
+interior blocks identifiable, supports direct backend interchange, and follows
+the decomposition used by scikit-fem's `Dofs` implementation.
+
+Gallery compatibility tests must compare public matrices and vectors directly.
+A coordinate permutation is useful for diagnosing an ordering defect, but is
+not an acceptable permanent compatibility layer for a supported element.
+
 ## Compatibility
 
 `skfemntv` is a selectable backend, not a promise of complete scikit-fem API
