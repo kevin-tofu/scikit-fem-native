@@ -5,6 +5,25 @@ scikit-fem-style Python API.  It keeps finite-element formulations in readable
 Python while accelerating reusable assembly, geometry, and sparse-scatter
 kernels in native code.
 
+## Motivation
+
+The project exists to improve the performance of Python assembly workflows
+represented by scikit-fem without replacing their Python programming model.
+Weak forms, nonlinear constitutive updates, contact formulations, and solver
+policy remain ordinary Python components; stable and reusable numerical kernels
+are moved to native code where doing so provides a practical benefit.
+
+This boundary is becoming more important in the era of AI-assisted coding.
+Application-specific nonlinear formulations can now be developed, reviewed,
+and revised rapidly when they remain small, explicit Python components.
+Libraries such as scikit-fem therefore become more valuable, not less: they
+provide a transparent mathematical vocabulary while avoiding the cost of
+embedding every new formulation in a monolithic compiled solver.
+
+`skfem-native` aims to combine that flexibility with faster assembly.  It is a
+selectable backend for Python finite-element applications, not a separate owner
+of their material models or physical formulations.
+
 ## Installation
 
 ```bash
