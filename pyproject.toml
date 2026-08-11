@@ -15,7 +15,6 @@ keywords = ["finite-element", "assembly", "scientific-computing"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",
