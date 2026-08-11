@@ -1,5 +1,11 @@
 # skfem-native
 
+[![PyPI](https://img.shields.io/pypi/v/skfem-native.svg)](https://pypi.org/project/skfem-native/)
+[![Python](https://img.shields.io/pypi/pyversions/skfem-native.svg)](https://pypi.org/project/skfem-native/)
+[![CI](https://github.com/kevin-tofu/skfem-native/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-tofu/skfem-native/actions/workflows/ci.yml)
+[![Documentation Status](https://readthedocs.org/projects/skfem-native/badge/?version=latest)](https://skfem-native.readthedocs.io/en/latest/)
+[![License](https://img.shields.io/pypi/l/skfem-native.svg)](https://github.com/kevin-tofu/skfem-native/blob/main/LICENSE)
+
 `skfem-native` provides `skfemntv`, a native numerical assembly backend with a
 scikit-fem-style Python API.  It keeps finite-element formulations in readable
 Python while accelerating reusable assembly, geometry, and sparse-scatter
@@ -118,5 +124,3 @@ Open `docs/_build/html/index.html` after the build completes.
 python -m pip install -e '.[test]'
 pytest -q
 ```
-
-The current project version is `0.2.0`.
