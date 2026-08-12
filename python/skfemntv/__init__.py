@@ -82,6 +82,30 @@ from .runtime import (
     set_num_threads,
     thread_limit,
 )
+from .capabilities import (
+    CAPABILITY_REGISTRY,
+    Capability,
+    CapabilityStatus,
+    UnsupportedCapabilityError,
+    capabilities,
+    get_capability,
+    require_capability,
+    supports,
+)
+from .preflight import (
+    AssemblyMemoryBudgetError,
+    AssemblyMemoryEstimate,
+    CompositeAssemblyMemoryEstimate,
+    estimate_bilinear_memory,
+    estimate_composite_bilinear_memory,
+    enforce_memory_budget,
+    format_bytes,
+)
+from .hcurl_basis import AffineTriN1Basis
+from .hcurl_assembler import (
+    TriN1Assembler,
+    estimate_tri_n1_assembly_memory,
+)
 
 try:
     __version__=_distribution_version("skfem-native")
@@ -99,6 +123,24 @@ __all__ = [
     "has_capability",
     "set_num_threads",
     "thread_limit",
+    "CAPABILITY_REGISTRY",
+    "Capability",
+    "CapabilityStatus",
+    "UnsupportedCapabilityError",
+    "capabilities",
+    "get_capability",
+    "require_capability",
+    "supports",
+    "AssemblyMemoryEstimate",
+    "AssemblyMemoryBudgetError",
+    "CompositeAssemblyMemoryEstimate",
+    "estimate_bilinear_memory",
+    "estimate_composite_bilinear_memory",
+    "enforce_memory_budget",
+    "format_bytes",
+    "AffineTriN1Basis",
+    "TriN1Assembler",
+    "estimate_tri_n1_assembly_memory",
     "LinearFormDiagnostics",
     "NativeLinearForm",
     "NativeBilinearForm",
