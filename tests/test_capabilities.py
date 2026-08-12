@@ -6,7 +6,8 @@ import skfemntv
 def test_capability_registry_declares_current_and_future_space_boundaries():
     assert skfemntv.supports("space.h1")
     assert not skfemntv.supports("space.hcurl")
-    assert skfemntv.get_capability("space.hcurl").status is skfemntv.CapabilityStatus.PLANNED
+    assert skfemntv.supports("space.hcurl",include_experimental=True)
+    assert skfemntv.get_capability("space.hcurl").status is skfemntv.CapabilityStatus.EXPERIMENTAL
     assert "edge DOFs" in skfemntv.get_capability("space.hcurl").detail
 
 
@@ -21,7 +22,7 @@ def test_experimental_capability_requires_explicit_opt_in():
 def test_require_capability_reports_status_and_reason():
     with pytest.raises(
         skfemntv.UnsupportedCapabilityError,
-        match=r"space\.hcurl.*planned.*oriented edge DOFs",
+        match=r"space\.hcurl.*experimental.*Affine triangular",
     ):
         skfemntv.require_capability("space.hcurl")
 

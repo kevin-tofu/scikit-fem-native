@@ -28,7 +28,7 @@ class UnsupportedCapabilityError(NotImplementedError):
 _ENTRIES = (
     Capability("space.h1", "space", CapabilityStatus.SUPPORTED, "Continuous nodal H1 spaces."),
     Capability("space.l2_dg", "space", CapabilityStatus.EXPERIMENTAL, "Scalar discontinuous cell-local spaces."),
-    Capability("space.hcurl", "space", CapabilityStatus.PLANNED, "Requires oriented edge DOFs and covariant Piola mapping."),
+    Capability("space.hcurl", "space", CapabilityStatus.EXPERIMENTAL, "Affine triangular lowest-order Nedelec vertical slice with oriented edge DOFs only; general Basis/asm, tetrahedra, and curved mappings remain unavailable."),
     Capability("space.hcurl_tri_n1_basis", "space", CapabilityStatus.EXPERIMENTAL, "Minimal affine-triangle Nedelec basis with oriented global edge numbering and element mass/curl-curl integration; not accepted by public asm."),
     Capability("space.hdiv", "space", CapabilityStatus.PLANNED, "Requires oriented facet DOFs and contravariant Piola mapping."),
     Capability("dof.vertex", "dof", CapabilityStatus.SUPPORTED, "Vertex and mesh-node-associated DOFs."),

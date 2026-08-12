@@ -233,6 +233,14 @@ results must be retained.  Public basis values use component-first shape
 `(basis, component, cell, quadrature)` and curls use
 `(basis, cell, quadrature)`; coefficient fields use `(cell, quadrature)`.
 
+`basis.geometry_diagnostics` reports minimum signed/absolute Jacobian
+determinants, minimum cell area, maximum edge/altitude aspect ratio, and the
+number of negatively oriented cells.  An optional `max_aspect_ratio` constructor
+argument rejects meshes beyond an application-selected quality limit.  Tests
+cover distorted meshes and mixed cell orientations, including manufactured
+PDE convergence.  With this sharply limited scope, `space.hcurl` is declared
+experimental; this does not imply support for general meshes or form syntax.
+
 ### Assembly memory preflight
 
 Estimate native bilinear-assembler memory before its CSR pattern and scatter

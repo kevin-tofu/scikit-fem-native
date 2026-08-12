@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from ._hcurl_mapping import (
@@ -29,10 +31,19 @@ def _triangle_quadrature(order):
     return np.asarray(coordinates).T,np.asarray(result_weights)
 
 
+@dataclass(frozen=True)
+class HcurlGeometryDiagnostics:
+    minimum_signed_determinant: float
+    minimum_absolute_determinant: float
+    minimum_area: float
+    maximum_aspect_ratio: float
+    inverted_cell_count: int
+
+
 class AffineTriN1Basis:
     """Reference tabulation, Piola mapping, orientation and integration data."""
 
-    def __init__(self,mesh,*,intorder=2):
+    def __init__(self,mesh,*,intorder=2,max_aspect_ratio=None):
         if mesh.dim()!=2 or mesh.t.shape[0] not in (3,6):
             raise TypeError("AffineTriN1Basis requires a triangular mesh")
         self.mesh=mesh
@@ -53,6 +64,33 @@ class AffineTriN1Basis:
         if np.any(np.isclose(determinants,0.)):
             raise ValueError("H(curl) basis requires nonsingular triangles")
         self.detJ=determinants
+        edge_lengths=[]
+        for first,second in ((0,1),(1,2),(2,0)):
+            edge_lengths.append(np.linalg.norm(
+                vertices[:,second]-vertices[:,first],axis=0
+            ))
+        longest=np.max(edge_lengths,axis=0)
+        aspect=longest**2/np.abs(determinants)
+        self.geometry_diagnostics=HcurlGeometryDiagnostics(
+            minimum_signed_determinant=float(np.min(determinants)),
+            minimum_absolute_determinant=float(np.min(np.abs(determinants))),
+            minimum_area=float(.5*np.min(np.abs(determinants))),
+            maximum_aspect_ratio=float(np.max(aspect)),
+            inverted_cell_count=int(np.count_nonzero(determinants<0.)),
+        )
+        if max_aspect_ratio is not None:
+            if (
+                isinstance(max_aspect_ratio,bool)
+                or not np.isscalar(max_aspect_ratio)
+                or not np.isfinite(max_aspect_ratio)
+                or max_aspect_ratio<=0.
+            ):
+                raise ValueError("max_aspect_ratio must be a positive finite scalar")
+            if self.geometry_diagnostics.maximum_aspect_ratio>max_aspect_ratio:
+                raise ValueError(
+                    "H(curl) triangle aspect ratio exceeds "
+                    f"max_aspect_ratio={max_aspect_ratio}"
+                )
         self.dx=np.abs(determinants)[:,None]*self.W[None,:]
 
         reference_values=tri_n1_basis(self.X)
@@ -201,4 +239,4 @@ class AffineTriN1Basis:
         }),dtype=np.int64)
 
 
-__all__=["AffineTriN1Basis"]
+__all__=["AffineTriN1Basis","HcurlGeometryDiagnostics"]

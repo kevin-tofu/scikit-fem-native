@@ -229,7 +229,20 @@ L2, curl-L2, and H(curl) solution errors with observed rates above 0.8.
 
 ## Next phase
 
-Run the same convergence contract on distorted meshes and mixed cell
-orientations.  If those pass, the affine-triangle slice has enough evidence to
-mark broad `space.hcurl` experimental with a sharply documented scope.  General
-form syntax, tetrahedra, and curved geometry remain separate later milestones.
+The convergence contract now passes on deterministically distorted meshes.
+Mixed positive/negative cell orientations preserve the vertex-pair ordered
+operator, load vector, solution, and error norms.  Geometry diagnostics report
+minimum signed/absolute determinants, minimum area, maximum aspect ratio, and
+negative-orientation count; an optional aspect threshold rejects application-
+defined excessive distortion.
+
+The `space.hcurl` capability is therefore experimental with a sharply limited
+scope: affine triangles, lowest-order first-family Nédélec, and the dedicated
+API documented here.  General `Basis`/`asm`, tetrahedra, curved geometry, and
+higher order remain unavailable.
+
+## Next phase
+
+Pause mathematical feature work and benchmark the Python/SciPy TriN1 assembler
+against scikit-fem.  A native kernel should only be considered after profiling
+identifies integration or scatter as a material bottleneck.
