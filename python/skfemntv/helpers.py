@@ -2,7 +2,8 @@
 
 import numpy as np
 
-from .forms import ddot, div, dot, grad
+from .forms import ddot, div, dot, grad, mul
+from ._h1_fields import SymmetricGradient,TestGradient,TrialGradient
 from .interface import avg, jump, normal_grad
 
 
@@ -16,10 +17,9 @@ def transpose(value):
 
 def sym_grad(value):
     gradient = grad(value)
-    if gradient.__class__.__name__ in {"_TrialGradient","_TestGradient"}:
-        from .forms import _SymmetricGradient
-        role="trial" if gradient.__class__.__name__=="_TrialGradient" else "test"
-        return _SymmetricGradient(role,gradient.factor)
+    if isinstance(gradient,(TrialGradient,TestGradient)):
+        role="trial" if isinstance(gradient,TrialGradient) else "test"
+        return SymmetricGradient(role,gradient.factor)
     return 0.5 * (gradient + transpose(gradient))
 
 

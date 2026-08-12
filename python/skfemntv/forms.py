@@ -12,657 +12,57 @@ from .bilinear_form import (
     NativeCrossBilinearForm,
 )
 from ._skfn import integrate_functional
-
-
-class UnsupportedNativeForm(Exception):
-    """Raised when a form cannot be assembled by the native backend."""
-
-
-class _QuadratureValue:
-    """Numerical geometry value that preserves form multiplication."""
-
-    __array_priority__=1000
-
-    def __init__(self,value):
-        self.value=np.asarray(value)
-
-    def __array__(self,dtype=None):
-        return np.asarray(self.value,dtype=dtype)
-
-    def __getitem__(self,key):
-        return _QuadratureValue(self.value[key])
-
-    def __array_ufunc__(self,ufunc,method,*inputs,**kwargs):
-        values=[
-            item.value if isinstance(item,_QuadratureValue) else item
-            for item in inputs
-        ]
-        result=getattr(ufunc,method)(*values,**kwargs)
-        return _QuadratureValue(result)
-
-    def __mul__(self,other):
-        if isinstance(other,(
-            _BilinearTerm,_CompositeBilinearTerm,
-            _InterfaceBilinearTerm,
-        )):
-            return other*np.asarray(self.value)
-        if isinstance(other,_CompositeField):
-            return _CompositeWeightedField(
-                other,np.asarray(self.value)
-            )
-        if isinstance(other,_Divergence):
-            return _Divergence(
-                other.role,other.factor,np.asarray(self.value)
-            )
-        return _QuadratureValue(self.value*np.asarray(other))
-
-    def __rmul__(self,other):
-        if isinstance(other,(
-            _BilinearTerm,_CompositeBilinearTerm,
-            _InterfaceBilinearTerm,
-        )):
-            return other*np.asarray(self.value)
-        return _QuadratureValue(np.asarray(other)*self.value)
-
-    def __add__(self,other):
-        return _QuadratureValue(self.value+np.asarray(other))
-
-    def __radd__(self,other):
-        return _QuadratureValue(np.asarray(other)+self.value)
-
-    def __sub__(self,other):
-        return _QuadratureValue(self.value-np.asarray(other))
-
-    def __rsub__(self,other):
-        return _QuadratureValue(np.asarray(other)-self.value)
-
-    def __truediv__(self,other):
-        return _QuadratureValue(self.value/np.asarray(other))
-
-    def __rtruediv__(self,other):
-        return _QuadratureValue(np.asarray(other)/self.value)
-
-    def __pow__(self,other):
-        return _QuadratureValue(self.value**other)
-
-    def __neg__(self):
-        return _QuadratureValue(-self.value)
-
-
-@dataclass(frozen=True)
-class _TestValue:
-    factor: float = 1.
-
-    def __mul__(self,value):
-        return _TestValue(self.factor*value) if np.isscalar(value) else NotImplemented
-
-    __rmul__=__mul__
-
-
-@dataclass(frozen=True)
-class _TestGradient:
-    factor: float = 1.
-
-
-@dataclass(frozen=True)
-class _TrialValue:
-    factor: float = 1.
-
-    def __mul__(self,value):
-        return _TrialValue(self.factor*value) if np.isscalar(value) else NotImplemented
-
-    __rmul__=__mul__
-
-
-@dataclass(frozen=True)
-class _TrialGradient:
-    factor: float = 1.
-
-
-@dataclass(frozen=True)
-class _SymmetricGradient:
-    role: str
-    factor: float = 1.
-
-
-@dataclass(frozen=True)
-class _Divergence:
-    role: str
-    factor: float = 1.
-    coefficient: Any = None
-
-    def __mul__(self,other):
-        if np.isscalar(other):
-            return _Divergence(
-                self.role,self.factor*other,self.coefficient
-            )
-        if isinstance(other,_Divergence) and self.role!=other.role:
-            if self.coefficient is not None or other.coefficient is not None:
-                raise UnsupportedNativeForm(
-                    "weighted divergence products are not supported"
-                )
-            return _BilinearTerm(
-                "divergence",factor=self.factor*other.factor
-            )
-        if self.role=="trial" and isinstance(other,_TestValue):
-            return _BilinearTerm(
-                "column_divergence",
-                coefficient=self.coefficient,
-                factor=self.factor*other.factor,
-            )
-        if self.role=="test" and isinstance(other,_TrialValue):
-            return _BilinearTerm(
-                "row_divergence",
-                coefficient=self.coefficient,
-                factor=self.factor*other.factor,
-            )
-        return NotImplemented
-
-    __rmul__=__mul__
-
-
-@dataclass(frozen=True)
-class _CompositeField:
-    role: str
-    field: int
-    kind: str = "value"
-
-    def __mul__(self,other):
-        if isinstance(other,_CompositeDivergence):
-            return _composite_divergence_contraction(self,other)
-        if isinstance(other,_CompositeField):
-            if self.kind!="value" or other.kind!="value":
-                return NotImplemented
-            return _composite_contraction(self,other,"value")
-        if isinstance(other,_Coefficient):
-            return _CompositeWeightedField(self,other.name)
-        if np.isscalar(other) or isinstance(
-            other,(np.ndarray,_QuadratureValue)
-        ) or (
-            hasattr(other,"value") and hasattr(other,"grad")
-        ):
-            return _CompositeWeightedField(self,np.asarray(other))
-        return NotImplemented
-
-    __rmul__=__mul__
-
-    def __neg__(self):
-        return _CompositeWeightedField(self,-1.)
-
-
-@dataclass(frozen=True)
-class _CompositeWeightedField:
-    field: _CompositeField
-    coefficient: Any
-
-    def __mul__(self,other):
-        if isinstance(other,_CompositeDivergence):
-            term=_composite_divergence_contraction(self.field,other)
-            return _CompositeBilinearTerm(
-                term.row_field,term.column_field,term.kind,
-                self.coefficient,term.factor,
-            )
-        if not isinstance(other,_CompositeField):
-            return NotImplemented
-        term=_composite_contraction(self.field,other,"value")
-        return _CompositeBilinearTerm(
-            term.row_field,term.column_field,term.kind,
-            self.coefficient,term.factor,
-        )
-
-    __rmul__=__mul__
-
-    def _linear_term(self):
-        if self.field.role!="test":
-            raise UnsupportedNativeForm(
-                "composite LinearForm requires test subfields"
-            )
-        return _CompositeLinearTerm(
-            self.field.field,self.field.kind,self.coefficient
-        )
-
-    def __add__(self,other):
-        return self._linear_term()+other
-
-    __radd__=__add__
-
-    def __neg__(self):
-        if isinstance(self.coefficient,str):
-            return _CompositeLinearTerm(
-                self.field.field,self.field.kind,self.coefficient,-1.
-            )
-        return _CompositeWeightedField(self.field,-np.asarray(self.coefficient))
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _CompositeDivergence:
-    field: _CompositeField
-
-    def __mul__(self,other):
-        if isinstance(other,(_CompositeField,_CompositeWeightedField)):
-            return other*self
-        return NotImplemented
-
-    __rmul__=__mul__
-
-
-@dataclass(frozen=True)
-class _CompositeLinearTerm:
-    field: int
-    kind: str
-    coefficient: Any
-    factor: float = 1.
-
-    def __mul__(self,other):
-        if np.isscalar(other):
-            return _CompositeLinearTerm(
-                self.field,self.kind,self.coefficient,self.factor*other
-            )
-        return NotImplemented
-
-    __rmul__=__mul__
-
-    def __neg__(self):
-        return _CompositeLinearTerm(
-            self.field,self.kind,self.coefficient,-self.factor
-        )
-
-    def __add__(self,other):
-        if isinstance(other,_CompositeWeightedField):
-            other=other._linear_term()
-        if isinstance(other,_CompositeLinearTerm):
-            return _CompositeLinearSum((self,other))
-        if isinstance(other,_CompositeLinearSum):
-            return _CompositeLinearSum((self,)+other.terms)
-        return NotImplemented
-
-    __radd__=__add__
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _CompositeLinearSum:
-    terms: tuple[_CompositeLinearTerm,...]
-
-    def __add__(self,other):
-        if isinstance(other,_CompositeWeightedField):
-            other=other._linear_term()
-        if isinstance(other,_CompositeLinearTerm):
-            return _CompositeLinearSum(self.terms+(other,))
-        if isinstance(other,_CompositeLinearSum):
-            return _CompositeLinearSum(self.terms+other.terms)
-        return NotImplemented
-
-    __radd__=__add__
-
-    def __neg__(self):
-        return _CompositeLinearSum(tuple(-term for term in self.terms))
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _Coefficient:
-    name: str
-
-    def __getitem__(self, _):
-        raise UnsupportedNativeForm(
-            "coefficient indexing is not supported by native forms"
-        )
-
-    def __mul__(self, other):
-        if isinstance(other,_CompositeField):
-            return other*self
-        if isinstance(other, (
-            _BilinearTerm,_CompositeBilinearTerm,
-            _InterfaceBilinearTerm,
-        )):
-            if isinstance(other,_CompositeBilinearTerm):
-                return _CompositeBilinearTerm(
-                    other.row_field,other.column_field,
-                    other.kind,self.name,other.factor
-                )
-            if isinstance(other,_InterfaceBilinearTerm):
-                return _InterfaceBilinearTerm(
-                    other.row,other.column,self.name,other.factor
-                )
-            return _BilinearTerm(other.kind, self.name, other.factor)
-        return NotImplemented
-
-    __rmul__ = __mul__
-
-
-@dataclass(frozen=True)
-class _Term:
-    kind: str
-    coefficient: Any
-    factor: float = 1.0
-
-    def __neg__(self):
-        return _Term(self.kind, self.coefficient, -self.factor)
-
-    def __mul__(self, value):
-        if np.isscalar(value):
-            return _Term(self.kind, self.coefficient, self.factor * value)
-        return NotImplemented
-
-    __rmul__ = __mul__
-
-    def __add__(self, other):
-        return _Sum((self,)) + other
-
-    def __sub__(self, other):
-        return self + (-other)
-
-
-@dataclass(frozen=True)
-class _Sum:
-    terms: tuple[_Term, ...]
-
-    def __add__(self, other):
-        if isinstance(other, _Term):
-            return _Sum(self.terms + (other,))
-        if isinstance(other, _Sum):
-            return _Sum(self.terms + other.terms)
-        raise UnsupportedNativeForm
-
-    __radd__ = __add__
-
-    def __neg__(self):
-        return _Sum(tuple(-term for term in self.terms))
-
-    def __sub__(self, other):
-        return self + (-other)
-
-
-@dataclass(frozen=True)
-class _BilinearTerm:
-    kind: str
-    coefficient: Any = None
-    factor: float = 1.0
-
-    def __mul__(self, other):
-        if np.isscalar(other):
-            return _BilinearTerm(
-                self.kind, self.coefficient, self.factor * other
-            )
-        if isinstance(other, _Coefficient):
-            return _BilinearTerm(self.kind, other.name, self.factor)
-        if isinstance(other,np.ndarray) or (
-            hasattr(other,"value") and hasattr(other,"grad")
-        ):
-            if self.coefficient is not None:
-                raise UnsupportedNativeForm(
-                    "multiple bilinear coefficients are not supported"
-                )
-            return _BilinearTerm(
-                self.kind,np.asarray(other),self.factor
-            )
-        return NotImplemented
-
-    __rmul__ = __mul__
-
-    def __neg__(self):
-        return _BilinearTerm(
-            self.kind,self.coefficient,-self.factor
-        )
-
-    def __add__(self,other):
-        if isinstance(other,_BilinearTerm):
-            return _BilinearSum((self,other))
-        if isinstance(other,_BilinearSum):
-            return _BilinearSum((self,)+other.terms)
-        return NotImplemented
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _BilinearSum:
-    terms: tuple[_BilinearTerm,...]
-
-    def __add__(self,other):
-        if isinstance(other,_BilinearTerm):
-            return _BilinearSum(self.terms+(other,))
-        if isinstance(other,_BilinearSum):
-            return _BilinearSum(self.terms+other.terms)
-        return NotImplemented
-
-    __radd__=__add__
-
-    def __neg__(self):
-        return _BilinearSum(tuple(-term for term in self.terms))
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _CompositeBilinearTerm:
-    row_field: int
-    column_field: int
-    kind: str
-    coefficient: Any = None
-    factor: float = 1.
-
-    def __mul__(self,other):
-        if np.isscalar(other):
-            return _CompositeBilinearTerm(
-                self.row_field,self.column_field,self.kind,
-                self.coefficient,self.factor*other,
-            )
-        if isinstance(other,_Coefficient):
-            return _CompositeBilinearTerm(
-                self.row_field,self.column_field,self.kind,
-                other.name,self.factor,
-            )
-        if isinstance(other,np.ndarray) or (
-            hasattr(other,"value") and hasattr(other,"grad")
-        ):
-            if self.coefficient is not None:
-                raise UnsupportedNativeForm(
-                    "multiple composite coefficients are not supported"
-                )
-            return _CompositeBilinearTerm(
-                self.row_field,self.column_field,self.kind,
-                np.asarray(other),self.factor,
-            )
-        return NotImplemented
-
-    __rmul__=__mul__
-
-    def __neg__(self):
-        return _CompositeBilinearTerm(
-            self.row_field,self.column_field,self.kind,
-            self.coefficient,-self.factor,
-        )
-
-    def __add__(self,other):
-        if isinstance(other,_CompositeBilinearTerm):
-            return _CompositeBilinearSum((self,other))
-        if isinstance(other,_CompositeBilinearSum):
-            return _CompositeBilinearSum((self,)+other.terms)
-        return NotImplemented
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _CompositeBilinearSum:
-    terms: tuple[_CompositeBilinearTerm,...]
-
-    def __add__(self,other):
-        if isinstance(other,_CompositeBilinearTerm):
-            return _CompositeBilinearSum(self.terms+(other,))
-        if isinstance(other,_CompositeBilinearSum):
-            return _CompositeBilinearSum(self.terms+other.terms)
-        return NotImplemented
-
-    __radd__=__add__
-
-    def __neg__(self):
-        return _CompositeBilinearSum(tuple(-term for term in self.terms))
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _InterfaceTrace:
-    role: str
-    weights: tuple[float,float] | None = None
-    kind: str = "value"
-
-    def _interface_transform(self,operation,value):
-        if operation=="weights":
-            return _InterfaceTrace(self.role,tuple(value),self.kind)
-        return _InterfaceTrace(self.role,self.weights,value)
-
-
-@dataclass(frozen=True)
-class _InterfaceCoefficientTrace:
-    trace: _InterfaceTrace
-    coefficient: Any
-
-
-@dataclass(frozen=True)
-class _InterfaceLinearTerm:
-    trace: _InterfaceTrace
-    coefficient: Any
-    factor: float = 1.
-
-    def __neg__(self):
-        return _InterfaceLinearTerm(
-            self.trace,self.coefficient,-self.factor
-        )
-
-    def __mul__(self,value):
-        if np.isscalar(value):
-            return _InterfaceLinearTerm(
-                self.trace,self.coefficient,self.factor*value
-            )
-        return NotImplemented
-
-    __rmul__=__mul__
-
-    def __add__(self,other):
-        if isinstance(other,_InterfaceLinearTerm):
-            return _InterfaceLinearSum((self,other))
-        if isinstance(other,_InterfaceLinearSum):
-            return _InterfaceLinearSum((self,)+other.terms)
-        return NotImplemented
-
-
-@dataclass(frozen=True)
-class _InterfaceLinearSum:
-    terms: tuple[_InterfaceLinearTerm,...]
-
-    def __add__(self,other):
-        if isinstance(other,_InterfaceLinearTerm):
-            return _InterfaceLinearSum(self.terms+(other,))
-        if isinstance(other,_InterfaceLinearSum):
-            return _InterfaceLinearSum(self.terms+other.terms)
-        return NotImplemented
-
-
-@dataclass(frozen=True)
-class _InterfaceBilinearTerm:
-    row: _InterfaceTrace
-    column: _InterfaceTrace
-    coefficient: Any = None
-    factor: float = 1.
-
-    def __mul__(self,other):
-        if np.isscalar(other):
-            return _InterfaceBilinearTerm(
-                self.row,self.column,self.coefficient,self.factor*other
-            )
-        if isinstance(other,_Coefficient):
-            return _InterfaceBilinearTerm(
-                self.row,self.column,other.name,self.factor
-            )
-        if isinstance(other,np.ndarray):
-            if self.coefficient is not None:
-                raise UnsupportedNativeForm(
-                    "multiple interface coefficients are not supported"
-                )
-            return _InterfaceBilinearTerm(
-                self.row,self.column,other,self.factor
-            )
-        return NotImplemented
-
-    __rmul__=__mul__
-
-    def __neg__(self):
-        return _InterfaceBilinearTerm(
-            self.row,self.column,self.coefficient,-self.factor
-        )
-
-    def __add__(self,other):
-        if isinstance(other,_InterfaceBilinearTerm):
-            return _InterfaceSum((self,other))
-        return NotImplemented
-
-    __radd__=__add__
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-@dataclass(frozen=True)
-class _InterfaceSum:
-    terms: tuple[_InterfaceBilinearTerm,...]
-
-    def __add__(self,other):
-        if isinstance(other,_InterfaceBilinearTerm):
-            return _InterfaceSum(self.terms+(other,))
-        if isinstance(other,_InterfaceSum):
-            return _InterfaceSum(self.terms+other.terms)
-        return NotImplemented
-
-    __radd__=__add__
-
-    def __neg__(self):
-        return _InterfaceSum(tuple(-term for term in self.terms))
-
-    def __sub__(self,other):
-        return self+(-other)
-
-
-class _Parameters:
-    def __init__(self, geometry=None):
-        self._geometry={} if geometry is None else geometry
-
-    def __getattr__(self, name):
-        if name in self._geometry:
-            return self._geometry[name]
-        return _Coefficient(name)
-
-    def __getitem__(self, name):
-        if name in self._geometry:
-            return self._geometry[name]
-        return _Coefficient(name)
-
-
-def _parameter_values(geometry,kwargs):
-    values=dict(geometry)
-    for name,value in kwargs.items():
-        values[name]=(
-            value
-            if callable(value) or (
-                hasattr(value,"value") and hasattr(value,"grad")
-            )
-            else _QuadratureValue(value)
-        )
-    return values
+from ._coefficients import (
+    Coefficient as _Coefficient,
+    CoefficientComponent as _CoefficientComponent,
+    evaluate_coefficient as _evaluate_coefficient,
+    is_symbolic_coefficient as _is_symbolic_coefficient,
+    resolve_coefficient as _resolve_coefficient,
+)
+from ._errors import UnsupportedNativeForm
+from ._form_terms import (
+    BilinearSum as _BilinearSum,
+    BilinearTerm as _BilinearTerm,
+    CompositeBilinearSum as _CompositeBilinearSum,
+    CompositeBilinearTerm as _CompositeBilinearTerm,
+    LinearSum as _Sum,
+    LinearTerm as _Term,
+)
+from ._interface_terms import (
+    InterfaceBilinearTerm as _InterfaceBilinearTerm,
+    InterfaceCoefficientTrace as _InterfaceCoefficientTrace,
+    InterfaceLinearSum as _InterfaceLinearSum,
+    InterfaceLinearTerm as _InterfaceLinearTerm,
+    InterfaceSum as _InterfaceSum,
+    InterfaceTrace as _InterfaceTrace,
+)
+from ._h1_fields import (
+    Divergence as _Divergence,
+    SymmetricGradient as _SymmetricGradient,
+    TensorGradient as _TensorGradient,
+    TestGradient as _TestGradient,
+    TestValue as _TestValue,
+    TrialGradient as _TrialGradient,
+    TrialValue as _TrialValue,
+)
+from ._composite_fields import (
+    CompositeDivergence as _CompositeDivergence,
+    CompositeField as _CompositeField,
+    CompositeLinearSum as _CompositeLinearSum,
+    CompositeLinearTerm as _CompositeLinearTerm,
+    CompositeWeightedField as _CompositeWeightedField,
+    composite_contraction as _composite_contraction,
+    composite_divergence_contraction as _composite_divergence_contraction,
+)
+from ._form_parameters import (
+    Parameters as _Parameters,
+    QuadratureValue as _QuadratureValue,
+    parameter_values as _parameter_values,
+)
+from ._form_compiler import (
+    extract_terms as _extract_terms,
+    trace_expression as _trace_expression,
+)
 
 
 class _LinearForm:
@@ -745,24 +145,16 @@ def _compile_linear(form: _LinearForm,basis,kwargs):
     )}
     if basis.normals is not None:
         geometry["n"]=_QuadratureValue(np.moveaxis(basis.normals,-1,0))
-    try:
-        expression = form.function(
-            _TestValue(),
-            _Parameters(_parameter_values(geometry,kwargs)),
-        )
-    except UnsupportedNativeForm:
-        raise
-    except Exception as error:
-        raise UnsupportedNativeForm(
-            f"form contains an operation that cannot be traced: {error}"
-        ) from error
-    if isinstance(expression, _Term):
-        return (expression,)
-    if isinstance(expression, _Sum):
-        return expression.terms
-    raise UnsupportedNativeForm(
-        "native LinearForm must reduce to dot(coefficient, v), "
-        "ddot(coefficient, grad(v)), or a sum of those terms"
+    expression=_trace_expression(
+        form.function,(_TestValue(),),geometry,kwargs,
+        context="LinearForm",
+    )
+    return _extract_terms(
+        expression,_Term,_Sum,
+        message=(
+            "native LinearForm must reduce to dot(coefficient, v), "
+            "ddot(coefficient, grad(v)), or a sum of those terms"
+        ),
     )
 
 
@@ -775,16 +167,8 @@ def _native_linear_assemble(form,basis,kwargs,num_threads=0):
     value = None
     gradient = None
     for term in terms:
-        if isinstance(term.coefficient,_Coefficient):
-            if term.coefficient.name not in kwargs:
-                raise ValueError(
-                    f"missing form parameter {term.coefficient.name!r}"
-                )
-            raw_coefficient=kwargs[term.coefficient.name]
-        else:
-            raw_coefficient=term.coefficient
-        coefficient = term.factor * np.asarray(
-            raw_coefficient, dtype=np.float64
+        coefficient = _evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor
         )
         if term.kind == "value":
             if (
@@ -827,17 +211,9 @@ def _native_composite_linear_assemble(form,basis,kwargs):
         _CompositeField("test",field)
         for field in range(len(basis.subbases))
     )
-    try:
-        expression=form.function(
-            *test,_Parameters(_parameter_values(geometry,kwargs))
-        )
-    except UnsupportedNativeForm:
-        raise
-    except Exception as error:
-        raise UnsupportedNativeForm(
-            f"composite LinearForm contains an unsupported "
-            f"operation: {error}"
-        ) from error
+    expression=_trace_expression(
+        form.function,test,geometry,kwargs,context="composite LinearForm"
+    )
     if isinstance(expression,_CompositeWeightedField):
         expression=expression._linear_term()
     terms=(
@@ -858,15 +234,9 @@ def _native_composite_linear_assemble(form,basis,kwargs):
         form._native_cache[basis]=native
     grouped={}
     for term in terms:
-        if isinstance(term.coefficient,str):
-            if term.coefficient not in kwargs:
-                raise ValueError(
-                    f"missing form parameter {term.coefficient!r}"
-                )
-            raw=kwargs[term.coefficient]
-        else:
-            raw=term.coefficient
-        coefficient=term.factor*np.asarray(raw,dtype=np.float64)
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor
+        )
         field_native=native.assembler(term.field)
         if term.kind=="value":
             if (
@@ -903,53 +273,35 @@ def _native_composite_linear_assemble(form,basis,kwargs):
     return result
 
 
-def _native_bilinear_assemble(form,basis,kwargs,num_threads=0):
+def _native_bilinear_assemble(
+    form,basis,kwargs,num_threads=0,*,memory_limit_bytes=None,
+    memory_safety_factor=1.25,
+):
     geometry={"x":_QuadratureValue(
         np.moveaxis(basis.global_coordinates,-1,0)
     )}
     if basis.normals is not None:
         geometry["n"]=_QuadratureValue(np.moveaxis(basis.normals,-1,0))
-    try:
-        expression = form.function(
-            _TrialValue(), _TestValue(),
-            _Parameters(_parameter_values(geometry,kwargs))
-        )
-    except UnsupportedNativeForm:
-        raise
-    except Exception as error:
-        raise UnsupportedNativeForm(
-            f"BilinearForm contains an unsupported operation: {error}"
-        ) from error
-    terms=(
-        expression.terms if isinstance(expression,_BilinearSum)
-        else (expression,) if isinstance(expression,_BilinearTerm)
-        else None
+    expression=_trace_expression(
+        form.function,(_TrialValue(),_TestValue()),geometry,kwargs,
+        context="BilinearForm",
     )
-    if terms is None:
-        raise UnsupportedNativeForm(
+    terms=_extract_terms(
+        expression,_BilinearTerm,_BilinearSum,
+        message=(
             "native BilinearForm must reduce to dot(u, v), "
             "ddot(grad(u), grad(v)), or a sum of those terms"
-        )
+        ),
+    )
     value=None
     gradient=None
     symmetric_gradient=None
     divergence=None
+    tensor_terms=[]
     for term in terms:
-        coefficient=term.factor
-        if term.coefficient is not None:
-            if isinstance(term.coefficient,str):
-                if term.coefficient not in kwargs:
-                    raise ValueError(
-                        f"missing form parameter {term.coefficient!r}"
-                    )
-                raw_coefficient=kwargs[term.coefficient]
-            else:
-                raw_coefficient=term.coefficient
-            coefficient=coefficient*np.asarray(
-                raw_coefficient,dtype=np.float64
-            )
-            if coefficient.ndim>2:
-                coefficient=np.squeeze(coefficient)
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor,squeeze=True
+        )
         if term.kind=="value":
             value=coefficient if value is None else value+coefficient
         elif term.kind=="gradient":
@@ -966,23 +318,95 @@ def _native_bilinear_assemble(form,basis,kwargs,num_threads=0):
                 coefficient if divergence is None
                 else divergence+coefficient
             )
+        elif term.kind=="gradient_tensor":
+            tensor_terms.append((coefficient,1.))
         else:
             raise UnsupportedNativeForm(
                 f"unsupported bilinear term kind {term.kind!r}"
             )
-    native = form._native_cache.get(basis)
-    if native is None:
-        native = NativeBilinearForm(basis)
-        form._native_cache[basis] = native
-    return native.assemble(
-        value=value,gradient=gradient,
-        symmetric_gradient=symmetric_gradient,divergence=divergence,
-        num_threads=num_threads
-    )
+    result=None
+    if any(item is not None for item in (
+        value,gradient,symmetric_gradient,divergence
+    )):
+        native = form._native_cache.get(basis)
+        if native is None:
+            native = NativeBilinearForm(
+                basis,
+                memory_limit_bytes=memory_limit_bytes,
+                memory_safety_factor=memory_safety_factor,
+            )
+            form._native_cache[basis] = native
+        elif memory_limit_bytes is not None:
+            from .preflight import enforce_memory_budget
+            enforce_memory_budget(
+                native.memory_estimate,memory_limit_bytes,
+                safety_factor=memory_safety_factor,
+            )
+        result=native.assemble(
+            value=value,gradient=gradient,
+            symmetric_gradient=symmetric_gradient,divergence=divergence,
+            num_threads=num_threads
+        )
+    if tensor_terms:
+        if basis.elem._dim!=1:
+            raise UnsupportedNativeForm(
+                "anisotropic gradient tensor currently requires a scalar field"
+            )
+        by_trial=form._cross_cache.setdefault(basis,WeakKeyDictionary())
+        tensor_native=by_trial.get(basis)
+        if tensor_native is None:
+            tensor_native=NativeCrossBilinearForm(
+                basis,basis,memory_limit_bytes=memory_limit_bytes,
+                memory_safety_factor=memory_safety_factor,
+            )
+            by_trial[basis]=tensor_native
+        dimension=basis.mesh.dim()
+        for raw,factor in tensor_terms:
+            tensor=_anisotropic_tensor_coefficient(
+                raw,basis.dx.shape,dimension
+            )*factor
+            matrix=tensor_native.assemble_tensor(
+                "gradient","gradient",tensor,num_threads=num_threads
+            )
+            result=matrix if result is None else result+matrix
+    if result is None:
+        raise UnsupportedNativeForm("bilinear form contains no assembled terms")
+    return result
+
+
+def _anisotropic_tensor_coefficient(raw,coefficient_shape,dimension):
+    """Normalize scalar-field diffusion tensors to native trailing axes."""
+    tensor=np.asarray(raw,dtype=np.float64)
+    if tensor.shape==(dimension,dimension):
+        tensor=np.broadcast_to(
+            tensor,coefficient_shape+(dimension,dimension)
+        )
+    elif tensor.shape==(dimension,dimension)+coefficient_shape:
+        # Public form coefficients follow scikit-fem's component-first layout:
+        # (dim, dim, entity, quadrature).  The C++ kernel consumes one compact
+        # tensor per quadrature point, so its internal layout is entity-first:
+        # (entity, quadrature, dim, dim).  Keep this conversion explicit; the
+        # two layouts have the same mathematical indices but different memory
+        # traversal conventions.
+        tensor=np.moveaxis(tensor,(0,1),(-2,-1))
+    elif tensor.shape==coefficient_shape+(dimension,dimension):
+        # Accepted as a low-level/native compatibility layout.  User-facing
+        # documentation intentionally recommends the component-first form.
+        pass
+    else:
+        raise ValueError(
+            "anisotropic tensor must use the recommended scikit-fem shape "
+            f"{(dimension, dimension) + coefficient_shape}, constant shape "
+            f"({dimension}, {dimension}), "
+            "or the low-level native compatibility shape "
+            f"{coefficient_shape + (dimension, dimension)}; got {tensor.shape}"
+        )
+    return np.ascontiguousarray(tensor[...,None,:,None,:])
 
 
 def _native_cross_bilinear_assemble(
-    form,trial_basis,test_basis,idx,kwargs
+    form,trial_basis,test_basis,idx,kwargs,*,memory_limit_bytes=None,
+    memory_safety_factor=1.25,
 ):
     geometry={
         "x":_QuadratureValue(np.moveaxis(
@@ -1022,20 +446,23 @@ def _native_cross_bilinear_assemble(
     )
     native=by_trial.get(test_basis)
     if native is None:
-        native=NativeCrossBilinearForm(test_basis,trial_basis)
+        native=NativeCrossBilinearForm(
+            test_basis,trial_basis,
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
+        )
         by_trial[test_basis]=native
+    elif memory_limit_bytes is not None:
+        from .preflight import enforce_memory_budget
+        enforce_memory_budget(
+            native.memory_estimate,memory_limit_bytes,
+            safety_factor=memory_safety_factor,
+        )
     result=None
     for term in terms:
-        coefficient=term.factor
-        if term.coefficient is not None:
-            raw=(
-                kwargs[term.coefficient]
-                if isinstance(term.coefficient,str)
-                else term.coefficient
-            )
-            coefficient=coefficient*np.asarray(raw,dtype=np.float64)
-            if np.ndim(coefficient)>2:
-                coefficient=np.squeeze(coefficient)
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor,squeeze=True
+        )
         matrix=native.assemble(term.kind,coefficient)
         result=matrix if result is None else result+matrix
     return result
@@ -1101,19 +528,9 @@ def _native_composite_bilinear_assemble(form,basis,kwargs):
         form._native_cache[basis]=native
     result=None
     for term in terms:
-        coefficient=term.factor
-        if term.coefficient is not None:
-            if isinstance(term.coefficient,str):
-                if term.coefficient not in kwargs:
-                    raise ValueError(
-                        f"missing form parameter {term.coefficient!r}"
-                    )
-                raw=kwargs[term.coefficient]
-            else:
-                raw=term.coefficient
-            coefficient=coefficient*np.asarray(raw,dtype=np.float64)
-            if coefficient.ndim>2:
-                coefficient=np.squeeze(coefficient)
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor,squeeze=True
+        )
         block=native.assemble(
             term.row_field,term.column_field,
             kind=term.kind,coefficient=coefficient,
@@ -1191,19 +608,11 @@ def _native_interface_assemble(form,integration,kwargs,num_threads=0):
             raise UnsupportedNativeForm(
                 "both interface trial and test fields require jump() or avg()"
             )
-        coefficient=term.factor
-        if term.coefficient is not None:
-            if isinstance(term.coefficient,str):
-                if term.coefficient not in kwargs:
-                    raise ValueError(
-                        f"missing form parameter {term.coefficient!r}"
-                    )
-                raw_coefficient=kwargs[term.coefficient]
-            else:
-                raw_coefficient=term.coefficient
-            coefficient=coefficient*np.asarray(
-                raw_coefficient,dtype=np.float64
-            ).squeeze()
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor
+        )
+        if np.ndim(coefficient):
+            coefficient=np.asarray(coefficient).squeeze()
         matrix=integration.assemble_traces(
             term.row.weights,term.column.weights,
             row_kind=term.row.kind,column_kind=term.column.kind,
@@ -1243,13 +652,7 @@ def _native_interface_linear_assemble(
             raise UnsupportedNativeForm(
                 "interface LinearForm test field requires jump() or avg()"
             )
-        if isinstance(term.coefficient,_Coefficient):
-            name=term.coefficient.name
-            if name not in kwargs:
-                raise ValueError(f"missing form parameter {name!r}")
-            coefficient=kwargs[name]
-        else:
-            coefficient=term.coefficient
+        coefficient=_resolve_coefficient(term.coefficient,kwargs)
         vector=integration.assemble_linear_trace(
             term.trace.weights,trace_kind=term.trace.kind,
             coefficient=term.factor*np.asarray(
@@ -1261,7 +664,10 @@ def _native_interface_linear_assemble(
     return result
 
 
-def asm(form,*bases,num_threads=None,**kwargs):
+def asm(
+    form,*bases,num_threads=None,memory_limit_bytes=None,
+    memory_safety_factor=1.25,**kwargs
+):
     """Assemble strictly with the native backend.
 
     Unsupported forms raise ``UnsupportedNativeForm``; this function never
@@ -1350,7 +756,9 @@ def asm(form,*bases,num_threads=None,**kwargs):
                     "cross-basis BilinearForm"
                 )
             return _native_cross_bilinear_assemble(
-                form,bases[0],bases[1],None,kwargs
+                form,bases[0],bases[1],None,kwargs,
+                memory_limit_bytes=memory_limit_bytes,
+                memory_safety_factor=memory_safety_factor,
             )
         if len(bases) != 1:
             raise UnsupportedNativeForm(
@@ -1366,7 +774,9 @@ def asm(form,*bases,num_threads=None,**kwargs):
                 form,bases[0],kwargs
             )
         return _native_bilinear_assemble(
-            form,bases[0],kwargs,requested_threads
+            form,bases[0],kwargs,requested_threads,
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
         )
     raise TypeError(
         "skfemntv.asm accepts forms created by skfemntv.Functional, "
@@ -1375,46 +785,35 @@ def asm(form,*bases,num_threads=None,**kwargs):
     )
 
 
-def _composite_contraction(left,right,kind):
-    if not isinstance(left,_CompositeField) or not isinstance(
-        right,_CompositeField
-    ):
-        raise UnsupportedNativeForm(
-            "composite contraction requires two subfields"
-        )
-    if left.role==right.role:
-        raise UnsupportedNativeForm(
-            "composite contraction requires trial and test subfields"
-        )
-    row=left if left.role=="test" else right
-    column=right if left.role=="test" else left
-    return _CompositeBilinearTerm(
-        row.field,column.field,kind
-    )
-
-
-def _composite_divergence_contraction(value,divergence):
-    gradient=divergence.field
-    if value.role==gradient.role:
-        raise UnsupportedNativeForm(
-            "divergence coupling requires trial and test subfields"
-        )
-    if gradient.role=="test":
-        return _CompositeBilinearTerm(
-            gradient.field,value.field,"row_divergence"
-        )
-    return _CompositeBilinearTerm(
-        value.field,gradient.field,"column_divergence"
-    )
-
-
 def dot(left, right):
-    if isinstance(left,_Coefficient) and isinstance(right,_CompositeField):
+    if isinstance(left,_TensorGradient) and isinstance(
+        right,(_TrialGradient,_TestGradient)
+    ):
+        if left.gradient.__class__ is right.__class__:
+            raise UnsupportedNativeForm(
+                "anisotropic contraction requires trial and test gradients"
+            )
+        return _BilinearTerm(
+            "gradient_tensor",left.coefficient,
+            left.gradient.factor*right.factor,
+        )
+    if isinstance(right,_TensorGradient) and isinstance(
+        left,(_TrialGradient,_TestGradient)
+    ):
+        if right.gradient.__class__ is left.__class__:
+            raise UnsupportedNativeForm(
+                "anisotropic contraction requires trial and test gradients"
+            )
+        return _BilinearTerm(
+            "gradient_tensor",right.coefficient,
+            right.gradient.factor*left.factor,
+        )
+    if _is_symbolic_coefficient(left) and isinstance(right,_CompositeField):
         if right.role=="test" and right.kind=="value":
-            return _CompositeLinearTerm(right.field,"value",left.name)
-    if isinstance(right,_Coefficient) and isinstance(left,_CompositeField):
+            return _CompositeLinearTerm(right.field,"value",left)
+    if _is_symbolic_coefficient(right) and isinstance(left,_CompositeField):
         if left.role=="test" and left.kind=="value":
-            return _CompositeLinearTerm(left.field,"value",right.name)
+            return _CompositeLinearTerm(left.field,"value",right)
     if (
         isinstance(left,(np.ndarray,_QuadratureValue))
         or (hasattr(left,"value") and hasattr(left,"grad"))
@@ -1435,9 +834,9 @@ def dot(left, right):
             return _CompositeLinearTerm(
                 left.field,"value",np.asarray(right)
             )
-    if isinstance(left, _Coefficient) and isinstance(right, _TestValue):
+    if _is_symbolic_coefficient(left) and isinstance(right, _TestValue):
         return _Term("value", left)
-    if isinstance(right, _Coefficient) and isinstance(left, _TestValue):
+    if _is_symbolic_coefficient(right) and isinstance(left, _TestValue):
         return _Term("value", right)
     if isinstance(right,_TestValue) and (
         isinstance(left,(np.ndarray,_QuadratureValue))
@@ -1562,6 +961,20 @@ def dot(left, right):
     return np.einsum("i...,i...->...", left, right)
 
 
+def mul(left,right):
+    """Matrix-vector product in the typed native form subset."""
+    if isinstance(right,(_TrialGradient,_TestGradient)) and isinstance(
+        left,(_Coefficient,_CoefficientComponent,np.ndarray,_QuadratureValue)
+    ):
+        coefficient=(
+            left if _is_symbolic_coefficient(left) else np.asarray(left)
+        )
+        return _TensorGradient(right,coefficient)
+    raise UnsupportedNativeForm(
+        "native mul currently supports coefficient @ trial/test gradient"
+    )
+
+
 def ddot(left, right):
     if (
         isinstance(left,_SymmetricGradient)
@@ -1571,12 +984,12 @@ def ddot(left, right):
         return _BilinearTerm(
             "symmetric_gradient",factor=left.factor*right.factor
         )
-    if isinstance(left,_Coefficient) and isinstance(right,_CompositeField):
+    if _is_symbolic_coefficient(left) and isinstance(right,_CompositeField):
         if right.role=="test" and right.kind=="gradient":
-            return _CompositeLinearTerm(right.field,"gradient",left.name)
-    if isinstance(right,_Coefficient) and isinstance(left,_CompositeField):
+            return _CompositeLinearTerm(right.field,"gradient",left)
+    if _is_symbolic_coefficient(right) and isinstance(left,_CompositeField):
         if left.role=="test" and left.kind=="gradient":
-            return _CompositeLinearTerm(left.field,"gradient",right.name)
+            return _CompositeLinearTerm(left.field,"gradient",right)
     if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
         right,_CompositeField
     ):
@@ -1591,9 +1004,9 @@ def ddot(left, right):
             return _CompositeLinearTerm(
                 left.field,"gradient",np.asarray(right)
             )
-    if isinstance(left, _Coefficient) and isinstance(right, _TestGradient):
+    if _is_symbolic_coefficient(left) and isinstance(right, _TestGradient):
         return _Term("gradient", left)
-    if isinstance(right, _Coefficient) and isinstance(left, _TestGradient):
+    if _is_symbolic_coefficient(right) and isinstance(left, _TestGradient):
         return _Term("gradient", right)
     if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
         right,_TestGradient

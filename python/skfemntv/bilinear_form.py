@@ -7,12 +7,24 @@ from ._skfn import (
     BilinearFormAssembler,CrossBilinearAssembler,CutBilinearFormAssembler,
     CutCrossAssembler,
 )
+from .preflight import enforce_memory_budget, estimate_bilinear_memory
 
 
 class NativeBilinearForm:
     """Native component-wise value and gradient bilinear assembly."""
 
-    def __init__(self, basis):
+    def __init__(
+        self,
+        basis,
+        *,
+        memory_limit_bytes: int | None = None,
+        memory_safety_factor: float = 1.25,
+    ):
+        self.memory_estimate = estimate_bilinear_memory(basis)
+        enforce_memory_budget(
+            self.memory_estimate,memory_limit_bytes,
+            safety_factor=memory_safety_factor,
+        )
         scalar = basis.elem.elem
         components = basis.elem._dim
         nodes = len(scalar.doflocs)
@@ -90,11 +102,25 @@ class NativeBilinearForm:
 class NativeCrossBilinearForm:
     """Native assembly between aligned trial and test facet traces."""
 
-    def __init__(self,test_basis,trial_basis):
+    def __init__(
+        self,
+        test_basis,
+        trial_basis,
+        *,
+        memory_limit_bytes: int | None = None,
+        memory_safety_factor: float = 1.25,
+    ):
         if test_basis.dx.shape!=trial_basis.dx.shape:
             raise ValueError("trial and test quadrature shapes must match")
         if not np.allclose(test_basis.dx,trial_basis.dx):
             raise ValueError("trial and test quadrature weights must match")
+        self.memory_estimate = estimate_bilinear_memory(
+            test_basis, trial_basis
+        )
+        enforce_memory_budget(
+            self.memory_estimate,memory_limit_bytes,
+            safety_factor=memory_safety_factor,
+        )
         test_scalar=test_basis.elem.elem
         trial_scalar=trial_basis.elem.elem
         test_components=test_basis.elem._dim
