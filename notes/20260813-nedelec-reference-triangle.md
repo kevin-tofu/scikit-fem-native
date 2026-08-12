@@ -194,8 +194,24 @@ boundary explicitly and keep SciPy solver policy outside the package.
 
 ## Next phase
 
-Pause implementation and collect review feedback on naming, layouts, and the
-dedicated API.  Before promoting broad `space.hcurl`, the project still needs
-field interpolation, evaluation, a linear load path, convergence validation,
-and a decision on integration with general form syntax.  Tetrahedra and curved
-geometry should remain separate later milestones.
+Edge-moment interpolation and quadrature evaluation are now available on
+`AffineTriN1Basis`.  A callable analytic field is integrated along every
+ascending global edge, producing one global coefficient per edge.  Evaluation
+returns component-first values `(component, cell, quadrature)` and scalar curls
+`(cell, quadrature)`.
+
+Tests fix constant-field reproduction, the ascending-edge coefficient
+convention, direct value/curl agreement with scikit-fem, and refinement of the
+smooth manufactured field `u=(0,xy)`.  Its L2, curl-L2, and combined H(curl)
+errors decrease with an observed rate above 0.9 on successive uniform meshes.
+The scikit-fem coefficient vector is negated in the direct comparison because
+its global TriN1 basis uses the opposite sign from this package's ascending
+directed-moment convention; evaluated physical fields agree after that explicit
+conversion.
+
+## Next phase
+
+Add a linear load path and an end-to-end manufactured PDE convergence test.
+Broad `space.hcurl` promotion should wait for solution convergence, not only
+interpolation convergence.  General form syntax, tetrahedra, and curved
+geometry remain separate later milestones.

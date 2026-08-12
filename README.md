@@ -201,6 +201,19 @@ solution = np.zeros(basis.N)
 solution[free] = spsolve(matrix[free][:, free], load[free])
 ```
 
+Analytic vector fields can be interpolated by their globally oriented edge
+moments and evaluated at basis quadrature points:
+
+```python
+def field(x):
+    return np.array((0.0 * x[0], x[0] * x[1]))
+
+edge_values = basis.interpolate_edge_moments(field)
+values = basis.evaluate(edge_values)       # (component, cell, quadrature)
+curls = basis.evaluate_curl(edge_values)   # (cell, quadrature)
+points = basis.global_coordinates          # (component, cell, quadrature)
+```
+
 This slice includes oriented global edge numbering, affine covariant Piola
 mapping, mass/curl-curl/Maxwell CSR assembly, coefficient fields, memory
 preflight, and boundary-edge selection.  It supports only affine triangles and

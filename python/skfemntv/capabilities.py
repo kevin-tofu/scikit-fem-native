@@ -52,6 +52,7 @@ _ENTRIES = (
     Capability("form.curl", "form", CapabilityStatus.PLANNED, "Curl of H(curl) fields."),
     Capability("assembly.hcurl_tri_n1", "assembly", CapabilityStatus.EXPERIMENTAL, "Dedicated reusable CSR mass/curl-curl/Maxwell assembly for AffineTriN1Basis; separate from public asm."),
     Capability("evaluation.quadrature", "evaluation", CapabilityStatus.SUPPORTED, "Interpolation at basis quadrature points."),
+    Capability("evaluation.hcurl_tri_n1", "evaluation", CapabilityStatus.EXPERIMENTAL, "Edge-moment interpolation and value/curl evaluation for AffineTriN1Basis."),
     Capability("evaluation.arbitrary_point", "evaluation", CapabilityStatus.PLANNED, "Physical point location and field evaluation."),
     Capability("preflight.bilinear_memory", "preflight", CapabilityStatus.SUPPORTED, "Allocation-free conservative estimate for standard and cross bilinear assemblers."),
     Capability("preflight.cut_memory", "preflight", CapabilityStatus.SUPPORTED, "Memory estimate for segmented cut-cell bilinear and cross assemblers."),
