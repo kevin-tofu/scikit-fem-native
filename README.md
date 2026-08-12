@@ -1,15 +1,19 @@
 # skfem-native
 
+### Native assembly for scikit-fem-style Python workflows
+
 [![PyPI](https://img.shields.io/pypi/v/skfem-native.svg)](https://pypi.org/project/skfem-native/)
 [![Python](https://img.shields.io/pypi/pyversions/skfem-native.svg)](https://pypi.org/project/skfem-native/)
 [![CI](https://github.com/kevin-tofu/skfem-native/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-tofu/skfem-native/actions/workflows/ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/skfem-native/badge/?version=latest)](https://skfem-native.readthedocs.io/en/latest/)
 [![License: LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://github.com/kevin-tofu/skfem-native/blob/main/LICENSE)
 
-`skfem-native` provides `skfemntv`, a native numerical assembly backend with a
-scikit-fem-style Python API.  It keeps finite-element formulations in readable
-Python while accelerating reusable assembly, geometry, and sparse-scatter
-kernels in native code.
+**skfem-native** is an independent native assembly backend for
+[scikit-fem](https://github.com/kinnala/scikit-fem)-style Python workflows.  It
+is distributed on PyPI as `skfem-native` and imported as `skfemntv`; it is not
+an official scikit-fem distribution.  It keeps finite-element formulations in
+readable Python while accelerating reusable assembly, geometry, and
+sparse-scatter kernels in native code.
 
 ## Motivation
 
@@ -29,6 +33,33 @@ embedding every new formulation in a monolithic compiled solver.
 `skfem-native` aims to combine that flexibility with faster assembly.  It is a
 selectable backend for Python finite-element applications, not a separate owner
 of their material models or physical formulations.
+
+## Built on the work of scikit-fem
+
+This project exists because
+[scikit-fem](https://github.com/kinnala/scikit-fem) demonstrated how effective
+a finite-element library can be when mathematical forms remain concise,
+readable Python.  scikit-fem is implemented in pure Python, which makes its
+environment straightforward to install, inspect, and reproduce across
+development machines, notebooks, and CI systems.  Its small and composable API
+makes the connection between a weak formulation and the assembled system
+unusually clear.  That transparency is valuable for teaching and research, but
+also for production engineering: new elements, multiphysics terms, nonlinear
+material models, and contact formulations can be inspected and changed without
+hiding the governing equations behind a large generated or compiled framework.
+See the [scikit-fem documentation](https://scikit-fem.readthedocs.io/) for its
+installation guide, examples, and API reference.
+
+scikit-fem also provides the practical foundation on which `skfem-native` is
+built: its public abstractions, element conventions, DOF ordering, examples,
+and extensive body of implementation work define the compatibility target of
+this project.  `skfem-native` does not seek to replace that contribution.  It
+explores how selected assembly kernels can be accelerated while preserving the
+Python-first model that makes scikit-fem useful.
+
+We are grateful to the scikit-fem authors and contributors.  The usefulness of
+this backend is a direct consequence of the careful design and sustained work
+of that community.
 
 ## Installation
 
