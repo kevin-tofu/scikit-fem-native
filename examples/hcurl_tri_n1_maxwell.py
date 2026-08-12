@@ -14,6 +14,7 @@ mesh=skfemntv.MeshTri.init_tensor(
 })
 basis=skfemntv.AffineTriN1Basis(mesh,intorder=3)
 assembler=skfemntv.TriN1Assembler(basis)
+linear_assembler=skfemntv.TriN1LinearAssembler(basis)
 
 # A positive mass term removes the gradient nullspace of pure curl-curl.
 matrix=assembler.assemble_maxwell(
@@ -22,9 +23,11 @@ matrix=assembler.assemble_maxwell(
 boundary=basis.boundary_dofs()
 free=np.setdiff1d(np.arange(basis.N),boundary)
 
-# Solver and load policy remain external.  This deterministic edge load keeps
-# the example focused on basis, assembly, and tangential boundary constraints.
-load=np.cos(.3*np.arange(basis.N))
+# Solver policy remains external; the load is integrated against H(curl) basis
+# functions by the dedicated reusable linear assembler.
+load=linear_assembler.assemble_vector_load(
+    lambda x:np.array((0.*x[0],np.sin(np.pi*x[0])))
+).copy()
 solution=np.zeros(basis.N)
 solution[free]=spsolve(matrix[free][:,free],load[free])
 free_residual=np.linalg.norm((matrix@solution-load)[free])

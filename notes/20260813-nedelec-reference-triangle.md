@@ -211,7 +211,25 @@ conversion.
 
 ## Next phase
 
-Add a linear load path and an end-to-end manufactured PDE convergence test.
-Broad `space.hcurl` promotion should wait for solution convergence, not only
-interpolation convergence.  General form syntax, tetrahedra, and curved
-geometry remain separate later milestones.
+`TriN1LinearAssembler` now integrates callable or quadrature-array vector
+loads against the oriented physical basis.  Its vector agrees with scikit-fem
+after the documented global basis sign conversion and is reused between calls.
+
+An end-to-end manufactured problem uses
+
+```text
+u = (sin(pi y), sin(pi x)),
+curl(u) = pi (cos(pi x) - cos(pi y)),
+f = (1 + beta pi^2) u.
+```
+
+The field has zero tangential trace on the unit-square boundary and solves the
+mass plus `beta` curl-curl weak problem.  Uniform refinement shows decreasing
+L2, curl-L2, and H(curl) solution errors with observed rates above 0.8.
+
+## Next phase
+
+Run the same convergence contract on distorted meshes and mixed cell
+orientations.  If those pass, the affine-triangle slice has enough evidence to
+mark broad `space.hcurl` experimental with a sharply documented scope.  General
+form syntax, tetrahedra, and curved geometry remain separate later milestones.

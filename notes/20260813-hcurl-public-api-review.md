@@ -2,11 +2,12 @@
 
 ## Decision
 
-Expose three names only:
+Expose four names only:
 
 ```text
 AffineTriN1Basis
 TriN1Assembler
+TriN1LinearAssembler
 estimate_tri_n1_assembly_memory
 ```
 
@@ -54,6 +55,13 @@ Mass and curl coefficients accept constants or arrays broadcasting to
 explicit rather than inventing a second parameter-evaluation API beside typed
 forms.  The example uses constant coefficients; quadrature-dependent arrays
 are independently compared with coordinate functions evaluated by scikit-fem.
+
+### Linear load assembly
+
+`TriN1LinearAssembler` accepts a callable physical vector field or an array
+broadcasting to `(component, cell, quadrature)`.  It reuses one output vector,
+mirroring the CSR assembler ownership rule.  This explicit API supports
+manufactured PDE validation without prematurely extending symbolic `asm`.
 
 ## Deferred decisions
 

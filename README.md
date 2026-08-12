@@ -190,13 +190,16 @@ mesh = skfemntv.MeshTri.init_tensor(
 )
 basis = skfemntv.AffineTriN1Basis(mesh, intorder=3)
 assembler = skfemntv.TriN1Assembler(basis)
+linear_assembler = skfemntv.TriN1LinearAssembler(basis)
 matrix = assembler.assemble_maxwell(
     mass_coefficient=1.0, curl_coefficient=0.05
 ).copy()
 
 boundary = basis.boundary_dofs()
 free = np.setdiff1d(np.arange(basis.N), boundary)
-load = np.cos(0.3 * np.arange(basis.N))
+load = linear_assembler.assemble_vector_load(
+    lambda x: np.array((0.0 * x[0], np.sin(np.pi * x[0])))
+).copy()
 solution = np.zeros(basis.N)
 solution[free] = spsolve(matrix[free][:, free], load[free])
 ```
@@ -222,10 +225,11 @@ one lowest-order tangential moment per edge.  It is not accepted by the general
 mappings, interpolation, or solver policy.  The complete runnable example is
 `examples/hcurl_tri_n1_maxwell.py`.
 
-`TriN1Assembler` is currently a dedicated Python/SciPy sparse assembler; its
+`TriN1Assembler` and `TriN1LinearAssembler` are currently dedicated
+NumPy/SciPy assemblers; their
 name intentionally does not claim a native C++ kernel.  Assembly methods reuse
-and overwrite one CSR matrix, so call `.copy()` before another assembly when
-both results must be retained.  Public basis values use component-first shape
+and overwrite one result object, so call `.copy()` before another assembly when
+results must be retained.  Public basis values use component-first shape
 `(basis, component, cell, quadrature)` and curls use
 `(basis, cell, quadrature)`; coefficient fields use `(cell, quadrature)`.
 

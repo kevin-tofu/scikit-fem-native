@@ -127,4 +127,46 @@ class TriN1Assembler:
         return self._assemble_elements(elements)
 
 
-__all__=["TriN1Assembler","estimate_tri_n1_assembly_memory"]
+class TriN1LinearAssembler:
+    """Reusable vector-load assembler for ``AffineTriN1Basis``.
+
+    ``assemble_vector_load`` overwrites and returns one reusable vector.  Copy
+    it when the result must survive another call on this assembler.
+    """
+
+    def __init__(self,basis):
+        if not isinstance(basis,AffineTriN1Basis):
+            raise TypeError("basis must be AffineTriN1Basis")
+        self.basis=basis
+        self._vector=np.zeros(basis.N,dtype=np.float64)
+
+    def _values(self,field):
+        values=(
+            field(self.basis.global_coordinates)
+            if callable(field) else field
+        )
+        values=np.asarray(values,dtype=np.float64)
+        expected=(2,)+self.basis.dx.shape
+        try:
+            return np.broadcast_to(values,expected)
+        except ValueError as error:
+            raise ValueError(
+                f"vector load must broadcast to {expected}"
+            ) from error
+
+    def assemble_vector_load(self,field):
+        values=self._values(field)
+        local=np.einsum(
+            "ebiq,ieq,eq->eb",
+            self.basis._element_values,values,self.basis.dx,
+        )
+        self._vector.fill(0.)
+        np.add.at(self._vector,self.basis.element_dofs.T.ravel(),local.ravel())
+        return self._vector
+
+
+__all__=[
+    "TriN1Assembler",
+    "TriN1LinearAssembler",
+    "estimate_tri_n1_assembly_memory",
+]

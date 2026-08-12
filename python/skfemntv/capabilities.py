@@ -51,6 +51,7 @@ _ENTRIES = (
     Capability("form.div", "form", CapabilityStatus.SUPPORTED, "Divergence of nodal vector fields."),
     Capability("form.curl", "form", CapabilityStatus.PLANNED, "Curl of H(curl) fields."),
     Capability("assembly.hcurl_tri_n1", "assembly", CapabilityStatus.EXPERIMENTAL, "Dedicated reusable CSR mass/curl-curl/Maxwell assembly for AffineTriN1Basis; separate from public asm."),
+    Capability("assembly.hcurl_tri_n1_load", "assembly", CapabilityStatus.EXPERIMENTAL, "Reusable vector-load assembly for AffineTriN1Basis from callables or quadrature arrays."),
     Capability("evaluation.quadrature", "evaluation", CapabilityStatus.SUPPORTED, "Interpolation at basis quadrature points."),
     Capability("evaluation.hcurl_tri_n1", "evaluation", CapabilityStatus.EXPERIMENTAL, "Edge-moment interpolation and value/curl evaluation for AffineTriN1Basis."),
     Capability("evaluation.arbitrary_point", "evaluation", CapabilityStatus.PLANNED, "Physical point location and field evaluation."),

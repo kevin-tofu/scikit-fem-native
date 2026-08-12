@@ -104,6 +104,7 @@ from .preflight import (
 from .hcurl_basis import AffineTriN1Basis
 from .hcurl_assembler import (
     TriN1Assembler,
+    TriN1LinearAssembler,
     estimate_tri_n1_assembly_memory,
 )
 
@@ -140,6 +141,7 @@ __all__ = [
     "format_bytes",
     "AffineTriN1Basis",
     "TriN1Assembler",
+    "TriN1LinearAssembler",
     "estimate_tri_n1_assembly_memory",
     "LinearFormDiagnostics",
     "NativeLinearForm",
