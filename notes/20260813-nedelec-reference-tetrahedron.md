@@ -103,3 +103,32 @@ tetrahedral refinement decreases the L2, curl-L2, and combined H(curl) errors
 with measured successive rates `(1.08, 1.00, 1.04)` and
 `(1.02, 1.00, 1.01)` in one local run.  This establishes the expected
 first-order interpolation behavior independently of the constrained solve.
+
+## Orientation robustness
+
+Alternating tetrahedra in a structured mesh are locally vertex-permuted so
+positive and negative Jacobian determinants coexist.  After matching global
+DOFs by their ascending vertex pairs, the mass-plus-curl-curl operator, vector
+load, and interpolated edge moments remain invariant.  L2 and curl-L2
+interpolation error norms are likewise unchanged.  Diagnostics report the
+mixed inverted-cell count while integration continues to use `abs(det(J))` and
+vector curl retains the signed Piola transformation.
+
+## Performance and memory checkpoint
+
+`benchmarks/hcurl_tet_n1_assembly.py` separates basis construction, native CSR
+setup, repeated Maxwell assembly, element integration, and fixed-CSR scatter.
+One local run recorded:
+
+| resolution | DOFs | cells | basis ms | setup ms | assembly ms | scikit-fem ms | speedup | integration | scatter |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 604 | 384 | 8.27 | 0.82 | 1.25 | 2.14 | 1.72x | 83.8% | 2.3% |
+| 8 | 4,184 | 3,072 | 35.13 | 2.68 | 10.79 | 8.75 | 0.81x | ~100% | 1.9% |
+| 12 | 13,428 | 10,368 | 111.36 | 9.48 | 41.32 | 29.69 | 0.72x | 97.1% | 1.8% |
+
+The 13,428-DOF preflight estimate is about 101 MB, including about 83 MB of
+retained basis arrays.  Native topology/CSR setup is no longer material, and
+fixed-CSR scatter is below two percent.  Unlike TriN1, the two six-by-six
+three-component NumPy contractions become slower than scikit-fem as the mesh
+grows.  A fused native TetN1 integration kernel is therefore justified; a
+scatter-only kernel is not.
