@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import skfemntv
 from skfemntv.edge_topology import (
@@ -64,3 +65,15 @@ def test_interior_triangle_edge_is_not_selected_as_boundary():
         edge for edge in range(topology.edges.shape[1]) if edge not in boundary
     }
     assert len(interior)==1
+
+
+def test_repeated_triangle_corner_is_rejected_with_cell_id():
+    class InvalidTriangleMesh:
+        t=np.array([[0],[0],[1]],dtype=np.int64)
+
+        @staticmethod
+        def dim():
+            return 2
+
+    with pytest.raises(ValueError,match="cell 0 repeats a corner vertex"):
+        build_oriented_edge_topology(InvalidTriangleMesh())

@@ -12,4 +12,5 @@ PYBIND11_MODULE(_skfn, module) {
     native_fem::bind_cut_form_assemblers(module);
     native_fem::bind_cut_cross_assembler(module);
     native_fem::bind_basis_geometry(module);
+    native_fem::bind_edge_topology(module);
 }

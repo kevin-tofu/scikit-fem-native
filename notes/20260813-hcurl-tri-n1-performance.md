@@ -70,3 +70,18 @@ These setup paths, rather than repeated integration or scatter, are now the
 credible native C++ candidates.  Moving them should be justified against
 large-mesh setup measurements and should return the existing arrays so the
 Python public API and orientation tests remain unchanged.
+
+Both setup paths were subsequently moved behind two coarse-grained native
+functions while retaining the Python topology and assembler objects.  At
+resolution 128 (32,768 cells), one local run measured:
+
+| stage | before native setup | after native setup | improvement |
+|---|---:|---:|---:|
+| basis construction | 0.365 s | 0.055 s | 6.6x |
+| assembler construction | 0.414 s | 0.0095 s | 43.6x |
+
+The basis time is now approximately equal to the scikit-fem reference basis
+time in that run.  Repeated assembly remains NumPy-based because its profile
+still shows integration dominating and performance remains near parity with
+scikit-fem.  This split keeps orientation/pattern loops native without moving
+the public finite-element model or coefficient policy into C++.

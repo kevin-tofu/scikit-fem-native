@@ -12,6 +12,7 @@ void bind_cross_bilinear_assembler(pybind11::module_& module);
 void bind_cut_form_assemblers(pybind11::module_& module);
 void bind_cut_cross_assembler(pybind11::module_& module);
 void bind_basis_geometry(pybind11::module_& module);
+void bind_edge_topology(pybind11::module_& module);
 void bind_runtime(pybind11::module_& module);
 
 }  // namespace native_fem

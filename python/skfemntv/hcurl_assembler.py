@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.sparse import coo_matrix,csr_matrix
+from scipy.sparse import csr_matrix
 
+from ._skfn import build_edge_csr_pattern
 from .hcurl_basis import AffineTriN1Basis
 from .preflight import AssemblyMemoryEstimate,enforce_memory_budget
 
@@ -35,7 +36,7 @@ def estimate_tri_n1_assembly_memory(basis):
         assumptions=(
             "one reusable CSR pattern",
             "int64 CSR indices and scatter positions",
-            "COO-sized temporary pattern arrays",
+            "native row-adjacency construction bounded by COO-sized storage",
         ),
     )
 
@@ -58,24 +59,15 @@ class TriN1Assembler:
             self.memory_estimate,memory_limit_bytes,
             safety_factor=memory_safety_factor,
         )
-        rows=np.repeat(basis.element_dofs.T,3,axis=1).ravel()
-        columns=np.tile(basis.element_dofs.T,(1,3)).ravel()
-        pattern=coo_matrix(
-            (np.ones(len(rows)),(rows,columns)),shape=(basis.N,basis.N)
-        ).tocsr()
-        pattern.data.fill(0.)
-        self._matrix=csr_matrix(
-            (pattern.data,pattern.indices,pattern.indptr),
-            shape=pattern.shape,copy=False,
+        # Pattern and element-to-CSR positions are constructed together in
+        # native code; this avoids size-dependent Python tuple/dict objects.
+        indptr,indices,self._scatter=build_edge_csr_pattern(
+            np.ascontiguousarray(basis.element_dofs,dtype=np.int64),basis.N
         )
-        positions={}
-        for row in range(basis.N):
-            for offset in range(pattern.indptr[row],pattern.indptr[row+1]):
-                positions[(row,int(pattern.indices[offset]))]=offset
-        self._scatter=np.asarray(
-            [positions[(int(row),int(column))]
-             for row,column in zip(rows,columns)],dtype=np.int64
-        ).reshape(basis.mesh.nelements,3,3)
+        self._matrix=csr_matrix(
+            (np.zeros(len(indices)),indices,indptr),shape=(basis.N,basis.N),
+            copy=False,
+        )
 
     def _coefficient(self,name,value):
         if value is None:

@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ._skfn import build_oriented_edge_topology as _build_native_edge_topology
+
 
 _LOCAL_EDGES = {
     (2, 3): ((0, 1), (1, 2), (2, 0)),
@@ -47,27 +49,12 @@ def build_oriented_edge_topology(mesh) -> OrientedEdgeTopology:
         raise ValueError("mesh connectivity does not contain all corner vertices")
 
     local_edges=_LOCAL_EDGES[key]
-    connectivity=np.asarray(mesh.t[:corners],dtype=np.int64)
-    cell_count=connectivity.shape[1]
-    element_edges=np.empty((len(local_edges),cell_count),dtype=np.int64)
-    signs=np.empty_like(element_edges,dtype=np.int8)
-    edge_ids: dict[tuple[int,int],int]={}
-
-    for cell in range(cell_count):
-        vertices=connectivity[:,cell]
-        if len(set(map(int,vertices))) != corners:
-            raise ValueError(f"cell {cell} repeats a corner vertex")
-        for local,(start,end) in enumerate(local_edges):
-            first=int(vertices[start])
-            second=int(vertices[end])
-            edge=(min(first,second),max(first,second))
-            edge_id=edge_ids.setdefault(edge,len(edge_ids))
-            element_edges[local,cell]=edge_id
-            signs[local,cell]=1 if (first,second)==edge else -1
-
-    edges=np.empty((2,len(edge_ids)),dtype=np.int64)
-    for edge,edge_id in edge_ids.items():
-        edges[:,edge_id]=edge
+    connectivity=np.ascontiguousarray(mesh.t[:corners],dtype=np.int64)
+    # The native routine preserves the historical cell-major/local-edge-major
+    # first-seen numbering, so IDs and orientation arrays remain API-compatible.
+    edges,element_edges,signs=_build_native_edge_topology(
+        connectivity,dimension
+    )
     return OrientedEdgeTopology(
         np.ascontiguousarray(edges),
         np.ascontiguousarray(element_edges),

@@ -16,6 +16,7 @@ pybind11_add_module(
   cpp/src/assembly/cut_form_assembler.cpp
   cpp/src/assembly/cut_cross_assembler.cpp
   cpp/src/assembly/basis_geometry.cpp
+  cpp/src/assembly/edge_topology.cpp
 )
 target_compile_features(_skfn PRIVATE cxx_std_17)
 target_include_directories(_skfn PRIVATE cpp/include)
