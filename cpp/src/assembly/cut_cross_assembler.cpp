@@ -91,7 +91,8 @@ public:
     std::size_t columns()const{return columns_;}std::size_t color_count()const{return colors_.size();}
 private:
     static bool gradient_kind(const std::string&kind){
-        if(kind=="value")return false;if(kind=="gradient")return true;
+        if(kind=="value")return false;
+        if(kind=="gradient")return true;
         throw std::invalid_argument("cut cross kind must be value or gradient");
     }
     bool validate_coefficient(const py::buffer_info&info,bool rg,bool cg)const{
@@ -143,9 +144,11 @@ private:
     void build_coloring(){std::vector<std::vector<int>>dof_colors(rows_);std::vector<int>marks;int generation=0;
         for(int cell=0;cell<cells_;++cell)if(offsets_[cell]<offsets_[cell+1]){++generation;
             for(int i=0;i<row_local_;++i)for(int color:dof_colors[row_dofs_[cell*row_local_+i]]){
-                if(color>=int(marks.size()))marks.resize(color+1);marks[color]=generation;}
+                if(color>=int(marks.size()))marks.resize(color+1);
+                marks[color]=generation;}
             int color=0;while(color<int(marks.size())&&marks[color]==generation)++color;
-            if(color==int(colors_.size()))colors_.emplace_back();colors_[color].push_back(cell);
+            if(color==int(colors_.size()))colors_.emplace_back();
+            colors_[color].push_back(cell);
             for(int i=0;i<row_local_;++i)dof_colors[row_dofs_[cell*row_local_+i]].push_back(color);}}
     template<class T>py::array array_view(std::vector<T>&values){return py::array_t<T>(
         {py::ssize_t(values.size())},{py::ssize_t(sizeof(T))},values.data(),py::cast(this));}

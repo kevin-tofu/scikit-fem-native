@@ -189,10 +189,9 @@ an allocation guarantee.
 
 ## Release checkpoint
 
-The affine TetN1 vertical slice is a candidate for the next minor release, but
-the project version is not changed by this checkpoint.  Release preparation
-should separately review changelog/version policy and wheel publication.  The
-implementation gate here is satisfied by cross-platform CI, 429 tests,
+The affine TetN1 vertical slice is prepared for the 0.3.0 minor release.
+Tagging, GitHub Release creation, and wheel publication remain separate release
+operations.  The implementation gate here is satisfied by cross-platform CI, 429 tests,
 warning-as-error documentation build, independent scikit-fem comparisons,
 orientation/convergence validation, recorded performance, and calibrated
 memory estimates.
