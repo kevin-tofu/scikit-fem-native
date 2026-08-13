@@ -1,4 +1,4 @@
-"""Reusable sparse assembly for the experimental affine TriN1 basis."""
+"""Reusable sparse assembly for experimental affine H(curl) bases."""
 
 from __future__ import annotations
 
@@ -6,16 +6,12 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from ._skfn import build_edge_csr_pattern
-from .hcurl_basis import AffineTriN1Basis
+from .hcurl_basis import AffineTetN1Basis,AffineTriN1Basis
 from .preflight import AssemblyMemoryEstimate,enforce_memory_budget
 
 
-def estimate_tri_n1_assembly_memory(basis):
-    """Conservatively estimate the dedicated Python/CSR assembler storage."""
-    if not isinstance(basis,AffineTriN1Basis):
-        raise TypeError("basis must be AffineTriN1Basis")
+def _estimate_edge_assembly_memory(basis,*,local,kind):
     cells=basis.mesh.nelements
-    local=3
     nnz_upper=min(basis.N*basis.N,cells*local*local)
     basis_bytes=sum(
         array.nbytes for array in (
@@ -24,7 +20,7 @@ def estimate_tri_n1_assembly_memory(basis):
         )
     )
     return AssemblyMemoryEstimate(
-        kind="hcurl_tri_n1",rows=basis.N,columns=basis.N,
+        kind=kind,rows=basis.N,columns=basis.N,
         entity_count=cells,quadrature_points_per_entity=len(basis.W),
         row_local_dofs=local,column_local_dofs=local,
         nnz_upper_bound=nnz_upper,basis_bytes=basis_bytes,
@@ -41,20 +37,26 @@ def estimate_tri_n1_assembly_memory(basis):
     )
 
 
-class TriN1Assembler:
-    """Dedicated mass and curl-curl CSR assembler for ``AffineTriN1Basis``.
+def estimate_tri_n1_assembly_memory(basis):
+    """Conservatively estimate dedicated TriN1 assembler storage."""
+    if not isinstance(basis,AffineTriN1Basis):
+        raise TypeError("basis must be AffineTriN1Basis")
+    return _estimate_edge_assembly_memory(basis,local=3,kind="hcurl_tri_n1")
 
-    Assembly methods overwrite and return one reusable CSR matrix.  Call
-    ``.copy()`` when a result must survive the next assembly on this object.
-    """
 
-    def __init__(
-        self,basis,*,memory_limit_bytes=None,memory_safety_factor=1.25,
+def estimate_tet_n1_assembly_memory(basis):
+    """Conservatively estimate dedicated TetN1 assembler storage."""
+    if not isinstance(basis,AffineTetN1Basis):
+        raise TypeError("basis must be AffineTetN1Basis")
+    return _estimate_edge_assembly_memory(basis,local=6,kind="hcurl_tet_n1")
+
+
+class _EdgeN1Assembler:
+    def _initialize(
+        self,basis,estimate,*,memory_limit_bytes,memory_safety_factor,
     ):
-        if not isinstance(basis,AffineTriN1Basis):
-            raise TypeError("basis must be AffineTriN1Basis")
         self.basis=basis
-        self.memory_estimate=estimate_tri_n1_assembly_memory(basis)
+        self.memory_estimate=estimate
         enforce_memory_budget(
             self.memory_estimate,memory_limit_bytes,
             safety_factor=memory_safety_factor,
@@ -94,13 +96,26 @@ class TriN1Assembler:
         )
         return self._assemble_elements(elements)
 
-    def assemble_curl_curl(self,coefficient=None):
-        coefficient=self._coefficient("curl",coefficient)
-        elements=np.einsum(
+    def _scalar_curl_elements(self,weighted_coefficient):
+        return np.einsum(
             "ebq,ecq,eq->ebc",
             self.basis._element_curls,self.basis._element_curls,
-            self.basis.dx*coefficient,optimize=True,
+            weighted_coefficient,optimize=True,
         )
+
+    def _vector_curl_elements(self,weighted_coefficient):
+        return np.einsum(
+            "ebiq,eciq,eq->ebc",
+            self.basis._element_curls,self.basis._element_curls,
+            weighted_coefficient,optimize=True,
+        )
+
+    def _curl_elements(self,weighted_coefficient):
+        raise NotImplementedError
+
+    def assemble_curl_curl(self,coefficient=None):
+        coefficient=self._coefficient("curl",coefficient)
+        elements=self._curl_elements(self.basis.dx*coefficient)
         return self._assemble_elements(elements)
 
     def assemble_maxwell(self,*,mass_coefficient=None,curl_coefficient=None):
@@ -111,12 +126,48 @@ class TriN1Assembler:
             self.basis._element_values,self.basis._element_values,
             self.basis.dx*mass,optimize=True,
         )
-        elements+=np.einsum(
-            "ebq,ecq,eq->ebc",
-            self.basis._element_curls,self.basis._element_curls,
-            self.basis.dx*curl_value,optimize=True,
-        )
+        elements+=self._curl_elements(self.basis.dx*curl_value)
         return self._assemble_elements(elements)
+
+
+class TriN1Assembler(_EdgeN1Assembler):
+    """Dedicated reusable mass/curl-curl assembler for affine triangles."""
+
+    def __init__(
+        self,basis,*,memory_limit_bytes=None,memory_safety_factor=1.25,
+    ):
+        if not isinstance(basis,AffineTriN1Basis):
+            raise TypeError("basis must be AffineTriN1Basis")
+        self._initialize(
+            basis,estimate_tri_n1_assembly_memory(basis),
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
+        )
+
+    def _curl_elements(self,weighted_coefficient):
+        return self._scalar_curl_elements(weighted_coefficient)
+
+
+class TetN1Assembler(_EdgeN1Assembler):
+    """Dedicated reusable mass/curl-curl assembler for affine tetrahedra.
+
+    Assembly methods overwrite and return one CSR matrix.  Call ``.copy()``
+    when a result must survive the next assembly on this object.
+    """
+
+    def __init__(
+        self,basis,*,memory_limit_bytes=None,memory_safety_factor=1.25,
+    ):
+        if not isinstance(basis,AffineTetN1Basis):
+            raise TypeError("basis must be AffineTetN1Basis")
+        self._initialize(
+            basis,estimate_tet_n1_assembly_memory(basis),
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
+        )
+
+    def _curl_elements(self,weighted_coefficient):
+        return self._vector_curl_elements(weighted_coefficient)
 
 
 class TriN1LinearAssembler:
@@ -158,7 +209,9 @@ class TriN1LinearAssembler:
 
 
 __all__=[
+    "TetN1Assembler",
     "TriN1Assembler",
     "TriN1LinearAssembler",
+    "estimate_tet_n1_assembly_memory",
     "estimate_tri_n1_assembly_memory",
 ]

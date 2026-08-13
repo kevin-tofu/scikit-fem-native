@@ -57,3 +57,18 @@ a multi-cell tetrahedral mesh after matching global edges by vertex pair.
 Sparse assembly, loads, boundary-edge selection, interpolation, and convergence
 remain outside this checkpoint.  The next implementation step is a reusable
 TetN1 CSR assembler using the already-native generic edge pattern builder.
+
+## Dedicated sparse assembler
+
+`TetN1Assembler` now provides reusable mass, vector curl-curl, and combined
+Maxwell assembly.  It shares only topology-neutral CSR ownership and scalar
+coefficient handling with the triangle assembler; scalar-curl and vector-curl
+contractions remain separate named implementation paths so their array meaning
+is visible.  The native edge CSR builder accepts six local edge DOFs without a
+tetrahedron-specific pattern implementation.
+
+Constant operators agree with scikit-fem on a structured multi-cell mesh.
+Quadrature-dependent scalar coefficients, stable CSR object reuse, type
+diagnostics, and preflight budget rejection are tested.  Loads, boundary edge
+selection, interpolation, and a constrained Maxwell solve remain follow-up
+work.

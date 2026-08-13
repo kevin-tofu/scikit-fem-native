@@ -106,8 +106,10 @@ from .hcurl_basis import (
     HcurlGeometryDiagnostics,HcurlTetGeometryDiagnostics,
 )
 from .hcurl_assembler import (
+    TetN1Assembler,
     TriN1Assembler,
     TriN1LinearAssembler,
+    estimate_tet_n1_assembly_memory,
     estimate_tri_n1_assembly_memory,
 )
 
@@ -147,7 +149,9 @@ __all__ = [
     "HcurlGeometryDiagnostics",
     "HcurlTetGeometryDiagnostics",
     "TriN1Assembler",
+    "TetN1Assembler",
     "TriN1LinearAssembler",
+    "estimate_tet_n1_assembly_memory",
     "estimate_tri_n1_assembly_memory",
     "LinearFormDiagnostics",
     "NativeLinearForm",
