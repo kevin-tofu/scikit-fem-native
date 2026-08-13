@@ -79,6 +79,7 @@ def test_tet_n1_native_integration_is_parallel_equivalent_and_reuses_buffer():
     basis,_,_=_bases()
     assembler=skfemntv.TetN1Assembler(basis)
     buffer_identity=id(assembler._elements)
+    coefficient_identity=id(assembler._unit_coefficient)
     with skfemntv.thread_limit(1):
         serial=assembler.assemble_maxwell(
             mass_coefficient=1.3,curl_coefficient=.2
@@ -88,4 +89,5 @@ def test_tet_n1_native_integration_is_parallel_equivalent_and_reuses_buffer():
             mass_coefficient=1.3,curl_coefficient=.2
         ).toarray()
     assert id(assembler._elements)==buffer_identity
+    assert id(assembler._unit_coefficient)==coefficient_identity
     np.testing.assert_allclose(parallel,serial,atol=3e-13)

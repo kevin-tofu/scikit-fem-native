@@ -26,7 +26,10 @@ def _estimate_edge_assembly_memory(
         entity_count=cells,quadrature_points_per_entity=len(basis.W),
         row_local_dofs=local,column_local_dofs=local,
         nnz_upper_bound=nnz_upper,basis_bytes=basis_bytes,
-        native_tabulation_bytes=element_buffer_bytes,dof_map_bytes=0,
+        # Every assembler retains a unit coefficient field so the common
+        # coefficient=None path does not allocate per assembly call.
+        native_tabulation_bytes=(element_buffer_bytes+8*cells*len(basis.W)),
+        dof_map_bytes=0,
         csr_bytes_upper_bound=8*nnz_upper+8*nnz_upper+8*(basis.N+1),
         scatter_bytes=8*cells*local*local,
         coloring_bytes_upper_bound=0,
@@ -75,10 +78,11 @@ class _EdgeN1Assembler:
             (np.zeros(len(indices)),indices,indptr),shape=(basis.N,basis.N),
             copy=False,
         )
+        self._unit_coefficient=np.ones_like(basis.dx)
 
     def _coefficient(self,name,value):
         if value is None:
-            return np.ones_like(self.basis.dx)
+            return self._unit_coefficient
         coefficient=np.asarray(value,dtype=np.float64)
         try:
             return np.broadcast_to(coefficient,self.basis.dx.shape)
@@ -187,7 +191,7 @@ class TetN1Assembler(_EdgeN1Assembler):
     def assemble_mass(self,coefficient=None):
         mass=self._coefficient("mass",coefficient)
         elements=self._integrate(
-            mass,np.zeros_like(self.basis.dx),
+            mass,mass,
             include_mass=True,include_curl=False,
         )
         return self._assemble_elements(elements)
@@ -195,7 +199,7 @@ class TetN1Assembler(_EdgeN1Assembler):
     def assemble_curl_curl(self,coefficient=None):
         curl_value=self._coefficient("curl",coefficient)
         elements=self._integrate(
-            np.zeros_like(self.basis.dx),curl_value,
+            curl_value,curl_value,
             include_mass=False,include_curl=True,
         )
         return self._assemble_elements(elements)

@@ -175,7 +175,7 @@ Use `skfemntv.capabilities()` for the complete machine-readable registry.
 Experimental capabilities require `include_experimental=True`; solver policy
 is explicitly marked external.
 
-### Experimental H(curl) triangle slice
+### Experimental H(curl) simplex slices
 
 The lowest-order first-family Nédélec element is available as a deliberately
 small experimental API for affine triangular meshes:
@@ -217,24 +217,54 @@ curls = basis.evaluate_curl(edge_values)   # (cell, quadrature)
 points = basis.global_coordinates          # (component, cell, quadrature)
 ```
 
-This slice includes oriented global edge numbering, affine covariant Piola
+The tetrahedral counterpart uses the same explicit workflow:
+
+```python
+axis = np.linspace(0.0, 1.0, 5)
+mesh = skfemntv.MeshTet.init_tensor(axis, axis, axis)
+basis = skfemntv.AffineTetN1Basis(mesh, intorder=3)
+assembler = skfemntv.TetN1Assembler(basis)
+linear_assembler = skfemntv.TetN1LinearAssembler(basis)
+
+# TetN1 integration is cell-parallel; applications retain thread ownership.
+with skfemntv.thread_limit(4):
+    matrix = assembler.assemble_maxwell(
+        mass_coefficient=1.0, curl_coefficient=0.05
+    ).copy()
+
+load = linear_assembler.assemble_vector_load(
+    lambda x: np.array((1.0 + 0.0 * x[0], x[0], -x[1]))
+).copy()
+boundary = basis.boundary_dofs()
+```
+
+TetN1 values and vector curls both use
+`(basis, component, cell, quadrature)` publicly; evaluated fields and curls
+use `(component, cell, quadrature)`.  The complete runnable example is
+`examples/hcurl_tet_n1_maxwell.py`.
+
+These slices include oriented global edge numbering, affine covariant Piola
 mapping, mass/curl-curl/Maxwell CSR assembly, coefficient fields, memory
-preflight, and boundary-edge selection.  It supports only affine triangles and
-one lowest-order tangential moment per edge.  It is not accepted by the general
-`Basis` or `asm`, and does not provide tetrahedral Nédélec elements, curved
-mappings, interpolation, or solver policy.  The complete runnable example is
+preflight, and boundary-edge selection.  They support only affine triangles and
+tetrahedra with one lowest-order tangential moment per edge.  Neither basis is
+accepted by the general `Basis` or `asm`; curved mappings, higher order, and
+solver policy are not provided.  Both bases support edge-moment interpolation
+and quadrature-point evaluation.  The triangle example is
 `examples/hcurl_tri_n1_maxwell.py`.
 
-`TriN1Assembler` and `TriN1LinearAssembler` are currently dedicated
-NumPy/SciPy assemblers; their
-name intentionally does not claim a native C++ kernel.  Assembly methods reuse
+`TriN1Assembler` uses NumPy/SciPy integration.  `TetN1Assembler` uses a fused
+cell-parallel C++ integration kernel and the same fixed-CSR ownership model.
+Names describe their mathematical spaces rather than implementation details.
+Assembly methods reuse
 and overwrite one result object, so call `.copy()` before another assembly when
 results must be retained.  Public basis values use component-first shape
 `(basis, component, cell, quadrature)` and curls use
-`(basis, cell, quadrature)`; coefficient fields use `(cell, quadrature)`.
+`(basis, cell, quadrature)` for triangles and
+`(basis, component, cell, quadrature)` for tetrahedra; coefficient fields use
+`(cell, quadrature)`.
 
 `basis.geometry_diagnostics` reports minimum signed/absolute Jacobian
-determinants, minimum cell area, maximum edge/altitude aspect ratio, and the
+determinants, minimum cell area/volume, an edge-based aspect indicator, and the
 number of negatively oriented cells.  An optional `max_aspect_ratio` constructor
 argument rejects meshes beyond an application-selected quality limit.  Tests
 cover distorted meshes and mixed cell orientations, including manufactured

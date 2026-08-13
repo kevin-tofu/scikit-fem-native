@@ -155,3 +155,44 @@ scikit-fem at scale; the gain is specifically a coarse-grained cell-parallel
 result, not a claim that scalar C++ loops outperform optimized NumPy.  The
 13,428-DOF peak estimate increases to about 104 MB because it now includes the
 retained local matrix buffer.
+
+## Stabilization boundary
+
+The public capability registry now describes `space.hcurl` and `dof.edge` as
+experimental only for the dedicated affine TriN1/TetN1 APIs.  This does not
+extend support to general `Basis`, `asm`, typed `curl` forms, curved mappings,
+or higher-order elements.  Triangle integration remains NumPy/SciPy; only the
+profile-justified tetrahedron integration path is native and threaded.
+
+Assemblers own their CSR result and a retained unit coefficient field.  TetN1
+also owns its local matrix buffer.  Thus repeated assembly with default
+coefficients does not recreate these size-dependent arrays; caller-supplied
+noncontiguous or broadcast coefficient fields may still require normalization.
+
+### Memory calibration
+
+Independent Linux processes measured current RSS around basis and assembler
+construction.  Baselines were taken after mesh creation because mesh storage is
+outside the assembler estimate contract:
+
+| resolution | DOFs | basis RSS delta | estimated basis | setup RSS delta | estimated persistent setup |
+|---:|---:|---:|---:|---:|---:|
+| 12 | 13,428 | 88.8 MB | 83.4 MB | 7.8 MB | 14.3 MB |
+| 16 | 31,024 | 208.2 MB | 197.6 MB | 18.6 MB | 33.9 MB |
+
+The retained-array estimates are close to measured basis RSS and conservative
+for assembler setup in these samples.  Absolute process peak is not compared
+to `construction_peak_total_bytes_upper_bound`: it also contains interpreter,
+mesh, allocator, thread-stack, and earlier temporary peaks excluded by the
+estimate contract.  These observations are machine-specific calibration, not
+an allocation guarantee.
+
+## Release checkpoint
+
+The affine TetN1 vertical slice is a candidate for the next minor release, but
+the project version is not changed by this checkpoint.  Release preparation
+should separately review changelog/version policy and wheel publication.  The
+implementation gate here is satisfied by cross-platform CI, 429 tests,
+warning-as-error documentation build, independent scikit-fem comparisons,
+orientation/convergence validation, recorded performance, and calibrated
+memory estimates.
