@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "native_fem/python_bindings.hpp"
+#include "native_fem/parallel.hpp"
 
 namespace py = pybind11;
 
@@ -152,6 +153,85 @@ py::tuple build_edge_csr_pattern(
     return py::make_tuple(indptr, indices, scatter);
 }
 
+void integrate_tet_n1(
+    py::array_t<double, py::array::c_style | py::array::forcecast> values,
+    py::array_t<double, py::array::c_style | py::array::forcecast> curls,
+    py::array_t<double, py::array::c_style | py::array::forcecast> dx,
+    py::array_t<double, py::array::c_style | py::array::forcecast> mass_coefficient,
+    py::array_t<double, py::array::c_style | py::array::forcecast> curl_coefficient,
+    bool include_mass,
+    bool include_curl,
+    py::array_t<double, py::array::c_style> output) {
+    const auto value_info = values.request();
+    const auto curl_info = curls.request();
+    const auto dx_info = dx.request();
+    const auto mass_info = mass_coefficient.request();
+    const auto coefficient_info = curl_coefficient.request();
+    const auto output_info = output.request();
+    if (value_info.ndim != 4 || curl_info.ndim != 4 || dx_info.ndim != 2 ||
+        mass_info.ndim != 2 || coefficient_info.ndim != 2 ||
+        output_info.ndim != 3)
+        throw std::invalid_argument("invalid TetN1 integration input rank");
+    const py::ssize_t cells = value_info.shape[0];
+    const py::ssize_t local = value_info.shape[1];
+    const py::ssize_t components = value_info.shape[2];
+    const py::ssize_t quadrature = value_info.shape[3];
+    if (local != 6 || components != 3 || curl_info.shape[0] != cells ||
+        curl_info.shape[1] != local || curl_info.shape[2] != components ||
+        curl_info.shape[3] != quadrature || dx_info.shape[0] != cells ||
+        dx_info.shape[1] != quadrature || mass_info.shape[0] != cells ||
+        mass_info.shape[1] != quadrature || coefficient_info.shape[0] != cells ||
+        coefficient_info.shape[1] != quadrature || output_info.shape[0] != cells ||
+        output_info.shape[1] != local || output_info.shape[2] != local)
+        throw std::invalid_argument("incompatible TetN1 integration shapes");
+
+    const auto* value_data = static_cast<const double*>(value_info.ptr);
+    const auto* curl_data = static_cast<const double*>(curl_info.ptr);
+    const auto* dx_data = static_cast<const double*>(dx_info.ptr);
+    const auto* mass_data = static_cast<const double*>(mass_info.ptr);
+    const auto* coefficient_data = static_cast<const double*>(coefficient_info.ptr);
+    auto* output_data = static_cast<double*>(output_info.ptr);
+    {
+        py::gil_scoped_release release;
+        native_fem::parallel_for(
+            static_cast<std::size_t>(cells),
+            [&](std::size_t cell_begin, std::size_t cell_end) {
+        for (py::ssize_t cell = static_cast<py::ssize_t>(cell_begin);
+             cell < static_cast<py::ssize_t>(cell_end); ++cell) {
+            for (py::ssize_t row = 0; row < local; ++row) {
+                for (py::ssize_t column = 0; column < local; ++column) {
+                    double result = 0.;
+                    for (py::ssize_t point = 0; point < quadrature; ++point) {
+                        double value_dot = 0.;
+                        double curl_dot = 0.;
+                        for (py::ssize_t component = 0; component < components;
+                             ++component) {
+                            const auto row_offset =
+                                ((cell * local + row) * components + component) *
+                                quadrature + point;
+                            const auto column_offset =
+                                ((cell * local + column) * components + component) *
+                                quadrature + point;
+                            if (include_mass)
+                                value_dot += value_data[row_offset] *
+                                    value_data[column_offset];
+                            if (include_curl)
+                                curl_dot += curl_data[row_offset] *
+                                    curl_data[column_offset];
+                        }
+                        const auto coefficient_offset = cell * quadrature + point;
+                        result += dx_data[coefficient_offset] * (
+                            mass_data[coefficient_offset] * value_dot +
+                            coefficient_data[coefficient_offset] * curl_dot);
+                    }
+                    output_data[(cell * local + row) * local + column] = result;
+                }
+            }
+        }
+        });
+    }
+}
+
 }  // namespace
 
 void native_fem::bind_edge_topology(py::module_& module) {
@@ -161,4 +241,9 @@ void native_fem::bind_edge_topology(py::module_& module) {
     module.def(
         "build_edge_csr_pattern", &build_edge_csr_pattern,
         py::arg("element_dofs"), py::arg("degrees_of_freedom"));
+    module.def(
+        "integrate_tet_n1", &integrate_tet_n1,
+        py::arg("values"), py::arg("curls"), py::arg("dx"),
+        py::arg("mass_coefficient"), py::arg("curl_coefficient"),
+        py::arg("include_mass"), py::arg("include_curl"), py::arg("output"));
 }

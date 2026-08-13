@@ -5,12 +5,14 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from ._skfn import build_edge_csr_pattern
+from ._skfn import build_edge_csr_pattern,integrate_tet_n1
 from .hcurl_basis import AffineTetN1Basis,AffineTriN1Basis
 from .preflight import AssemblyMemoryEstimate,enforce_memory_budget
 
 
-def _estimate_edge_assembly_memory(basis,*,local,kind):
+def _estimate_edge_assembly_memory(
+    basis,*,local,kind,element_buffer_bytes=0,
+):
     cells=basis.mesh.nelements
     nnz_upper=min(basis.N*basis.N,cells*local*local)
     basis_bytes=sum(
@@ -24,7 +26,7 @@ def _estimate_edge_assembly_memory(basis,*,local,kind):
         entity_count=cells,quadrature_points_per_entity=len(basis.W),
         row_local_dofs=local,column_local_dofs=local,
         nnz_upper_bound=nnz_upper,basis_bytes=basis_bytes,
-        native_tabulation_bytes=0,dof_map_bytes=0,
+        native_tabulation_bytes=element_buffer_bytes,dof_map_bytes=0,
         csr_bytes_upper_bound=8*nnz_upper+8*nnz_upper+8*(basis.N+1),
         scatter_bytes=8*cells*local*local,
         coloring_bytes_upper_bound=0,
@@ -48,7 +50,10 @@ def estimate_tet_n1_assembly_memory(basis):
     """Conservatively estimate dedicated TetN1 assembler storage."""
     if not isinstance(basis,AffineTetN1Basis):
         raise TypeError("basis must be AffineTetN1Basis")
-    return _estimate_edge_assembly_memory(basis,local=6,kind="hcurl_tet_n1")
+    return _estimate_edge_assembly_memory(
+        basis,local=6,kind="hcurl_tet_n1",
+        element_buffer_bytes=8*basis.mesh.nelements*6*6,
+    )
 
 
 class _EdgeN1Assembler:
@@ -165,6 +170,42 @@ class TetN1Assembler(_EdgeN1Assembler):
             memory_limit_bytes=memory_limit_bytes,
             memory_safety_factor=memory_safety_factor,
         )
+        self._elements=np.empty(
+            (basis.mesh.nelements,6,6),dtype=np.float64
+        )
+
+    def _integrate(self,mass,curl_value,*,include_mass,include_curl):
+        # The native kernel writes into one retained entity-first local-matrix
+        # buffer.  Fixed-CSR scatter remains separate and measurable.
+        integrate_tet_n1(
+            self.basis._element_values,self.basis._element_curls,self.basis.dx,
+            np.ascontiguousarray(mass),np.ascontiguousarray(curl_value),
+            include_mass,include_curl,self._elements,
+        )
+        return self._elements
+
+    def assemble_mass(self,coefficient=None):
+        mass=self._coefficient("mass",coefficient)
+        elements=self._integrate(
+            mass,np.zeros_like(self.basis.dx),
+            include_mass=True,include_curl=False,
+        )
+        return self._assemble_elements(elements)
+
+    def assemble_curl_curl(self,coefficient=None):
+        curl_value=self._coefficient("curl",coefficient)
+        elements=self._integrate(
+            np.zeros_like(self.basis.dx),curl_value,
+            include_mass=False,include_curl=True,
+        )
+        return self._assemble_elements(elements)
+
+    def assemble_maxwell(self,*,mass_coefficient=None,curl_coefficient=None):
+        mass=self._coefficient("mass",mass_coefficient)
+        curl_value=self._coefficient("curl",curl_coefficient)
+        return self._assemble_elements(self._integrate(
+            mass,curl_value,include_mass=True,include_curl=True,
+        ))
 
     def _curl_elements(self,weighted_coefficient):
         return self._vector_curl_elements(weighted_coefficient)

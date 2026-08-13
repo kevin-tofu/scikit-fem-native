@@ -26,7 +26,7 @@ def _median(call,repeats,warmup):
     return statistics.median(samples)
 
 
-def _case(resolution,repeats,warmup):
+def _case(resolution,threads,repeats,warmup):
     axis=np.linspace(0.,1.,resolution+1)
     mesh=skfemntv.MeshTet.init_tensor(axis,axis,axis)
     started=time.perf_counter()
@@ -47,35 +47,32 @@ def _case(resolution,repeats,warmup):
     def maxwell(u,v,w):
         return dot(u,v)+.2*dot(curl(u),curl(v))
 
-    assembly_seconds=_median(
-        lambda:assembler.assemble_maxwell(
-            mass_coefficient=1.,curl_coefficient=.2
-        ),repeats,warmup,
-    )
+    with skfemntv.thread_limit(threads):
+        assembly_seconds=_median(
+            lambda:assembler.assemble_maxwell(
+                mass_coefficient=1.,curl_coefficient=.2
+            ),repeats,warmup,
+        )
     reference_assembly_seconds=_median(
         lambda:skfem.asm(maxwell,reference),repeats,warmup
     )
+    mass=np.ones_like(basis.dx)
+    curl_value=np.full_like(basis.dx,.2)
     def integrate():
-        elements=np.einsum(
-            "ebiq,eciq,eq->ebc",
-            basis._element_values,basis._element_values,basis.dx,
-            optimize=True,
+        return assembler._integrate(
+            mass,curl_value,include_mass=True,include_curl=True
         )
-        elements+=.2*np.einsum(
-            "ebiq,eciq,eq->ebc",
-            basis._element_curls,basis._element_curls,basis.dx,
-            optimize=True,
-        )
-        return elements
 
-    elements=integrate()
-    integration_seconds=_median(integrate,repeats,warmup)
+    with skfemntv.thread_limit(threads):
+        elements=integrate()
+        integration_seconds=_median(integrate,repeats,warmup)
     scatter_seconds=_median(
         lambda:assembler._assemble_elements(elements),repeats,warmup
     )
     estimate=assembler.memory_estimate
     return {
         "resolution":resolution,
+        "threads":threads,
         "elements":mesh.nelements,
         "dofs":basis.N,
         "nnz":assembler._matrix.nnz,
@@ -97,27 +94,32 @@ def _case(resolution,repeats,warmup):
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--resolutions",type=int,nargs="+",default=[4,8,12])
+    parser.add_argument("--thread-counts",type=int,nargs="+",default=[1,4])
     parser.add_argument("--repeat",type=int,default=7)
     parser.add_argument("--warmup",type=int,default=2)
     parser.add_argument("--output",type=Path)
     arguments=parser.parse_args()
     rows=[
-        _case(value,arguments.repeat,arguments.warmup)
+        _case(value,threads,arguments.repeat,arguments.warmup)
         for value in arguments.resolutions
+        for threads in arguments.thread_counts
     ]
     if arguments.output is not None:
         arguments.output.parent.mkdir(parents=True,exist_ok=True)
         with arguments.output.open("w",newline="",encoding="utf-8") as stream:
-            writer=csv.DictWriter(stream,fieldnames=tuple(rows[0]))
+            writer=csv.DictWriter(
+                stream,fieldnames=tuple(rows[0]),lineterminator="\n"
+            )
             writer.writeheader()
             writer.writerows(rows)
     print(
-        "resolution dofs elements basis-ms setup-ms assembly-ms skfem-ms "
+        "resolution threads dofs elements basis-ms setup-ms assembly-ms skfem-ms "
         "speedup integrate% scatter%"
     )
     for row in rows:
         print(
-            f"{row['resolution']:10d} {row['dofs']:7d} {row['elements']:8d} "
+            f"{row['resolution']:10d} {row['threads']:7d} "
+            f"{row['dofs']:7d} {row['elements']:8d} "
             f"{1e3*row['basis_seconds']:8.2f} {1e3*row['setup_seconds']:8.2f} "
             f"{1e3*row['assembly_seconds']:11.3f} "
             f"{1e3*row['skfem_assembly_seconds']:9.3f} "

@@ -132,3 +132,26 @@ fixed-CSR scatter is below two percent.  Unlike TriN1, the two six-by-six
 three-component NumPy contractions become slower than scikit-fem as the mesh
 grows.  A fused native TetN1 integration kernel is therefore justified; a
 scatter-only kernel is not.
+
+## Fused native integration follow-up
+
+TetN1 mass and vector curl-curl integration now share one C++ traversal that
+writes into a retained `(cell,6,6)` buffer.  CSR scatter remains separate.  The
+kernel follows the process/context thread setting and releases the GIL; cells
+write disjoint buffer regions.  Serial and four-thread results agree, and the
+local matrix buffer is reused across calls.
+
+The updated benchmark records both one and four threads:
+
+| DOFs | native 1 thread | native 4 threads | scikit-fem | 4-thread speedup |
+|---:|---:|---:|---:|---:|
+| 604 | 2.05 ms | 2.04 ms | 2.06 ms | 1.01x |
+| 4,184 | 16.51 ms | 4.86 ms | 8.49 ms | 1.75x |
+| 13,428 | 56.02 ms | 16.20 ms | 28.44 ms | 1.76x |
+
+Thread startup is not worthwhile for the 384-cell case, while the larger two
+cases scale materially.  Single-thread native integration remains slower than
+scikit-fem at scale; the gain is specifically a coarse-grained cell-parallel
+result, not a claim that scalar C++ loops outperform optimized NumPy.  The
+13,428-DOF peak estimate increases to about 104 MB because it now includes the
+retained local matrix buffer.

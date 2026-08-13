@@ -73,3 +73,19 @@ def test_tet_n1_assembler_type_coefficient_and_memory_contract():
     assembler=skfemntv.TetN1Assembler(basis)
     with pytest.raises(ValueError,match="mass coefficient"):
         assembler.assemble_mass(np.zeros((2,2,2)))
+
+
+def test_tet_n1_native_integration_is_parallel_equivalent_and_reuses_buffer():
+    basis,_,_=_bases()
+    assembler=skfemntv.TetN1Assembler(basis)
+    buffer_identity=id(assembler._elements)
+    with skfemntv.thread_limit(1):
+        serial=assembler.assemble_maxwell(
+            mass_coefficient=1.3,curl_coefficient=.2
+        ).toarray()
+    with skfemntv.thread_limit(4):
+        parallel=assembler.assemble_maxwell(
+            mass_coefficient=1.3,curl_coefficient=.2
+        ).toarray()
+    assert id(assembler._elements)==buffer_identity
+    np.testing.assert_allclose(parallel,serial,atol=3e-13)
