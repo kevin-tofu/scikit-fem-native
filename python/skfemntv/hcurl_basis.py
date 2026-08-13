@@ -385,6 +385,52 @@ class AffineTetN1Basis:
             self._element_curls,self._element_curls,self.dx,
         )
 
+    def interpolate_edge_moments(self,field,*,quadrature_order=4):
+        """Interpolate a vector field by ascending-global-edge moments."""
+        if not callable(field):
+            raise TypeError("field must be callable")
+        if (
+            isinstance(quadrature_order,bool)
+            or not isinstance(quadrature_order,(int,np.integer))
+            or quadrature_order<1
+        ):
+            raise ValueError("quadrature_order must be a positive integer")
+        nodes,weights=np.polynomial.legendre.leggauss(int(quadrature_order))
+        parameter=.5*(nodes+1.)
+        weights=.5*weights
+        coefficients=np.empty(self.N,dtype=np.float64)
+        for edge_id,(start,end) in enumerate(self.dof_map.topology.edges.T):
+            first=self.mesh.p[:,start]
+            tangent=self.mesh.p[:,end]-first
+            points=first[:,None]+tangent[:,None]*parameter[None,:]
+            values=np.asarray(field(points),dtype=np.float64)
+            try:
+                values=np.broadcast_to(values,points.shape)
+            except ValueError as error:
+                raise ValueError(
+                    "field must return vectors broadcastable to (3, points)"
+                ) from error
+            coefficients[edge_id]=np.einsum(
+                "iq,i,q->",values,tangent,weights
+            )
+        return coefficients
+
+    def _local_coefficients(self,coefficients):
+        values=np.asarray(coefficients,dtype=np.float64)
+        if values.shape!=(self.N,):
+            raise ValueError(f"coefficients must have shape ({self.N},)")
+        return values[self.element_dofs].T
+
+    def evaluate(self,coefficients):
+        """Evaluate a global edge field as ``(component, cell, point)``."""
+        local=self._local_coefficients(coefficients)
+        return np.einsum("eb,ebiq->ieq",local,self._element_values)
+
+    def evaluate_curl(self,coefficients):
+        """Evaluate vector curl as ``(component, cell, point)``."""
+        local=self._local_coefficients(coefficients)
+        return np.einsum("eb,ebiq->ieq",local,self._element_curls)
+
     @property
     def global_coordinates(self):
         """Physical quadrature coordinates as ``(component, cell, point)``."""

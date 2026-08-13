@@ -89,3 +89,17 @@ data after matching global edges by vertex pair.
 This completes the minimal affine TetN1 solve path.  Interpolation, field
 evaluation, convergence, orientation robustness, and performance measurement
 remain the next validation layers before broadening the H(curl) capability.
+
+## Interpolation and H(curl) convergence
+
+`AffineTetN1Basis.interpolate_edge_moments` integrates callable vector fields
+along every ascending global edge.  `evaluate` returns values and
+`evaluate_curl` returns vector curls, both in
+`(component, cell, quadrature)` layout.  A constant vector is reproduced to
+roundoff with zero discrete curl.
+
+For the quadratic field `u=(0,xz,xy)` with exact curl `(0,-y,z)`, uniform
+tetrahedral refinement decreases the L2, curl-L2, and combined H(curl) errors
+with measured successive rates `(1.08, 1.00, 1.04)` and
+`(1.02, 1.00, 1.01)` in one local run.  This establishes the expected
+first-order interpolation behavior independently of the constrained solve.

@@ -59,6 +59,7 @@ _ENTRIES = (
     Capability("assembly.hcurl_tri_n1_load", "assembly", CapabilityStatus.EXPERIMENTAL, "Reusable vector-load assembly for AffineTriN1Basis from callables or quadrature arrays."),
     Capability("evaluation.quadrature", "evaluation", CapabilityStatus.SUPPORTED, "Interpolation at basis quadrature points."),
     Capability("evaluation.hcurl_tri_n1", "evaluation", CapabilityStatus.EXPERIMENTAL, "Edge-moment interpolation and value/curl evaluation for AffineTriN1Basis."),
+    Capability("evaluation.hcurl_tet_n1", "evaluation", CapabilityStatus.EXPERIMENTAL, "Edge-moment interpolation and value/vector-curl evaluation for AffineTetN1Basis."),
     Capability("evaluation.arbitrary_point", "evaluation", CapabilityStatus.PLANNED, "Physical point location and field evaluation."),
     Capability("preflight.bilinear_memory", "preflight", CapabilityStatus.SUPPORTED, "Allocation-free conservative estimate for standard and cross bilinear assemblers."),
     Capability("preflight.cut_memory", "preflight", CapabilityStatus.SUPPORTED, "Memory estimate for segmented cut-cell bilinear and cross assemblers."),
