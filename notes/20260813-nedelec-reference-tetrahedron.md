@@ -72,3 +72,20 @@ Quadrature-dependent scalar coefficients, stable CSR object reuse, type
 diagnostics, and preflight budget rejection are tested.  Loads, boundary edge
 selection, interpolation, and a constrained Maxwell solve remain follow-up
 work.
+
+## Boundary constraints, load, and solve
+
+`AffineTetN1Basis.boundary_dofs` maps each selected triangular boundary facet
+to its three globally owned edges.  All, named, predicate, explicit-facet, and
+named-union selection agree with scikit-fem; interior facets are rejected.
+
+`TetN1LinearAssembler` accepts callable or quadrature-array three-component
+loads and reuses one result vector.  A constrained mass-plus-curl-curl solve
+uses the dedicated matrix and load assemblers with external SciPy solver
+policy.  Boundary coefficients remain zero, the free residual vanishes, and
+the matrix, load, and solution agree with independently assembled scikit-fem
+data after matching global edges by vertex pair.
+
+This completes the minimal affine TetN1 solve path.  Interpolation, field
+evaluation, convergence, orientation robustness, and performance measurement
+remain the next validation layers before broadening the H(curl) capability.

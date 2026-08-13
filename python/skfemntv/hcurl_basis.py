@@ -56,6 +56,59 @@ def _tetrahedron_quadrature(order):
     return np.asarray(coordinates).T,np.asarray(result_weights)
 
 
+def _boundary_edge_dofs(basis,boundary):
+    """Resolve boundary facets to their globally owned edge DOFs."""
+    if isinstance(boundary,tuple) and all(
+        isinstance(name,str) for name in boundary
+    ):
+        selected=np.concatenate([
+            _boundary_edge_dofs(basis,name) for name in boundary
+        ]) if boundary else np.empty(0,dtype=np.int64)
+        return np.unique(selected)
+    if boundary is None:
+        facets=basis.mesh.boundary_facets()
+    elif isinstance(boundary,str):
+        try:
+            facets=np.asarray(basis.mesh.boundaries[boundary],dtype=np.int64)
+        except KeyError as error:
+            raise KeyError(f"unknown boundary {boundary!r}") from error
+    elif callable(boundary):
+        candidates=basis.mesh.boundary_facets()
+        centers=basis.mesh.p[:,basis.mesh.facets[:,candidates]].mean(axis=1)
+        mask=np.asarray(boundary(centers),dtype=bool)
+        if mask.shape!=(len(candidates),):
+            raise ValueError(
+                "boundary predicate must return one boolean per boundary facet"
+            )
+        facets=candidates[mask]
+    else:
+        facets=np.asarray(boundary)
+        if facets.dtype==bool:
+            candidates=basis.mesh.boundary_facets()
+            if facets.shape!=(len(candidates),):
+                raise ValueError(
+                    "boundary mask must contain one value per boundary facet"
+                )
+            facets=candidates[facets]
+        facets=np.asarray(facets,dtype=np.int64).reshape(-1)
+    boundary_set=set(map(int,basis.mesh.boundary_facets()))
+    if any(int(facet) not in boundary_set for facet in facets):
+        raise ValueError("H(curl) boundary DOFs require boundary facet IDs")
+    edge_lookup={
+        tuple(edge):index
+        for index,edge in enumerate(basis.dof_map.topology.edges.T)
+    }
+    selected=set()
+    for facet in facets:
+        nodes=tuple(map(int,basis.mesh.facets[:,facet]))
+        for first_index,first in enumerate(nodes):
+            for second in nodes[first_index+1:]:
+                edge_id=edge_lookup.get(tuple(sorted((first,second))))
+                if edge_id is not None:
+                    selected.add(edge_id)
+    return np.asarray(sorted(selected),dtype=np.int64)
+
+
 @dataclass(frozen=True)
 class HcurlGeometryDiagnostics:
     minimum_signed_determinant: float
@@ -233,50 +286,7 @@ class AffineTriN1Basis:
         A tuple of boundary names forms their union.  Because a global edge is
         one DOF, overlaps at named-boundary intersections are removed.
         """
-        if isinstance(boundary,tuple) and all(
-            isinstance(name,str) for name in boundary
-        ):
-            selected=np.concatenate([
-                self.boundary_dofs(name) for name in boundary
-            ]) if boundary else np.empty(0,dtype=np.int64)
-            return np.unique(selected)
-        if boundary is None:
-            facets=self.mesh.boundary_facets()
-        elif isinstance(boundary,str):
-            try:
-                facets=np.asarray(self.mesh.boundaries[boundary],dtype=np.int64)
-            except KeyError as error:
-                raise KeyError(f"unknown boundary {boundary!r}") from error
-        elif callable(boundary):
-            candidates=self.mesh.boundary_facets()
-            centers=self.mesh.p[:,self.mesh.facets[:,candidates]].mean(axis=1)
-            mask=np.asarray(boundary(centers),dtype=bool)
-            if mask.shape!=(len(candidates),):
-                raise ValueError(
-                    "boundary predicate must return one boolean per boundary facet"
-                )
-            facets=candidates[mask]
-        else:
-            facets=np.asarray(boundary)
-            if facets.dtype==bool:
-                candidates=self.mesh.boundary_facets()
-                if facets.shape!=(len(candidates),):
-                    raise ValueError(
-                        "boundary mask must contain one value per boundary facet"
-                    )
-                facets=candidates[facets]
-            facets=np.asarray(facets,dtype=np.int64).reshape(-1)
-        boundary_set=set(map(int,self.mesh.boundary_facets()))
-        if any(int(facet) not in boundary_set for facet in facets):
-            raise ValueError("H(curl) boundary DOFs require boundary facet IDs")
-        edge_lookup={
-            tuple(edge):index
-            for index,edge in enumerate(self.dof_map.topology.edges.T)
-        }
-        return np.asarray(sorted({
-            edge_lookup[tuple(sorted(map(int,self.mesh.facets[:,facet])))]
-            for facet in facets
-        }),dtype=np.int64)
+        return _boundary_edge_dofs(self,boundary)
 
 
 class AffineTetN1Basis:
@@ -374,6 +384,18 @@ class AffineTetN1Basis:
             "ebiq,eciq,eq->ebc",
             self._element_curls,self._element_curls,self.dx,
         )
+
+    @property
+    def global_coordinates(self):
+        """Physical quadrature coordinates as ``(component, cell, point)``."""
+        vertices=self.mesh.p[:,self.mesh.t[0]]
+        return vertices[:,:,None]+np.einsum(
+            "ire,rq->ieq",self.jacobians,self.X
+        )
+
+    def boundary_dofs(self,boundary=None):
+        """Select edge DOFs owned by all or selected boundary facets."""
+        return _boundary_edge_dofs(self,boundary)
 
 
 __all__=[

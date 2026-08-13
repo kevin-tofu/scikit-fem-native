@@ -170,17 +170,10 @@ class TetN1Assembler(_EdgeN1Assembler):
         return self._vector_curl_elements(weighted_coefficient)
 
 
-class TriN1LinearAssembler:
-    """Reusable vector-load assembler for ``AffineTriN1Basis``.
-
-    ``assemble_vector_load`` overwrites and returns one reusable vector.  Copy
-    it when the result must survive another call on this assembler.
-    """
-
-    def __init__(self,basis):
-        if not isinstance(basis,AffineTriN1Basis):
-            raise TypeError("basis must be AffineTriN1Basis")
+class _EdgeN1LinearAssembler:
+    def _initialize(self,basis,dimension):
         self.basis=basis
+        self._dimension=dimension
         self._vector=np.zeros(basis.N,dtype=np.float64)
 
     def _values(self,field):
@@ -189,7 +182,7 @@ class TriN1LinearAssembler:
             if callable(field) else field
         )
         values=np.asarray(values,dtype=np.float64)
-        expected=(2,)+self.basis.dx.shape
+        expected=(self._dimension,)+self.basis.dx.shape
         try:
             return np.broadcast_to(values,expected)
         except ValueError as error:
@@ -208,8 +201,27 @@ class TriN1LinearAssembler:
         return self._vector
 
 
+class TriN1LinearAssembler(_EdgeN1LinearAssembler):
+    """Reusable vector-load assembler for ``AffineTriN1Basis``."""
+
+    def __init__(self,basis):
+        if not isinstance(basis,AffineTriN1Basis):
+            raise TypeError("basis must be AffineTriN1Basis")
+        self._initialize(basis,2)
+
+
+class TetN1LinearAssembler(_EdgeN1LinearAssembler):
+    """Reusable vector-load assembler for ``AffineTetN1Basis``."""
+
+    def __init__(self,basis):
+        if not isinstance(basis,AffineTetN1Basis):
+            raise TypeError("basis must be AffineTetN1Basis")
+        self._initialize(basis,3)
+
+
 __all__=[
     "TetN1Assembler",
+    "TetN1LinearAssembler",
     "TriN1Assembler",
     "TriN1LinearAssembler",
     "estimate_tet_n1_assembly_memory",

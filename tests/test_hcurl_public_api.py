@@ -9,6 +9,7 @@ def test_experimental_hcurl_vertical_slice_has_small_public_api():
     assert skfemntv.HcurlGeometryDiagnostics.__module__=="skfemntv.hcurl_basis"
     assert skfemntv.TriN1Assembler.__module__=="skfemntv.hcurl_assembler"
     assert skfemntv.TetN1Assembler.__module__=="skfemntv.hcurl_assembler"
+    assert skfemntv.TetN1LinearAssembler.__module__=="skfemntv.hcurl_assembler"
     assert skfemntv.TriN1LinearAssembler.__module__=="skfemntv.hcurl_assembler"
     assert callable(skfemntv.estimate_tri_n1_assembly_memory)
     assert callable(skfemntv.estimate_tet_n1_assembly_memory)
@@ -18,6 +19,7 @@ def test_experimental_hcurl_vertical_slice_has_small_public_api():
         "HcurlGeometryDiagnostics",
         "TriN1Assembler",
         "TetN1Assembler",
+        "TetN1LinearAssembler",
         "TriN1LinearAssembler",
         "estimate_tri_n1_assembly_memory",
         "estimate_tet_n1_assembly_memory",
@@ -30,4 +32,12 @@ def test_experimental_hcurl_example_runs_end_to_end(capsys):
     runpy.run_path(example,run_name="__main__")
     output=capsys.readouterr().out
     assert "TriN1 DOFs=" in output
+    assert "free residual=" in output
+
+
+def test_experimental_tet_hcurl_example_runs_end_to_end(capsys):
+    example=Path(__file__).parents[1]/"examples"/"hcurl_tet_n1_maxwell.py"
+    runpy.run_path(example,run_name="__main__")
+    output=capsys.readouterr().out
+    assert "TetN1 DOFs=" in output
     assert "free residual=" in output
