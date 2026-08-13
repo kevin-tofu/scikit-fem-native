@@ -96,18 +96,18 @@ class TriN1Assembler:
     def assemble_mass(self,coefficient=None):
         coefficient=self._coefficient("mass",coefficient)
         elements=np.einsum(
-            "ebiq,eciq,eq,eq->ebc",
+            "ebiq,eciq,eq->ebc",
             self.basis._element_values,self.basis._element_values,
-            self.basis.dx,coefficient,
+            self.basis.dx*coefficient,optimize=True,
         )
         return self._assemble_elements(elements)
 
     def assemble_curl_curl(self,coefficient=None):
         coefficient=self._coefficient("curl",coefficient)
         elements=np.einsum(
-            "ebq,ecq,eq,eq->ebc",
+            "ebq,ecq,eq->ebc",
             self.basis._element_curls,self.basis._element_curls,
-            self.basis.dx,coefficient,
+            self.basis.dx*coefficient,optimize=True,
         )
         return self._assemble_elements(elements)
 
@@ -115,14 +115,14 @@ class TriN1Assembler:
         mass=self._coefficient("mass",mass_coefficient)
         curl_value=self._coefficient("curl",curl_coefficient)
         elements=np.einsum(
-            "ebiq,eciq,eq,eq->ebc",
+            "ebiq,eciq,eq->ebc",
             self.basis._element_values,self.basis._element_values,
-            self.basis.dx,mass,
+            self.basis.dx*mass,optimize=True,
         )
         elements+=np.einsum(
-            "ebq,ecq,eq,eq->ebc",
+            "ebq,ecq,eq->ebc",
             self.basis._element_curls,self.basis._element_curls,
-            self.basis.dx,curl_value,
+            self.basis.dx*curl_value,optimize=True,
         )
         return self._assemble_elements(elements)
 

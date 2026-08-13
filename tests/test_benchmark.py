@@ -20,6 +20,25 @@ CUT_ASSEMBLY_SCRIPT=(
 IMPLICIT_CROSS_SCRIPT=(
     Path(__file__).parents[1]/"benchmarks"/"cutfem"/"implicit_cross.py"
 )
+HCURL_SCRIPT=(
+    Path(__file__).parents[1]/"benchmarks"/"hcurl_tri_n1_assembly.py"
+)
+
+
+def test_hcurl_tri_n1_benchmark_smoke(tmp_path):
+    output=tmp_path/"hcurl.csv"
+    result=subprocess.run(
+        [
+            sys.executable,str(HCURL_SCRIPT),"--resolutions","2","4",
+            "--repeat","1","--warmup","0","--output",str(output),
+        ],
+        cwd=HCURL_SCRIPT.parents[1],capture_output=True,text=True,
+    )
+    assert result.returncode==0,result.stderr
+    assert "integrate% scatter%" in result.stdout
+    lines=output.read_text().splitlines()
+    assert len(lines)==3
+    assert lines[0].startswith("resolution,elements,dofs,nnz,")
 
 
 def test_cut_assembly_benchmark_smoke(tmp_path):
