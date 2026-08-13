@@ -50,3 +50,23 @@ Future native work should require a new profile demonstrating a meaningful
 bottleneck, ideally on larger production-shaped meshes and coefficient fields.
 Basis construction, memory traffic, and batched element integration are more
 plausible targets than fixed-CSR scatter.
+
+## Basis-construction follow-up
+
+A later profile at resolution 64 showed that basis construction spent most of
+its time calling the Piola mapping once per cell from a Python loop.  This was
+call overhead rather than a slow numerical kernel: mapping all cells in one
+batched NumPy operation reduced the resolution-128 basis time from about
+4.92 s to 0.365 s (about 13.5x) without changing the stored entity-first
+assembler layout or the public component-first view.
+
+After that change, the remaining construction profile is dominated by two
+Python dictionary loops:
+
+- canonical global-edge numbering in `build_oriented_edge_topology`;
+- CSR scatter-position construction in `TriN1Assembler.__init__`.
+
+These setup paths, rather than repeated integration or scatter, are now the
+credible native C++ candidates.  Moving them should be justified against
+large-mesh setup measurements and should return the existing arrays so the
+Python public API and orientation tests remain unchanged.

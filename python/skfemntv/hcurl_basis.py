@@ -95,17 +95,23 @@ class AffineTriN1Basis:
 
         reference_values=tri_n1_basis(self.X)
         reference_curls=tri_n1_curl(self.X)
-        values=np.empty((mesh.nelements,3,2,len(self.W)))
-        curls=np.empty((mesh.nelements,3,len(self.W)))
-        for cell in range(mesh.nelements):
-            values[cell]=covariant_piola(
-                reference_values,self.jacobians[...,cell,None]
-            )*self.basis_signs[:,cell,None,None]
-            curls[cell]=covariant_piola_curl(
-                reference_curls,self.jacobians[...,cell,None]
-            )*self.basis_signs[:,cell,None]
-        self._element_values=np.ascontiguousarray(values)
-        self._element_curls=np.ascontiguousarray(curls)
+        # Map every cell in one NumPy call.  The mapping helpers use a
+        # component-first convention, so their batched outputs are
+        # (basis, component, cell, quadrature) and (basis, cell, quadrature).
+        # The private assembler layout remains entity-first to keep each
+        # element's local tensors contiguous in the repeated assembly path.
+        values=covariant_piola(
+            reference_values[:,:,None,:],self.jacobians[...,None]
+        ).transpose(2,0,1,3)
+        curls=covariant_piola_curl(
+            reference_curls[:,None,:],self.jacobians[...,None]
+        ).transpose(1,0,2)
+        self._element_values=np.ascontiguousarray(
+            values*self.basis_signs.T[:,:,None,None]
+        )
+        self._element_curls=np.ascontiguousarray(
+            curls*self.basis_signs.T[:,:,None]
+        )
 
     @property
     def values(self):
