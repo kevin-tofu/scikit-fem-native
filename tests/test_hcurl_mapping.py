@@ -7,10 +7,15 @@ from skfem.mapping import MappingAffine
 from skfemntv._hcurl_mapping import (
     covariant_piola,
     covariant_piola_curl,
+    covariant_piola_vector_curl,
     jacobian_determinant,
+    tetrahedron_affine_jacobian,
     triangle_affine_jacobian,
 )
-from skfemntv._nedelec_reference import tri_n1_basis,tri_n1_curl
+from skfemntv._nedelec_reference import (
+    TET_DIRECTED_EDGES,TET_VERTICES,tet_n1_basis,tet_n1_curl,
+    tri_n1_basis,tri_n1_curl,
+)
 
 
 def _physical_triangle():
@@ -78,3 +83,50 @@ def test_hcurl_mapping_rejects_invalid_or_singular_geometry():
         covariant_piola(np.zeros((3,2)),singular)
     with pytest.raises(ValueError,match="nonsingular"):
         covariant_piola_curl(np.zeros(3),singular)
+
+
+def test_tetrahedral_piola_preserves_directed_tangential_moments():
+    physical_vertices=np.array((
+        (.2,1.4,-.1,.3),(-.3,.2,1.6,.1),(.1,.4,.2,1.8)
+    ))
+    jacobian=tetrahedron_affine_jacobian(physical_vertices)
+    nodes,weights=np.polynomial.legendre.leggauss(4)
+    parameter=.5*(nodes+1.)
+    weights=.5*weights
+    for edge,(start,end) in enumerate(TET_DIRECTED_EDGES):
+        reference_tangent=TET_VERTICES[end]-TET_VERTICES[start]
+        points=(
+            TET_VERTICES[start,:,None]
+            +reference_tangent[:,None]*parameter[None,:]
+        )
+        values=covariant_piola(tet_n1_basis(points),jacobian[...,None])
+        physical_tangent=jacobian@reference_tangent
+        moments=np.einsum("biq,i,q->b",values,physical_tangent,weights)
+        np.testing.assert_allclose(moments,np.eye(6)[edge],atol=3e-15)
+
+
+def test_tetrahedral_vector_curl_uses_jacobian_over_determinant():
+    vertices=np.array((
+        (.2,1.4,-.1,.3),(-.3,.2,1.6,.1),(.1,.4,.2,1.8)
+    ))
+    jacobian=tetrahedron_affine_jacobian(vertices)
+    points=np.array(((.1,.2),(.2,.1),(.3,.15)))
+    expected=np.einsum(
+        "ij,bjq->biq",jacobian,tet_n1_curl(points)
+    )/jacobian_determinant(jacobian)
+    np.testing.assert_allclose(
+        covariant_piola_vector_curl(tet_n1_curl(points),jacobian[...,None]),
+        expected,
+    )
+
+
+def test_tetrahedral_mapping_rejects_invalid_or_singular_geometry():
+    with pytest.raises(ValueError,match="tetrahedron vertices"):
+        tetrahedron_affine_jacobian(np.zeros((2,4)))
+    singular=tetrahedron_affine_jacobian(np.array((
+        (0.,1.,0.,1.),(0.,0.,1.,1.),(0.,0.,0.,0.)
+    )))
+    with pytest.raises(ValueError,match="nonsingular"):
+        covariant_piola(np.zeros((6,3)),singular)
+    with pytest.raises(ValueError,match="nonsingular"):
+        covariant_piola_vector_curl(np.zeros((6,3)),singular)
