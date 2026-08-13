@@ -1,8 +1,8 @@
 """Calibrate assembly preflight estimates against isolated-process RSS peaks.
 
-Each case runs in a fresh child process so ``ru_maxrss`` is not contaminated by
-earlier assemblers.  Large cases are skipped before native assembler creation
-when their estimate exceeds the configured budget.
+Each case runs in a fresh child process so its peak resident set is not
+contaminated by earlier assemblers.  Large cases are skipped before native
+assembler creation when their estimate exceeds the configured budget.
 """
 
 from __future__ import annotations
@@ -13,10 +13,14 @@ import json
 import math
 import os
 from pathlib import Path
-import resource
 import subprocess
 import sys
 import time
+
+try:
+    import resource
+except ImportError:  # ``resource`` is not provided by CPython on Windows.
+    resource = None
 
 import numpy as np
 
@@ -35,12 +39,55 @@ CSV_COLUMNS = (
 )
 
 
+def _windows_working_set_bytes() -> tuple[int, int]:
+    """Return current and peak process working sets on Windows, in bytes."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ProcessMemoryCounters),
+        wintypes.DWORD,
+    ]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    counters = ProcessMemoryCounters()
+    counters.cb = ctypes.sizeof(counters)
+    if not psapi.GetProcessMemoryInfo(
+        kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return int(counters.WorkingSetSize), int(counters.PeakWorkingSetSize)
+
+
 def _rss_peak_bytes() -> int:
+    if os.name == "nt":
+        return _windows_working_set_bytes()[1]
+    assert resource is not None
     value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    # macOS reports bytes; the other supported Unix platforms report KiB.
     return value if sys.platform == "darwin" else value * 1024
 
 
 def _rss_current_bytes() -> int:
+    if os.name == "nt":
+        return _windows_working_set_bytes()[0]
     try:
         for line in Path("/proc/self/status").read_text().splitlines():
             if line.startswith("VmRSS:"):
