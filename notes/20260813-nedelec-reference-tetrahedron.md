@@ -39,3 +39,21 @@ explicitly.
 The next gate is `AffineTetN1Basis`: tetrahedral quadrature, batched mapping,
 orientation signs, geometry diagnostics, and element mass/curl-curl comparison
 must be introduced together before adding sparse assembly.
+
+## Minimal affine tetrahedron basis
+
+`AffineTetN1Basis` now combines Duffy-product tetrahedral quadrature, native
+global-edge topology, batched Piola mapping, orientation signs, and physical
+integration weights.  Its private value and vector-curl arrays use
+`(cell, local_basis, component, quadrature)` for contiguous element assembly;
+the public views use `(local_basis, component, cell, quadrature)`.
+
+Geometry diagnostics report signed and absolute determinants, minimum volume,
+maximum edge-cubed/determinant aspect indicator, and inverted-cell count.  An
+optional application-owned aspect threshold rejects excessive distortion.
+Assembled element mass and vector curl-curl matrices agree with scikit-fem on
+a multi-cell tetrahedral mesh after matching global edges by vertex pair.
+
+Sparse assembly, loads, boundary-edge selection, interpolation, and convergence
+remain outside this checkpoint.  The next implementation step is a reusable
+TetN1 CSR assembler using the already-native generic edge pattern builder.

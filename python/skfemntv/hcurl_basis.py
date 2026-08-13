@@ -7,9 +7,12 @@ from dataclasses import dataclass
 import numpy as np
 
 from ._hcurl_mapping import (
-    covariant_piola,covariant_piola_curl,triangle_affine_jacobian,
+    covariant_piola,covariant_piola_curl,covariant_piola_vector_curl,
+    tetrahedron_affine_jacobian,triangle_affine_jacobian,
 )
-from ._nedelec_reference import tri_n1_basis,tri_n1_curl
+from ._nedelec_reference import (
+    tet_n1_basis,tet_n1_curl,tri_n1_basis,tri_n1_curl,
+)
 from .edge_dof_map import build_oriented_edge_dof_map
 
 
@@ -31,11 +34,42 @@ def _triangle_quadrature(order):
     return np.asarray(coordinates).T,np.asarray(result_weights)
 
 
+def _tetrahedron_quadrature(order):
+    """Duffy-product quadrature on the unit tetrahedron."""
+    count=max(1,(int(order)+4)//2)
+    points,weights=np.polynomial.legendre.leggauss(count)
+    points=(points+1.)/2.
+    weights=weights/2.
+    coordinates=[]
+    result_weights=[]
+    for first in range(count):
+        for second in range(count):
+            for third in range(count):
+                x=points[first]
+                y=(1.-x)*points[second]
+                z=(1.-x)*(1.-points[second])*points[third]
+                coordinates.append((x,y,z))
+                result_weights.append(
+                    (1.-x)**2*(1.-points[second])
+                    *weights[first]*weights[second]*weights[third]
+                )
+    return np.asarray(coordinates).T,np.asarray(result_weights)
+
+
 @dataclass(frozen=True)
 class HcurlGeometryDiagnostics:
     minimum_signed_determinant: float
     minimum_absolute_determinant: float
     minimum_area: float
+    maximum_aspect_ratio: float
+    inverted_cell_count: int
+
+
+@dataclass(frozen=True)
+class HcurlTetGeometryDiagnostics:
+    minimum_signed_determinant: float
+    minimum_absolute_determinant: float
+    minimum_volume: float
     maximum_aspect_ratio: float
     inverted_cell_count: int
 
@@ -245,4 +279,104 @@ class AffineTriN1Basis:
         }),dtype=np.int64)
 
 
-__all__=["AffineTriN1Basis","HcurlGeometryDiagnostics"]
+class AffineTetN1Basis:
+    """Lowest-order H(curl) basis on affine tetrahedral meshes."""
+
+    def __init__(self,mesh,*,intorder=2,max_aspect_ratio=None):
+        if mesh.dim()!=3 or mesh.t.shape[0] not in (4,10):
+            raise TypeError("AffineTetN1Basis requires a tetrahedral mesh")
+        self.mesh=mesh
+        self.dof_map=build_oriented_edge_dof_map(mesh)
+        self.N=self.dof_map.ndofs
+        self.element_dofs=self.dof_map.element_dofs
+        self.basis_signs=self.dof_map.basis_signs
+        self.X,self.W=_tetrahedron_quadrature(intorder)
+
+        vertices=mesh.p[:,mesh.t[:4]]
+        self.jacobians=tetrahedron_affine_jacobian(vertices)
+        self.detJ=(
+            self.jacobians[0,0]*(
+                self.jacobians[1,1]*self.jacobians[2,2]
+                -self.jacobians[1,2]*self.jacobians[2,1]
+            )
+            -self.jacobians[0,1]*(
+                self.jacobians[1,0]*self.jacobians[2,2]
+                -self.jacobians[1,2]*self.jacobians[2,0]
+            )
+            +self.jacobians[0,2]*(
+                self.jacobians[1,0]*self.jacobians[2,1]
+                -self.jacobians[1,1]*self.jacobians[2,0]
+            )
+        )
+        if np.any(np.isclose(self.detJ,0.)):
+            raise ValueError("H(curl) basis requires nonsingular tetrahedra")
+        edge_lengths=[
+            np.linalg.norm(vertices[:,second]-vertices[:,first],axis=0)
+            for first,second in ((0,1),(1,2),(2,0),(0,3),(1,3),(2,3))
+        ]
+        longest=np.max(edge_lengths,axis=0)
+        aspect=longest**3/np.abs(self.detJ)
+        self.geometry_diagnostics=HcurlTetGeometryDiagnostics(
+            minimum_signed_determinant=float(np.min(self.detJ)),
+            minimum_absolute_determinant=float(np.min(np.abs(self.detJ))),
+            minimum_volume=float(np.min(np.abs(self.detJ))/6.),
+            maximum_aspect_ratio=float(np.max(aspect)),
+            inverted_cell_count=int(np.count_nonzero(self.detJ<0.)),
+        )
+        if max_aspect_ratio is not None:
+            if (
+                isinstance(max_aspect_ratio,bool)
+                or not np.isscalar(max_aspect_ratio)
+                or not np.isfinite(max_aspect_ratio)
+                or max_aspect_ratio<=0.
+            ):
+                raise ValueError("max_aspect_ratio must be a positive finite scalar")
+            if self.geometry_diagnostics.maximum_aspect_ratio>max_aspect_ratio:
+                raise ValueError(
+                    "H(curl) tetrahedron aspect ratio exceeds "
+                    f"max_aspect_ratio={max_aspect_ratio}"
+                )
+        self.dx=np.abs(self.detJ)[:,None]*self.W[None,:]
+
+        # Mapping helpers return component-first batches; the private arrays
+        # are transposed once to entity-first assembler layout.
+        values=covariant_piola(
+            tet_n1_basis(self.X)[:,:,None,:],self.jacobians[...,None]
+        ).transpose(2,0,1,3)
+        curls=covariant_piola_vector_curl(
+            tet_n1_curl(self.X)[:,:,None,:],self.jacobians[...,None]
+        ).transpose(2,0,1,3)
+        self._element_values=np.ascontiguousarray(
+            values*self.basis_signs.T[:,:,None,None]
+        )
+        self._element_curls=np.ascontiguousarray(
+            curls*self.basis_signs.T[:,:,None,None]
+        )
+
+    @property
+    def values(self):
+        """Mapped values as ``(basis, component, cell, quadrature)``."""
+        return self._element_values.transpose(1,2,0,3)
+
+    @property
+    def curls(self):
+        """Mapped vector curls as ``(basis, component, cell, quadrature)``."""
+        return self._element_curls.transpose(1,2,0,3)
+
+    def element_mass_matrices(self):
+        return np.einsum(
+            "ebiq,eciq,eq->ebc",
+            self._element_values,self._element_values,self.dx,
+        )
+
+    def element_curl_curl_matrices(self):
+        return np.einsum(
+            "ebiq,eciq,eq->ebc",
+            self._element_curls,self._element_curls,self.dx,
+        )
+
+
+__all__=[
+    "AffineTetN1Basis","AffineTriN1Basis",
+    "HcurlGeometryDiagnostics","HcurlTetGeometryDiagnostics",
+]

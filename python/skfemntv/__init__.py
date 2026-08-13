@@ -101,7 +101,10 @@ from .preflight import (
     enforce_memory_budget,
     format_bytes,
 )
-from .hcurl_basis import AffineTriN1Basis, HcurlGeometryDiagnostics
+from .hcurl_basis import (
+    AffineTetN1Basis,AffineTriN1Basis,
+    HcurlGeometryDiagnostics,HcurlTetGeometryDiagnostics,
+)
 from .hcurl_assembler import (
     TriN1Assembler,
     TriN1LinearAssembler,
@@ -140,7 +143,9 @@ __all__ = [
     "enforce_memory_budget",
     "format_bytes",
     "AffineTriN1Basis",
+    "AffineTetN1Basis",
     "HcurlGeometryDiagnostics",
+    "HcurlTetGeometryDiagnostics",
     "TriN1Assembler",
     "TriN1LinearAssembler",
     "estimate_tri_n1_assembly_memory",

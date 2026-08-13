@@ -30,6 +30,7 @@ _ENTRIES = (
     Capability("space.l2_dg", "space", CapabilityStatus.EXPERIMENTAL, "Scalar discontinuous cell-local spaces."),
     Capability("space.hcurl", "space", CapabilityStatus.EXPERIMENTAL, "Affine triangular lowest-order Nedelec vertical slice with oriented edge DOFs only; general Basis/asm, tetrahedra, and curved mappings remain unavailable."),
     Capability("space.hcurl_tri_n1_basis", "space", CapabilityStatus.EXPERIMENTAL, "Minimal affine-triangle Nedelec basis with oriented global edge numbering and element mass/curl-curl integration; not accepted by public asm."),
+    Capability("space.hcurl_tet_n1_basis", "space", CapabilityStatus.EXPERIMENTAL, "Minimal affine-tetrahedron Nedelec basis with oriented global edge numbering and element mass/curl-curl integration; sparse assembly remains unavailable."),
     Capability("space.hdiv", "space", CapabilityStatus.PLANNED, "Requires oriented facet DOFs and contravariant Piola mapping."),
     Capability("dof.vertex", "dof", CapabilityStatus.SUPPORTED, "Vertex and mesh-node-associated DOFs."),
     Capability("dof.edge", "dof", CapabilityStatus.PLANNED, "Oriented edge-owned functionals."),
