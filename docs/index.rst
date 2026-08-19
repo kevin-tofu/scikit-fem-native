@@ -3,6 +3,7 @@ skfem-native: native assembly for scikit-fem workflows
 
 .. meta::
    :description: skfem-native is an independent native finite-element assembly engine for scikit-fem-style Python workflows, with accelerated assembly, quadrature, geometry, and sparse scatter.
+   :google-site-verification: X_Csjte_guIW5ogwAgAc4xuZh5WSEI3VsZrSwNwm9fI
 
 **Native assembly. Python formulations.**
 
