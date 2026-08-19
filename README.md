@@ -1,6 +1,4 @@
-# skfem-native
-
-### Native assembly for scikit-fem-style Python workflows
+# skfem-native: native assembly for scikit-fem-style Python workflows
 
 [![PyPI](https://img.shields.io/pypi/v/skfem-native.svg)](https://pypi.org/project/skfem-native/)
 [![Python](https://img.shields.io/pypi/pyversions/skfem-native.svg)](https://pypi.org/project/skfem-native/)
@@ -8,12 +6,15 @@
 [![Documentation Status](https://readthedocs.org/projects/skfem-native/badge/?version=latest)](https://skfem-native.readthedocs.io/en/latest/)
 [![License: LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://github.com/kevin-tofu/skfem-native/blob/main/LICENSE)
 
-**skfem-native** is an independent native assembly backend for
+**skfem-native** is an independent native finite-element assembly engine for
 [scikit-fem](https://github.com/kinnala/scikit-fem)-style Python workflows.  It
-is distributed on PyPI as `skfem-native` and imported as `skfemntv`; it is not
-an official scikit-fem distribution.  It keeps finite-element formulations in
-readable Python while accelerating reusable assembly, geometry, and
-sparse-scatter kernels in native code.
+accelerates reusable assembly, geometry, quadrature, and sparse-scatter kernels
+while preserving readable Python weak forms and, for its supported feature
+subset, scikit-fem-compatible DOF ordering and numerical results.
+
+> [!IMPORTANT]
+> The distribution is named `skfem-native` and imported as `skfemntv`.  It is
+> an independent project, not an official scikit-fem distribution or backend.
 
 ## Motivation
 
@@ -336,6 +337,12 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for the motivation, architecture boundary,
 and development principles.
 
 ## Documentation
+
+Read the [skfem-native documentation](https://skfem-native.readthedocs.io/en/latest/),
+including the precise
+[scikit-fem compatibility boundary](https://skfem-native.readthedocs.io/en/latest/scikit-fem-compatibility.html)
+and the
+[assembly performance methodology](https://skfem-native.readthedocs.io/en/latest/scikit-fem-performance.html).
 
 Build the Sphinx documentation locally:
 

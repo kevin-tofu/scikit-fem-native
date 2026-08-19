@@ -5,13 +5,21 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "skfem-native"
 version = "0.3.0"
-description = "A small native assembly engine for nonlinear finite elements"
+description = "Native finite-element assembly for scikit-fem-style Python workflows"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "LGPL-3.0-only"
 license-files = ["LICENSE"]
 dependencies = ["numpy>=1.24", "scipy>=1.10"]
-keywords = ["finite-element", "assembly", "scientific-computing"]
+keywords = [
+  "scikit-fem",
+  "finite-element-method",
+  "finite-elements",
+  "assembly",
+  "scientific-computing",
+  "computational-mechanics",
+  "sparse-matrix",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -31,6 +39,8 @@ classifiers = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/kevin-tofu/skfem-native"
+Documentation = "https://skfem-native.readthedocs.io/en/latest/"
 Repository = "https://github.com/kevin-tofu/skfem-native"
 Issues = "https://github.com/kevin-tofu/skfem-native/issues"
 

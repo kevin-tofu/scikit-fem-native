@@ -1,11 +1,20 @@
-skfem-native
-============
+skfem-native: native assembly for scikit-fem workflows
+=======================================================
+
+.. meta::
+   :description: skfem-native is an independent native finite-element assembly engine for scikit-fem-style Python workflows, with accelerated assembly, quadrature, geometry, and sparse scatter.
 
 **Native assembly. Python formulations.**
 
-``skfem-native`` provides the ``skfemntv`` backend for finite-element
-applications that want native assembly performance without giving up the
-clarity and adaptability of Python weak forms.
+``skfem-native`` is an independent native finite-element assembly engine for
+`scikit-fem <https://scikit-fem.readthedocs.io/>`_-style Python workflows.  It
+accelerates reusable assembly, geometry, quadrature, and sparse-scatter kernels
+without giving up the clarity and adaptability of Python weak forms.
+
+The distribution is imported as ``skfemntv``.  It is not an official
+scikit-fem project, distribution, or backend.  See the
+:doc:`scikit-fem compatibility boundary <scikit-fem-compatibility>` before
+selecting it for an existing application.
 
 .. code-block:: bash
 
@@ -25,6 +34,18 @@ clarity and adaptability of Python weak forms.
 
       Select skfem or skfemntv without moving formulations out of Python.
 
+   .. grid-item-card:: Check compatibility
+      :link: scikit-fem-compatibility
+      :link-type: doc
+
+      Compare the supported API subset, DOF ordering, and external solver policy.
+
+   .. grid-item-card:: Inspect performance
+      :link: scikit-fem-performance
+      :link-type: doc
+
+      Read the reproducible scikit-fem assembly benchmark methodology.
+
    .. grid-item-card:: Read the rationale
       :link: development
       :link-type: doc
@@ -37,5 +58,7 @@ clarity and adaptability of Python weak forms.
 
    getting-started
    assembly
+   scikit-fem-compatibility
+   scikit-fem-performance
    gallery
    development

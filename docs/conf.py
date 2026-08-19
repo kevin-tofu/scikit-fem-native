@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tomllib
 
@@ -22,7 +23,11 @@ source_suffix = {
 }
 exclude_patterns = ["_build"]
 html_theme = "furo"
-html_title = f"skfem-native {release}"
+html_title = "skfem-native — native assembly for scikit-fem workflows"
+html_baseurl = os.environ.get(
+    "READTHEDOCS_CANONICAL_URL",
+    "https://skfem-native.readthedocs.io/en/latest/",
+)
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 html_theme_options = {
