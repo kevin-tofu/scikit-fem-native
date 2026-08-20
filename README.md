@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/scikit-fem-native.svg)](https://pypi.org/project/scikit-fem-native/)
 [![Python](https://img.shields.io/pypi/pyversions/scikit-fem-native.svg)](https://pypi.org/project/scikit-fem-native/)
 [![CI](https://github.com/kevin-tofu/scikit-fem-native/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-tofu/scikit-fem-native/actions/workflows/ci.yml)
-[![Documentation Status](https://readthedocs.org/projects/skfem-native/badge/?version=latest)](https://skfem-native.readthedocs.io/en/latest/)
+[![Documentation Status](https://readthedocs.org/projects/scikit-fem-native/badge/?version=latest)](https://scikit-fem-native.readthedocs.io/en/latest/)
 [![License: LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://github.com/kevin-tofu/scikit-fem-native/blob/main/LICENSE)
 
 **scikit-fem-native** is an independent native finite-element assembly engine for
@@ -338,11 +338,11 @@ and development principles.
 
 ## Documentation
 
-Read the [scikit-fem-native documentation](https://skfem-native.readthedocs.io/en/latest/),
+Read the [scikit-fem-native documentation](https://scikit-fem-native.readthedocs.io/en/latest/),
 including the precise
-[scikit-fem compatibility boundary](https://skfem-native.readthedocs.io/en/latest/scikit-fem-compatibility.html)
+[scikit-fem compatibility boundary](https://scikit-fem-native.readthedocs.io/en/latest/scikit-fem-compatibility.html)
 and the
-[assembly performance methodology](https://skfem-native.readthedocs.io/en/latest/scikit-fem-performance.html).
+[assembly performance methodology](https://scikit-fem-native.readthedocs.io/en/latest/scikit-fem-performance.html).
 
 Build the Sphinx documentation locally:
 

@@ -26,7 +26,7 @@ html_theme = "furo"
 html_title = "scikit-fem-native — native assembly for scikit-fem workflows"
 html_baseurl = os.environ.get(
     "READTHEDOCS_CANONICAL_URL",
-    "https://skfem-native.readthedocs.io/en/latest/",
+    "https://scikit-fem-native.readthedocs.io/en/latest/",
 )
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
