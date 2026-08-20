@@ -40,7 +40,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/kevin-tofu/scikit-fem-native"
-Documentation = "https://skfem-native.readthedocs.io/en/latest/"
+Documentation = "https://scikit-fem-native.readthedocs.io/en/latest/"
 Repository = "https://github.com/kevin-tofu/scikit-fem-native"
 Issues = "https://github.com/kevin-tofu/scikit-fem-native/issues"
 
