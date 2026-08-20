@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-08-21
+
+- Align package distribution rename to `scikit-fem-native` with canonical
+  documentation and repository metadata references.
+- Fix remaining project metadata and docs links to avoid inconsistent
+  `skfem-native` / `scikit-fem-native` navigation during user onboarding.
+
 ## 0.3.0 — 2026-08-13
 
 ### Added
