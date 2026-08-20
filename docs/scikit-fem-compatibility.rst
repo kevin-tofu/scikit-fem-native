@@ -2,9 +2,9 @@ scikit-fem compatibility and supported features
 ================================================
 
 .. meta::
-   :description: Learn which scikit-fem workflows, DOF ordering conventions, meshes, elements, and assembly operations are supported by skfem-native and skfemntv.
+   :description: Learn which scikit-fem workflows, DOF ordering conventions, meshes, elements, and assembly operations are supported by scikit-fem-native and skfemntv.
 
-``skfem-native`` follows selected public conventions from
+``scikit-fem-native`` follows selected public conventions from
 `scikit-fem <https://scikit-fem.readthedocs.io/>`_ so applications can retain
 readable Python weak forms while choosing native assembly where the supported
 subsets overlap.  It is an independent project and is not an official
@@ -13,7 +13,7 @@ scikit-fem distribution or backend.
 Backend selection
 -----------------
 
-The installed distribution is ``skfem-native`` and its import package is
+The installed distribution is ``scikit-fem-native`` and its import package is
 ``skfemntv``.  Applications should keep backend selection explicit:
 
 .. code-block:: python

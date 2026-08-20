@@ -5,8 +5,8 @@ from pathlib import Path
 import tomllib
 
 
-project = "skfem-native"
-author = "skfem-native contributors"
+project = "scikit-fem-native"
+author = "scikit-fem-native contributors"
 with (Path(__file__).parents[1] / "pyproject.toml").open("rb") as stream:
     release = tomllib.load(stream)["project"]["version"]
 version = release
@@ -23,7 +23,7 @@ source_suffix = {
 }
 exclude_patterns = ["_build"]
 html_theme = "furo"
-html_title = "skfem-native — native assembly for scikit-fem workflows"
+html_title = "scikit-fem-native — native assembly for scikit-fem workflows"
 html_baseurl = os.environ.get(
     "READTHEDOCS_CANONICAL_URL",
     "https://skfem-native.readthedocs.io/en/latest/",

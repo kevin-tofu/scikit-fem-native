@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKFEMNTV_PYTHON="${SKFEMNTV_PYTHON:-python}"
-REPOSITORY="${SKFEMNTV_GITHUB_REPOSITORY:-kevin-tofu/skfem-native}"
+REPOSITORY="${SKFEMNTV_GITHUB_REPOSITORY:-kevin-tofu/scikit-fem-native}"
 
 usage() {
   cat <<'EOF'
@@ -20,7 +20,7 @@ authenticated GitHub CLI (`gh auth status`).
 Environment:
   SKFEMNTV_PYTHON             Python executable. Default: python
   SKFEMNTV_GITHUB_REPOSITORY  GitHub owner/repository.
-                              Default: kevin-tofu/skfem-native
+                              Default: kevin-tofu/scikit-fem-native
 EOF
 }
 

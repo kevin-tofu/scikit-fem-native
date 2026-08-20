@@ -1,19 +1,19 @@
-# skfem-native: native assembly for scikit-fem-style Python workflows
+# scikit-fem-native: native assembly for scikit-fem-style Python workflows
 
-[![PyPI](https://img.shields.io/pypi/v/skfem-native.svg)](https://pypi.org/project/skfem-native/)
-[![Python](https://img.shields.io/pypi/pyversions/skfem-native.svg)](https://pypi.org/project/skfem-native/)
-[![CI](https://github.com/kevin-tofu/skfem-native/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-tofu/skfem-native/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/scikit-fem-native.svg)](https://pypi.org/project/scikit-fem-native/)
+[![Python](https://img.shields.io/pypi/pyversions/scikit-fem-native.svg)](https://pypi.org/project/scikit-fem-native/)
+[![CI](https://github.com/kevin-tofu/scikit-fem-native/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-tofu/scikit-fem-native/actions/workflows/ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/skfem-native/badge/?version=latest)](https://skfem-native.readthedocs.io/en/latest/)
-[![License: LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://github.com/kevin-tofu/skfem-native/blob/main/LICENSE)
+[![License: LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://github.com/kevin-tofu/scikit-fem-native/blob/main/LICENSE)
 
-**skfem-native** is an independent native finite-element assembly engine for
+**scikit-fem-native** is an independent native finite-element assembly engine for
 [scikit-fem](https://github.com/kinnala/scikit-fem)-style Python workflows.  It
 accelerates reusable assembly, geometry, quadrature, and sparse-scatter kernels
 while preserving readable Python weak forms and, for its supported feature
 subset, scikit-fem-compatible DOF ordering and numerical results.
 
 > [!IMPORTANT]
-> The distribution is named `skfem-native` and imported as `skfemntv`.  It is
+> The distribution is named `scikit-fem-native` and imported as `skfemntv`.  It is
 > an independent project, not an official scikit-fem distribution or backend.
 
 ## Motivation
@@ -31,7 +31,7 @@ Libraries such as scikit-fem therefore become more valuable, not less: they
 provide a transparent mathematical vocabulary while avoiding the cost of
 embedding every new formulation in a monolithic compiled solver.
 
-`skfem-native` aims to combine that flexibility with faster assembly.  It is a
+`scikit-fem-native` aims to combine that flexibility with faster assembly.  It is a
 selectable backend for Python finite-element applications, not a separate owner
 of their material models or physical formulations.
 
@@ -51,10 +51,10 @@ hiding the governing equations behind a large generated or compiled framework.
 See the [scikit-fem documentation](https://scikit-fem.readthedocs.io/) for its
 installation guide, examples, and API reference.
 
-scikit-fem also provides the practical foundation on which `skfem-native` is
+scikit-fem also provides the practical foundation on which `scikit-fem-native` is
 built: its public abstractions, element conventions, DOF ordering, examples,
 and extensive body of implementation work define the compatibility target of
-this project.  `skfem-native` does not seek to replace that contribution.  It
+this project.  `scikit-fem-native` does not seek to replace that contribution.  It
 explores how selected assembly kernels can be accelerated while preserving the
 Python-first model that makes scikit-fem useful.
 
@@ -65,10 +65,10 @@ of that community.
 ## Installation
 
 ```bash
-python -m pip install skfem-native
+python -m pip install scikit-fem-native
 ```
 
-The distribution is named `skfem-native`; import it as `skfemntv`.
+The distribution is named `scikit-fem-native`; import it as `skfemntv`.
 
 ## Quick start
 
@@ -327,7 +327,7 @@ right-hand-side assembly using identical meshes and spaces.  Results depend on
 hardware, thread affinity, and package versions; they are an example rather
 than a universal performance guarantee.
 
-![Poisson assembly scaling](https://raw.githubusercontent.com/kevin-tofu/skfem-native/main/benchmarks/compare-with-skfem/results/poisson-linux-x86_64.png)
+![Poisson assembly scaling](https://raw.githubusercontent.com/kevin-tofu/scikit-fem-native/main/benchmarks/compare-with-skfem/results/poisson-linux-x86_64.png)
 
 See the [benchmark methodology](benchmarks/compare-with-skfem/README.md) and
 [recorded environment and values](benchmarks/compare-with-skfem/results/poisson-linux-x86_64.md)
@@ -338,7 +338,7 @@ and development principles.
 
 ## Documentation
 
-Read the [skfem-native documentation](https://skfem-native.readthedocs.io/en/latest/),
+Read the [scikit-fem-native documentation](https://skfem-native.readthedocs.io/en/latest/),
 including the precise
 [scikit-fem compatibility boundary](https://skfem-native.readthedocs.io/en/latest/scikit-fem-compatibility.html)
 and the

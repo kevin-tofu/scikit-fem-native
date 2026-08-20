@@ -115,7 +115,7 @@ from .hcurl_assembler import (
 )
 
 try:
-    __version__=_distribution_version("skfem-native")
+    __version__=_distribution_version("scikit-fem-native")
 except _PackageNotFoundError:
     __version__="0+unknown"
 

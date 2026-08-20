@@ -3,7 +3,7 @@ requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "skfem-native"
+name = "scikit-fem-native"
 version = "0.3.0"
 description = "Native finite-element assembly for scikit-fem-style Python workflows"
 readme = "README.md"
@@ -39,10 +39,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kevin-tofu/skfem-native"
+Homepage = "https://github.com/kevin-tofu/scikit-fem-native"
 Documentation = "https://skfem-native.readthedocs.io/en/latest/"
-Repository = "https://github.com/kevin-tofu/skfem-native"
-Issues = "https://github.com/kevin-tofu/skfem-native/issues"
+Repository = "https://github.com/kevin-tofu/scikit-fem-native"
+Issues = "https://github.com/kevin-tofu/scikit-fem-native/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8", "scikit-fem>=10", "shapely>=2", "matplotlib>=3.8"]

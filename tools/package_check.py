@@ -68,7 +68,7 @@ def main() -> None:
         run(
             str(python),"-c",
             "import skfemntv; from importlib.metadata import version; "
-            "assert skfemntv.__version__ == version('skfem-native'); "
+            "assert skfemntv.__version__ == version('scikit-fem-native'); "
             "print('installed skfemntv:', skfemntv.__file__, skfemntv.__version__)",
             cwd=Path(temporary),
         )

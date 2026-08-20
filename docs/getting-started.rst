@@ -8,9 +8,9 @@ Install the released package from PyPI:
 
 .. code-block:: bash
 
-   python -m pip install skfem-native
+   python -m pip install scikit-fem-native
 
-The distribution name is ``skfem-native`` and the import package is
+The distribution name is ``scikit-fem-native`` and the import package is
 ``skfemntv``.  Python 3.10 or newer is required.
 
 First assembly
@@ -35,6 +35,6 @@ Development installation
 
 .. code-block:: bash
 
-   git clone https://github.com/kevin-tofu/skfem-native.git
-   cd skfem-native
+   git clone https://github.com/kevin-tofu/scikit-fem-native.git
+   cd scikit-fem-native
    python -m pip install -e '.[test,docs]'

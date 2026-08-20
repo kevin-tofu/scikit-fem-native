@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/skfem-native/
+      url: https://pypi.org/project/scikit-fem-native/
     permissions:
       id-token: write
     steps:
