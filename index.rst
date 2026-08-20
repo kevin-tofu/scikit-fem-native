@@ -1,5 +1,5 @@
 scikit-fem-native documentation
-==============================
+===============================
 
 .. toctree::
    :maxdepth: 2
