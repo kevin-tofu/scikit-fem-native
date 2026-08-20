@@ -22,6 +22,8 @@ permissions:
 jobs:
   test:
     name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    if: |
+      github.event_name != 'push' || !contains(toJSON(github.event.head_commit.message), 'release: bump version')
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +50,8 @@ jobs:
 
   package:
     name: Validate sdist and wheel
+    if: |
+      github.event_name != 'push' || !contains(toJSON(github.event.head_commit.message), 'release: bump version')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
