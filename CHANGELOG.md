@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 — 2026-09-26
+
+- Update the project license metadata and license text to Apache-2.0.
+- Align the standalone `scikit-fem-native` repository with the packaged
+  `optimizer/packages/skfem-native` copy.
+
 ## 0.3.1 — 2026-08-21
 
 - Align package distribution rename to `scikit-fem-native` with canonical
