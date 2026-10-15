@@ -1,0 +1,1 @@
+examples/plate_with_hole_tension.png filter=lfs diff=lfs merge=lfs -text

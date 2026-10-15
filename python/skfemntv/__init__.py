@@ -92,6 +92,13 @@ from .capabilities import (
     require_capability,
     supports,
 )
+from .compatibility import (
+    COMPATIBILITY_MANIFEST,
+    UPSTREAM_REFERENCE_VERSION,
+    CompatibilityEntry,
+    compatibility_items,
+    get_compatibility,
+)
 from .preflight import (
     AssemblyMemoryBudgetError,
     AssemblyMemoryEstimate,
@@ -101,6 +108,7 @@ from .preflight import (
     enforce_memory_budget,
     format_bytes,
 )
+from .evaluation import PointEvaluation
 from .hcurl_basis import (
     AffineTetN1Basis,AffineTriN1Basis,
     HcurlGeometryDiagnostics,HcurlTetGeometryDiagnostics,
@@ -138,6 +146,11 @@ __all__ = [
     "get_capability",
     "require_capability",
     "supports",
+    "COMPATIBILITY_MANIFEST",
+    "UPSTREAM_REFERENCE_VERSION",
+    "CompatibilityEntry",
+    "compatibility_items",
+    "get_compatibility",
     "AssemblyMemoryEstimate",
     "AssemblyMemoryBudgetError",
     "CompositeAssemblyMemoryEstimate",
@@ -145,6 +158,7 @@ __all__ = [
     "estimate_composite_bilinear_memory",
     "enforce_memory_budget",
     "format_bytes",
+    "PointEvaluation",
     "AffineTriN1Basis",
     "AffineTetN1Basis",
     "HcurlGeometryDiagnostics",

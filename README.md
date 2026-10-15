@@ -91,6 +91,30 @@ boundary while preserving the weak-form call site.  `skfemntv` is not yet a
 complete replacement for every scikit-fem feature, so backend selection should
 remain explicit.
 
+## Example analysis: tension of a plate with a hole
+
+This linear plane-stress example fixes horizontal motion at the left edge,
+prescribes a small horizontal displacement at the right edge, and leaves
+transverse motion free apart from one pinned DOF.  The image shows von Mises
+stress normalized by the nominal stress.  With this mesh, the largest
+cell-averaged stress is about 3.26 times nominal stress; the plotted value is
+an element average, not a pointwise peak.  Refining the angular/radial mesh
+from `180×20` to `360×40`, `720×80`, and `1080×120` gave peak ratios of
+`3.231`, `3.263`, `3.275`, and `3.278`, respectively.  The reference value
+`3` is for an infinite plate with a circular hole; this finite plate has a
+hole diameter equal to 36% of its height, so its boundaries affect the peak.
+
+![Von Mises stress around the hole in a tensioned plate](examples/plate_with_hole_tension.png)
+
+The complete script is [`examples/plate_with_hole_tension.py`](examples/plate_with_hole_tension.py).
+It uses PyVista for rendering.  Install the optional visualization packages
+with `python -m pip install pyvista vtk`, then run
+`python examples/plate_with_hole_tension.py` to regenerate the image.  The
+mesh uses a polygonal approximation of the circular hole to keep mesh
+generation dependency-free.  The script also reports the free-DOF residual
+normalized by the applied boundary contribution, which is about `3e-14` for
+this run.
+
 For the supported mesh, element, basis, and assembly subset, the compatibility
 target is stronger: changing
 
@@ -147,6 +171,11 @@ contiguous in memory.  Nonsymmetric tensors are retained rather than silently
 symmetrized.  This first typed operation targets scalar H1 fields;
 vector-field fourth-order constitutive tensors remain separate work.
 
+For numeric component-first arrays, `skfemntv.helpers` also provides the
+scikit-fem-compatible `det`, `inv`, `eye`, and `cross` operations. They work on
+constant tensors and quadrature data. Using these operations on symbolic
+nonlinear form expressions is currently rejected by the typed form compiler.
+
 Coefficient components follow scikit-fem's component-first convention as
 well: `w.material[0]` selects axis 0.  Multiple named fields can be used in a
 single typed form, for example:
@@ -168,13 +197,18 @@ The mathematical compatibility boundary is also available at runtime:
 
 ```python
 skfemntv.supports("space.h1")       # True
-skfemntv.supports("space.hcurl")    # False (declared as planned)
+skfemntv.supports("space.hcurl")    # False (experimental opt-in required)
 skfemntv.require_capability("space.hcurl")  # precise capability error
 ```
 
 Use `skfemntv.capabilities()` for the complete machine-readable registry.
 Experimental capabilities require `include_experimental=True`; solver policy
 is explicitly marked external.
+
+`Basis.project` provides experimental L2 projection for scalar and vector
+P0/P1/P2 bases on affine triangular and tetrahedral meshes. It currently
+supports scikit-fem's `elements=` selection and sets unselected DOFs to zero;
+composite fields and curved meshes are not supported.
 
 ### Experimental H(curl) simplex slices
 

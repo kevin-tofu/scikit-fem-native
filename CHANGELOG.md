@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.3 — 2026-10-15
+
+- Add the machine-readable compatibility manifest and parity helpers for the
+  supported scikit-fem API surface.
+- Add point evaluation, mesh I/O, refinement/restriction compatibility, and
+  expanded P2 assembly coverage.
+- Keep solver utilities under `skfemntv.utils` instead of exporting them from
+  the package root.
+
 ## 0.3.2 — 2026-09-26
 
 - Update the project license metadata and license text to Apache-2.0.

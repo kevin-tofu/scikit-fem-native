@@ -37,6 +37,7 @@ from ._interface_terms import (
     InterfaceTrace as _InterfaceTrace,
 )
 from ._h1_fields import (
+    Curl as _Curl,
     Divergence as _Divergence,
     SymmetricGradient as _SymmetricGradient,
     TensorGradient as _TensorGradient,
@@ -297,6 +298,7 @@ def _native_bilinear_assemble(
     gradient=None
     symmetric_gradient=None
     divergence=None
+    curl_factor=0.
     tensor_terms=[]
     for term in terms:
         coefficient=_evaluate_coefficient(
@@ -320,6 +322,8 @@ def _native_bilinear_assemble(
             )
         elif term.kind=="gradient_tensor":
             tensor_terms.append((coefficient,1.))
+        elif term.kind=="curl":
+            curl_factor+=term.factor
         else:
             raise UnsupportedNativeForm(
                 f"unsupported bilinear term kind {term.kind!r}"
@@ -369,6 +373,36 @@ def _native_bilinear_assemble(
                 "gradient","gradient",tensor,num_threads=num_threads
             )
             result=matrix if result is None else result+matrix
+    if curl_factor:
+        dimension=basis.mesh.dim()
+        components=basis.elem._dim
+        if dimension not in (2,3) or components!=dimension:
+            raise UnsupportedNativeForm(
+                "curl-curl forms require a 2D or 3D vector H1 field"
+            )
+        curl_map=np.zeros((dimension,components,dimension))
+        if dimension==2:
+            curl_map[0,1,0]=1.
+            curl_map[0,0,1]=-1.
+        else:
+            curl_map[0,2,1]=1.;curl_map[0,1,2]=-1.
+            curl_map[1,0,2]=1.;curl_map[1,2,0]=-1.
+            curl_map[2,1,0]=1.;curl_map[2,0,1]=-1.
+        tensor=np.einsum(
+            "kia,kjb->iajb",curl_map,curl_map
+        )*curl_factor
+        cross_cache=form._cross_cache.setdefault(basis,WeakKeyDictionary())
+        tensor_native=cross_cache.get(basis)
+        if tensor_native is None:
+            tensor_native=NativeCrossBilinearForm(
+                basis,basis,memory_limit_bytes=memory_limit_bytes,
+                memory_safety_factor=memory_safety_factor,
+            )
+            cross_cache[basis]=tensor_native
+        matrix=tensor_native.assemble_tensor(
+            "gradient","gradient",tensor,num_threads=num_threads
+        )
+        result=matrix if result is None else result+matrix
     if result is None:
         raise UnsupportedNativeForm("bilinear form contains no assembled terms")
     return result
@@ -786,6 +820,14 @@ def asm(
 
 
 def dot(left, right):
+    if isinstance(left,_Curl) and isinstance(right,_Curl):
+        if left.role==right.role:
+            raise UnsupportedNativeForm(
+                "curl contraction requires trial and test fields"
+            )
+        return _BilinearTerm(
+            "curl",factor=left.factor*right.factor
+        )
     if isinstance(left,_TensorGradient) and isinstance(
         right,(_TrialGradient,_TestGradient)
     ):
@@ -1089,3 +1131,8 @@ def div(value):
         return np.einsum("ii...->...",value.grad)
     except AttributeError as error:
         raise UnsupportedNativeForm("div() requires a vector field") from error
+
+
+def curl(value):
+    from .helpers import curl as discrete_curl
+    return discrete_curl(value)

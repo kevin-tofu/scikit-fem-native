@@ -21,6 +21,21 @@ def test_experimental_capability_requires_explicit_opt_in():
     ).name == "space.l2_dg"
 
 
+def test_l2_projection_is_declared_experimental():
+    capability=skfemntv.get_capability("evaluation.l2_projection")
+    assert capability.status is skfemntv.CapabilityStatus.EXPERIMENTAL
+    assert skfemntv.supports(
+        "evaluation.l2_projection",include_experimental=True
+    )
+
+
+@pytest.mark.parametrize("name", ["helper.det", "helper.inv", "helper.eye", "helper.cross"])
+def test_mechanics_helpers_are_declared_experimental(name):
+    capability=skfemntv.get_capability(name)
+    assert capability.category=="helper"
+    assert capability.status is skfemntv.CapabilityStatus.EXPERIMENTAL
+
+
 def test_require_capability_reports_status_and_reason():
     with pytest.raises(
         skfemntv.UnsupportedCapabilityError,

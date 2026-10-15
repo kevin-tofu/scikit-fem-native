@@ -89,7 +89,23 @@ class Divergence:
     __rmul__ = __mul__
 
 
+@dataclass(frozen=True)
+class Curl:
+    role: str
+    factor: float = 1.0
+
+    def __mul__(self,other):
+        if np.isscalar(other):
+            return Curl(self.role,self.factor*other)
+        if isinstance(other,Curl) and self.role!=other.role:
+            return BilinearTerm("curl",factor=self.factor*other.factor)
+        return NotImplemented
+
+    __rmul__=__mul__
+
+
 __all__ = [
+    "Curl",
     "Divergence",
     "SymmetricGradient",
     "TensorGradient",
