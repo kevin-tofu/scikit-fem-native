@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 — 2026-10-16
+
+- Add native acceleration coverage for basis tabulation, composite DOFs,
+  curved surfaces, cut quadrature, mesh promotion/topology, and point
+  evaluation.
+- Expand scikit-fem compatibility tests and backend benchmarks.
+
 ## 0.3.3 — 2026-10-15
 
 - Add the machine-readable compatibility manifest and parity helpers for the
