@@ -66,6 +66,7 @@ sdist.include = [
   "benchmarks/**/*.md",
   "benchmarks/**/*.py",
   "examples/**/*.py",
+  "examples/**/*.png",
   "python/skfemntv/**/*.py",
   "tests/**/*.py",
 ]
