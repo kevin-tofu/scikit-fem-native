@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.6 — 2026-10-17
 
 - Add a runnable electrostatic potential visualization with electric-field
   arrows and a regression test for the parallel-plate example.
