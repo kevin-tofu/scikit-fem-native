@@ -89,12 +89,12 @@ py::tuple assemble_composite_dofs(
             position = i;
         }
         nodal_arrays.emplace_back(py::array_t<std::int64_t>(
-            {count, active_info.shape[0]}));
+            std::vector<py::ssize_t>{count, active_info.shape[0]}));
         nodal_data.push_back(nodal_arrays.back().mutable_data());
         const auto cell_count = cells.front();
         const auto dof_rows = local_nodes[static_cast<std::size_t>(field)] * count;
         element_arrays.emplace_back(py::array_t<std::int64_t>(
-            {dof_rows, cell_count}));
+            std::vector<py::ssize_t>{dof_rows, cell_count}));
         element_data.push_back(element_arrays.back().mutable_data());
         dof_map[static_cast<std::size_t>(field)].assign(
             static_cast<std::size_t>(nodes * count), -1);
