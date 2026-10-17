@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add a runnable electrostatic potential visualization with electric-field
+  arrows and a regression test for the parallel-plate example.
+- Include example PNG assets in source distributions.
+- Clarify the boundary between scalar H1 electrostatics and experimental
+  H(curl) edge-element APIs.
+
 ## 0.3.5 — 2026-10-17
 
 - Add native H(div), nonlinear material, point-evaluation, mesh-topology, and
