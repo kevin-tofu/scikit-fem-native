@@ -13,4 +13,14 @@ PYBIND11_MODULE(_skfn, module) {
     native_fem::bind_cut_cross_assembler(module);
     native_fem::bind_basis_geometry(module);
     native_fem::bind_edge_topology(module);
+    native_fem::bind_basis_tabulation(module);
+    native_fem::bind_composite_dofs(module);
+    native_fem::bind_curved_surface(module);
+    native_fem::bind_cut_quadrature(module);
+    native_fem::bind_hdiv_assembler(module);
+    native_fem::bind_j2_plasticity(module);
+    native_fem::bind_mesh_promotion(module);
+    native_fem::bind_neo_hookean(module);
+    native_fem::bind_nonlinear_sparse_scatter(module);
+    native_fem::bind_point_evaluation(module);
 }

@@ -78,9 +78,11 @@ def test_projection_preserves_complex_values_when_dtype_is_requested():
     np.testing.assert_allclose(result, 1.0 + 2.0j, atol=1e-12)
 
 
-def test_projection_rejects_unimplemented_composite_paths():
+def test_projection_rejects_unimplemented_subset_and_composite_paths():
     mesh = skfemntv.MeshTri.init_tensor([0.0, 1.0], [0.0, 1.0])
     basis = skfemntv.Basis(mesh, skfemntv.ElementTriP1())
+    with pytest.raises(NotImplementedError, match="subset of elements"):
+        basis.project(1.0, elements=[0])
     composite = skfemntv.Basis(
         mesh,
         skfemntv.ElementComposite(
@@ -89,78 +91,3 @@ def test_projection_rejects_unimplemented_composite_paths():
     )
     with pytest.raises(NotImplementedError, match="composite bases"):
         composite.project(1.0)
-
-
-@pytest.mark.parametrize("dimension,order,vector", [
-    (dimension, order, vector)
-    for dimension in (2, 3)
-    for order in (0, 1, 2)
-    for vector in (False, True)
-])
-def test_element_subset_projection_matches_scikit_fem(
-    dimension, order, vector
-):
-    if dimension == 2:
-        mesh = skfemntv.MeshTri.init_tensor([0.0, 0.5, 1.0], [0.0, 0.5, 1.0])
-        reference_mesh = skfem.MeshTri(mesh.p, mesh.t)
-        native_elements = (
-            skfemntv.ElementTriP0(), skfemntv.ElementTriP1(),
-            skfemntv.ElementTriP2(),
-        )
-        reference_elements = (
-            skfem.ElementTriP0(), skfem.ElementTriP1(), skfem.ElementTriP2(),
-        )
-    else:
-        mesh = skfemntv.MeshTet.init_tensor([0.0, 1.0], [0.0, 1.0], [0.0, 1.0])
-        reference_mesh = skfem.MeshTet(mesh.p, mesh.t)
-        native_elements = (
-            skfemntv.ElementTetP0(), skfemntv.ElementTetP1(),
-            skfemntv.ElementTetP2(),
-        )
-        reference_elements = (
-            skfem.ElementTetP0(), skfem.ElementTetP1(), skfem.ElementTetP2(),
-        )
-    selected = np.arange(mesh.nelements)[::2]
-    mesh = mesh.with_subdomains({"selected": selected})
-    reference_mesh = reference_mesh.with_subdomains({"selected": selected})
-    native_element, reference_element = native_elements[order], reference_elements[order]
-    if vector:
-        native_element = skfemntv.ElementVector(native_element, dim=dimension)
-        reference_element = skfem.ElementVector(reference_element, dim=dimension)
-    native_basis = skfemntv.Basis(mesh, native_element, intorder=5)
-    reference_basis = skfem.Basis(reference_mesh, reference_element, intorder=5)
-    field = lambda x: (
-        np.asarray([x[i] + x[0] ** 2 for i in range(dimension)])
-        if vector else x[0] ** 2 + x[-1]
-    )
-    mask = np.zeros(mesh.nelements, dtype=bool)
-    mask[selected] = True
-    selectors = (
-        selected,
-        mask,
-        "selected",
-        lambda x: x[0] < 0.5,
-    )
-    for selector in selectors:
-        np.testing.assert_allclose(
-            native_basis.project(field, elements=selector),
-            reference_basis.project(field, elements=selector),
-            rtol=2e-10,
-            atol=2e-10,
-        )
-
-
-def test_projection_on_with_elements_basis_matches_scikit_fem():
-    mesh = skfemntv.MeshTri.init_tensor([0.0, 0.5, 1.0], [0.0, 0.5, 1.0])
-    native_basis = skfemntv.Basis(
-        mesh, skfemntv.ElementTriP2(), intorder=5
-    ).with_elements([0, 1])
-    reference_mesh = skfem.MeshTri(mesh.p, mesh.t)
-    reference_basis = skfem.Basis(
-        reference_mesh, skfem.ElementTriP2(), intorder=5
-    ).with_elements([0, 1])
-    field = lambda x: x[0] ** 2 + x[1]
-    np.testing.assert_allclose(
-        native_basis.project(field), reference_basis.project(field),
-        rtol=2e-10, atol=2e-10,
-    )

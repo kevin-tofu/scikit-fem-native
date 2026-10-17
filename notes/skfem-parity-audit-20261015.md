@@ -93,9 +93,9 @@ explicitly unsupported until they are integrated and validated.
    boundary/subdomain preservation. `MeshQuad.restrict` and
    `remove_elements` now compact vertices and remap named regions as well.
 4. **Implemented experimentally:** `Basis.project` computes L2 projections
-   for scalar/vector P0/P1/P2 on affine triangle/tetrahedron bases, including
-   scikit-fem-compatible `elements=` DOF selection, and matches upstream in
-   parity tests. Composite and curved-basis projection remain open.
+   for scalar/vector P0/P1/P2 on full affine triangle/tetrahedron bases and
+   matches scikit-fem in parity tests. Subset, composite, and curved-basis
+   projection remain open.
 5. **Implemented experimentally:** numeric `det`, `inv`, `eye`, and `cross`
    match scikit-fem on component-first arrays. Supporting them in symbolic
    nonlinear form expressions requires extending the typed expression model.

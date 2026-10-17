@@ -91,6 +91,24 @@ boundary while preserving the weak-form call site.  `skfemntv` is not yet a
 complete replacement for every scikit-fem feature, so backend selection should
 remain explicit.
 
+## Experimental H(div): affine RT0 simplices
+
+Affine triangle and tetrahedron RT0 bases are available through the dedicated
+`AffineTriRT0Basis` / `AffineTetRT0Basis` API. `SimplexRT0Assembler` assembles
+vector mass, divergence-divergence, and vector-load terms. Cell quadrature is
+computed by the C++ backend; sparse facet-DOF accumulation currently uses
+Python/SciPy. This experimental path is separate from `Basis` and `asm`.
+
+```python
+import skfemntv
+
+mesh = skfemntv.MeshTri.init_tensor([0., 0.5, 1.], [0., 0.5, 1.])
+basis = skfemntv.AffineTriRT0Basis(mesh, intorder=4)
+assembler = skfemntv.SimplexRT0Assembler(basis)
+mass = assembler.assemble(value=1.0)
+divergence = assembler.assemble(divergence=1.0)
+```
+
 ## Example analysis: tension of a plate with a hole
 
 This linear plane-stress example fixes horizontal motion at the left edge,
@@ -105,6 +123,50 @@ from `180×20` to `360×40`, `720×80`, and `1080×120` gave peak ratios of
 hole diameter equal to 36% of its height, so its boundaries affect the peak.
 
 ![Von Mises stress around the hole in a tensioned plate](examples/plate_with_hole_tension.png)
+
+## Example analysis: electrostatic potential
+
+The same finite-element workflow also applies to a different physical model:
+electrostatics.  Structural mechanics solves for a vector displacement field
+`u` using an elasticity operator.  Electrostatics solves for a scalar potential
+`phi` using the Poisson/Laplace operator
+`-div(epsilon grad(phi)) = rho`, with electrical potential or charge-flux
+boundary conditions.  The governing equation and unknown are different, while
+the mesh, basis, weak-form, sparse assembly, and linear solve workflow remain
+the same.
+
+For example, the following assembles the Laplace operator for a unit square
+with a uniform permittivity.  The left and right Dirichlet values can then be
+handled by the application's preferred sparse-system utility.
+
+```python
+import numpy as np
+import skfemntv
+from skfemntv.helpers import ddot, grad
+
+mesh = skfemntv.MeshTri.init_tensor(
+    np.linspace(0., 1., 21), np.linspace(0., 1., 21)
+)
+basis = skfemntv.Basis(mesh, skfemntv.ElementTriP1())
+
+@skfemntv.BilinearForm
+def electrostatic_laplace(u, v, w):
+    epsilon = 1.0
+    return epsilon * ddot(grad(u), grad(v))
+
+stiffness = skfemntv.asm(electrostatic_laplace, basis)
+left = basis.get_dofs(
+    nodes=lambda x: np.isclose(x[0], 0.)
+).all()
+right = basis.get_dofs(
+    nodes=lambda x: np.isclose(x[0], 1.)
+).all()
+```
+
+This is a compact example of extending the package beyond structural
+mechanics: the physical meaning changes from displacement and stress to
+potential and electric field `E = -grad(phi)`, but the readable Python weak
+form stays intact.
 
 The complete script is [`examples/plate_with_hole_tension.py`](examples/plate_with_hole_tension.py).
 It uses PyVista for rendering.  Install the optional visualization packages
@@ -207,8 +269,8 @@ is explicitly marked external.
 
 `Basis.project` provides experimental L2 projection for scalar and vector
 P0/P1/P2 bases on affine triangular and tetrahedral meshes. It currently
-supports scikit-fem's `elements=` selection and sets unselected DOFs to zero;
-composite fields and curved meshes are not supported.
+projects over the full basis; composite fields and curved meshes are not
+supported.
 
 ### Experimental H(curl) simplex slices
 

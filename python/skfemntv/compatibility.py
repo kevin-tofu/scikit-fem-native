@@ -291,7 +291,7 @@ _ENTRIES = (
         'space',
         CapabilityStatus.PLANNED,
         None,
-        'Compatible H(div) families are not implemented.',
+        'Higher-order hexahedral H(div) elements are not implemented.',
     ),
     CompatibilityEntry(
         'skfem.ElementVector',
@@ -324,9 +324,16 @@ _ENTRIES = (
     CompatibilityEntry(
         'skfem.ElementTriRT0',
         'space',
-        CapabilityStatus.PLANNED,
-        None,
-        'H(div) spaces and contravariant Piola mapping are not implemented.',
+        CapabilityStatus.EXPERIMENTAL,
+        'skfemntv.AffineTriRT0Basis',
+        'Dedicated affine RT0 basis and assembler; not accepted by general Basis/asm.',
+    ),
+    CompatibilityEntry(
+        'skfem.ElementTetRT0',
+        'space',
+        CapabilityStatus.EXPERIMENTAL,
+        'skfemntv.AffineTetRT0Basis',
+        'Dedicated affine RT0 basis and assembler; not accepted by general Basis/asm.',
     ),
     CompatibilityEntry(
         'skfem.helpers.grad',
@@ -459,7 +466,7 @@ _ENTRIES = (
         'evaluation',
         CapabilityStatus.EXPERIMENTAL,
         'skfemntv.Basis.project',
-        'L2 projection on affine MeshTri/MeshTet scalar or vector P0/P1/P2 bases, including DOF restriction by element selection; composite fields and curved geometry are unsupported.',
+        'L2 projection on full affine MeshTri/MeshTet scalar or vector P0/P1/P2 bases; element subsets, composite fields, and curved geometry are unsupported.',
     ),
     CompatibilityEntry(
         'skfem.Basis.refinterp',

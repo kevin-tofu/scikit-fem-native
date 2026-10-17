@@ -46,6 +46,8 @@ class _TopologyMesh:
 
     def _local_facets(self,full=False):
         rows=self.t.shape[0]
+        if self.dim()==1:
+            return ((0,), (1,))
         if self.dim()==2:
             if rows in (3,6):
                 return (
@@ -281,6 +283,155 @@ class _TopologyMesh:
             np.asarray(result,dtype=np.int64).T if result else
             np.empty((width,0),dtype=np.int64)
         )
+
+    def boundary_nodes(self):
+        return np.unique(self.facets[:, self.boundary_facets()])
+
+    def interior_nodes(self):
+        return np.setdiff1d(
+            np.arange(self.p.shape[1], dtype=np.int64), self.boundary_nodes(),
+        )
+
+    def nodes_satisfying(self, test, boundaries_only=False):
+        nodes = self.boundary_nodes() if boundaries_only else np.arange(
+            self.p.shape[1], dtype=np.int64
+        )
+        mask = np.asarray(test(self.p[:, nodes]), dtype=bool)
+        if mask.shape != (len(nodes),):
+            raise ValueError("node predicate must return one boolean per node")
+        return nodes[mask]
+
+    def copy(self):
+        result = copy(self)
+        result.p = self.p.copy()
+        result.t = self.t.copy()
+        result._boundaries = None if self._boundaries is None else dict(self._boundaries)
+        result._subdomains = None if getattr(self, "_subdomains", None) is None else dict(self._subdomains)
+        for name in ("_facets", "_t2f", "_f2t", "_facet_sizes"):
+            if hasattr(result, name):
+                setattr(result, name, getattr(result, name).copy())
+        return result
+
+    def translated(self, diffs):
+        diffs = np.asarray(diffs, dtype=float).reshape(-1)
+        if diffs.shape != (self.dim(),):
+            raise ValueError("diffs must have shape (mesh.dim(),)")
+        result = self.copy()
+        result.p = result.p + diffs[:, None]
+        return result
+
+    def scaled(self, factors):
+        factors = np.asarray(factors, dtype=float)
+        if factors.ndim == 0:
+            factors = np.full(self.dim(), float(factors))
+        if factors.shape != (self.dim(),):
+            raise ValueError("factors must be a scalar or have shape (mesh.dim(),)")
+        result = self.copy()
+        result.p = result.p * factors[:, None]
+        return result
+
+    def morphed(self, *functions):
+        if len(functions) > self.dim():
+            raise ValueError("at most one morph function per coordinate")
+        result = self.copy()
+        for axis, function in enumerate(functions):
+            if function is None:
+                continue
+            values = np.asarray(function(self.p), dtype=float)
+            if values.shape != (self.p.shape[1],):
+                raise ValueError("morph function must return one coordinate per node")
+            result.p[axis] = values
+        return result
+
+
+class MeshLine(_TopologyMesh):
+    """One-dimensional interval mesh with scikit-fem-compatible topology."""
+
+    def __init__(self, p=None, t=None):
+        self.p = np.asarray(
+            [[0., 1.]] if p is None else np.atleast_2d(p), dtype=np.float64,
+        )
+        self.t = np.asarray(
+            [[0], [1]] if t is None else t, dtype=np.int64,
+        )
+        if self.p.ndim != 2 or self.p.shape[0] != 1:
+            raise ValueError("p must have shape (1, nodes)")
+        if self.t.ndim != 2 or self.t.shape[0] != 2:
+            raise ValueError("t must have shape (2, elements)")
+        self._boundaries = {}
+        self._subdomains = {}
+
+    @classmethod
+    def init_tensor(cls, x):
+        x = np.asarray(x, dtype=float).reshape(-1)
+        if len(x) < 2:
+            raise ValueError("a line mesh needs at least two points")
+        return cls(x[None, :], np.vstack((np.arange(len(x) - 1), np.arange(1, len(x)))))
+
+    @property
+    def nelements(self):
+        return self.t.shape[1]
+
+    def dim(self):
+        return 1
+
+    @property
+    def boundaries(self):
+        return None if self._boundaries is None else dict(self._boundaries)
+
+    def normalize_elements(self, elements):
+        if isinstance(elements, (bool, np.bool_)):
+            return np.arange(self.nelements, dtype=np.int64) if elements else np.empty(0, dtype=np.int64)
+        if callable(elements):
+            return np.asarray(self.elements_satisfying(elements), dtype=np.int64)
+        if isinstance(elements, str):
+            return np.asarray(self._subdomains[elements], dtype=np.int64)
+        values = np.asarray([elements] if isinstance(elements, (int, np.integer)) else elements)
+        if values.dtype == bool:
+            values = np.flatnonzero(values)
+        values = np.asarray(values, dtype=np.int64).reshape(-1)
+        if np.any(values < 0) or np.any(values >= self.nelements):
+            raise IndexError("element ID out of range")
+        return np.unique(values)
+
+    def restrict(self, elements, return_mapping=False, skip_boundaries=False, skip_subdomains=False):
+        selected = self.normalize_elements(elements)
+        used = np.unique(self.t[:, selected])
+        mapping = np.full(self.p.shape[1], -1, dtype=np.int64)
+        mapping[used] = np.arange(len(used))
+        result = MeshLine(self.p[:, used], mapping[self.t[:, selected]])
+        result._boundaries = None if skip_boundaries else {}
+        result._subdomains = None if skip_subdomains else {}
+        if not skip_boundaries and self._boundaries:
+            lookup = {int(old): int(new) for new, old in enumerate(used)}
+            for name, region in self._boundaries.items():
+                result._boundaries[name] = FacetRegion(
+                    np.asarray([lookup[int(node)] for node in self.facets[:, np.asarray(region)] if int(node) in lookup], dtype=np.int64),
+                    result.facets.shape[1],
+                )
+        if return_mapping:
+            return result, used
+        return result
+
+    def remove_elements(self, elements):
+        removed = self.normalize_elements(elements)
+        return self.restrict(np.setdiff1d(np.arange(self.nelements), removed))
+
+    def refined(self, times_or_ix=1):
+        if not isinstance(times_or_ix, (int, np.integer)):
+            raise NotImplementedError("adaptive line refinement is not implemented")
+        result = self
+        for _ in range(int(times_or_ix)):
+            mids = result.p[:, result.t].mean(axis=1)
+            start = result.p.shape[1]
+            result = MeshLine(
+                np.hstack((result.p, mids)),
+                np.vstack((
+                    np.column_stack((result.t[0], start + np.arange(result.nelements))).ravel(),
+                    np.column_stack((start + np.arange(result.nelements), result.t[1])).ravel(),
+                )),
+            )
+        return result
 
 
 def _with_boundaries(mesh,boundaries):
@@ -1734,6 +1885,21 @@ class ElementTetP1(_ComposableElement):
         )
 
 
+class ElementLineP1(_ComposableElement):
+    def __init__(self):
+        self.doflocs = np.array([[0.], [1.]])
+
+
+class ElementLineP2(_ComposableElement):
+    def __init__(self):
+        self.doflocs = np.array([[0.], [1.], [.5]])
+
+
+class ElementLineP0(_ComposableElement):
+    def __init__(self):
+        self.doflocs = np.array([[.5]])
+
+
 class ElementTriP1(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array([[0.,0.],[1.,0.],[0.,1.]])
@@ -2227,6 +2393,8 @@ def _interior_facets_3d(mesh):
 
 
 def _corner_count(mesh):
+    if mesh.dim()==1:
+        return 2
     if mesh.dim()==2:
         return 3 if mesh.t.shape[0] in (3,6) else 4
     if mesh.t.shape[0] in (4,10):
@@ -2570,6 +2738,7 @@ class Basis:
         elif isinstance(base,ElementTetP2) and mesh.t.shape[0]==4:
             mesh=_promote_linear_p2_mesh(mesh,MeshTet2)
         supported=(
+            ElementLineP0,ElementLineP1,ElementLineP2,
             ElementTriP0,ElementTriP1,ElementTriP2,
             ElementQuad0,ElementQuad1,ElementQuad2,ElementQuad8,
             ElementTetP0,ElementTetP1,ElementTetP2,
@@ -2588,8 +2757,10 @@ class Basis:
             base,(ElementTriP0,ElementQuad0,ElementTetP0,ElementHex0)
         )
         self._constant=isinstance(
-            base,(ElementTriP0,ElementQuad0,ElementTetP0,ElementHex0)
+            base,(ElementLineP0,ElementTriP0,ElementQuad0,ElementTetP0,ElementHex0)
         )
+        self._line=isinstance(base,(ElementLineP0,ElementLineP1,ElementLineP2))
+        self._quadratic_line=isinstance(base,ElementLineP2)
         self._tri=isinstance(base,(ElementTriP0,ElementTriP1,ElementTriP2))
         self._quadratic_tri=isinstance(base,ElementTriP2)
         self._quad=isinstance(base,(ElementQuad0,ElementQuad1,ElementQuad2,ElementQuad8))
@@ -2609,6 +2780,10 @@ class Basis:
             self.X,self.W=_wedge_quadrature(intorder)
         elif self._pyramid:
             self.X,self.W=_pyramid_quadrature(intorder)
+        elif self._line:
+            points,weights=np.polynomial.legendre.leggauss(max(2,(intorder+2)//2))
+            self.X=((points+1.)/2.)[None,:]
+            self.W=weights/2.
         elif intorder>4:
             self.X,self.W=(
                 _simplex_quadrature(mesh.dim(),intorder)
@@ -2827,22 +3002,25 @@ class Basis:
         ``interp`` may be a callable evaluated at global quadrature points, a
         scalar, or quadrature values with shape ``(nelems, nq)`` for scalar
         bases and ``(components, nelems, nq)`` for vector bases. Element
-        subsets are supported: the projection is constrained to DOFs attached
-        to those elements, and all DOFs outside that set are zero. Composite
-        or curved bases are not supported yet.
+        subsets and composite or curved bases are not supported yet.
         """
         from scipy.sparse import coo_matrix
         from scipy.sparse.linalg import spsolve
 
+        if elements is not None:
+            raise NotImplementedError(
+                "projecting onto a subset of elements is not implemented"
+            )
         if hasattr(self,"subbases"):
             raise NotImplementedError("projection for composite bases is not implemented")
-        if type(self.mesh) not in (MeshTri,MeshTet):
+        if type(self.mesh) not in (MeshLine,MeshTri,MeshTet):
             raise NotImplementedError(
                 "project supports affine MeshTri and MeshTet bases only"
             )
         if not isinstance(
             self._base_element,
-            (ElementTriP0,ElementTriP1,ElementTriP2,
+            (ElementLineP0,ElementLineP1,ElementLineP2,
+             ElementTriP0,ElementTriP1,ElementTriP2,
              ElementTetP0,ElementTetP1,ElementTetP2),
         ):
             raise NotImplementedError(
@@ -2863,30 +3041,13 @@ class Basis:
         if values.shape!=expected:
             raise ValueError(f"interp values must have shape {expected}")
 
-        selected=(
-            self.tind.copy() if elements is None else self._element_ids(elements)
-        )
-        local_positions={int(element):local for local,element in enumerate(self.tind)}
-        try:
-            local_elements=np.asarray(
-                [local_positions[int(element)] for element in selected],
-                dtype=np.int64,
-            )
-        except KeyError as error:
-            raise ValueError(
-                "projection elements are not contained in this Basis"
-            ) from error
         shape=self.tabulated_shape
-        dx=self.dx
         local_mass=np.einsum(
-            "eq,eqi,eqj->eij",dx,shape,shape,optimize=True
+            "eq,eqi,eqj->eij",self.dx,shape,shape,optimize=True
         )
         local_dofs=self.element_dofs.T.reshape(
-            self.nelems,self.tabulated_shape.shape[2],components
+            shape.shape[0],shape.shape[2],components
         )
-        active_dofs=np.unique(local_dofs[local_elements].reshape(-1))
-        if not len(active_dofs):
-            return np.zeros(self.N,dtype=np.result_type(values.dtype,float))
         rows=np.concatenate([
             np.broadcast_to(
                 local_dofs[:,:,component,None],
@@ -2908,15 +3069,11 @@ class Basis:
         rhs=np.zeros(self.N,dtype=np.result_type(values.dtype,matrix.dtype))
         for component in range(components):
             local_rhs=np.einsum(
-                "eq,eqn->en",dx*values[component],shape,optimize=True
+                "eq,eqn->en",self.dx*values[component],shape,optimize=True
             )
             dofs=local_dofs[:,:,component]
             np.add.at(rhs,dofs.reshape(-1),local_rhs.reshape(-1))
-        result=np.zeros(self.N,dtype=rhs.dtype)
-        result[active_dofs]=spsolve(
-            matrix[active_dofs][:,active_dofs],rhs[active_dofs]
-        )
-        return result
+        return np.asarray(spsolve(matrix,rhs))
 
     def evaluate_at(self,points,coefficients,*,outside="error"):
         """Evaluate an affine simplex H1 field at physical points.
@@ -3265,6 +3422,12 @@ class Basis:
 
     @staticmethod
     def _field_connectivity(mesh,scalar):
+        if isinstance(scalar,ElementLineP0):
+            return np.arange(mesh.nelements,dtype=np.int64)[None,:]
+        if isinstance(scalar,ElementLineP1):
+            return mesh.t[:2]
+        if isinstance(scalar,ElementLineP2):
+            raise NotImplementedError("ElementLineP2 requires a quadratic line mesh")
         if isinstance(
             scalar,(ElementTriP0,ElementQuad0,ElementTetP0,ElementHex0)
         ):
@@ -3303,6 +3466,32 @@ class Basis:
             refgrad=np.zeros((
                 self.X.shape[1],1,self._mesh.dim()
             ))
+        elif self._line:
+            x=self.X[0]
+            if isinstance(self._base_element,ElementLineP0):
+                shape=np.ones((len(x),1))
+                refgrad=np.zeros((len(x),1,1))
+            elif self._quadratic_line:
+                shape=np.column_stack((2*(x-.5)*(x-1.),2*x*(x-.5),4*x*(1-x)))
+                refgrad=np.stack((4*x-3.,4*x-1.,4-8*x),axis=1)[:,:,None]
+            else:
+                shape=np.column_stack((1.-x,x))
+                refgrad=np.broadcast_to(np.array([[-1.],[1.]]),(len(x),2,1))
+            geometry_shape=shape
+            geometry_refgrad=refgrad
+            lengths=self._mesh.p[0,self._mesh.t[1]]-self._mesh.p[0,self._mesh.t[0]]
+            jac=np.abs(lengths)
+            global_coordinates=np.einsum('qn,en->eq',shape,self._mesh.p[0,self._mesh.t]).reshape(self.nelems,len(x),1)
+            gradients=refgrad[None,:,:,:]/lengths[:,None,None,None]
+            dx=jac[:,None]*self.W[None,:]
+            determinants=np.broadcast_to(lengths[:,None],(self.nelems,len(x))).copy()
+            tolerances=np.broadcast_to(np.abs(lengths)[:,None],determinants.shape).copy()
+            conditions=np.ones_like(determinants)
+            self._geometry_determinants=determinants
+            self._geometry_tolerances=tolerances
+            self._geometry_condition_numbers=conditions
+            self._update_geometry_diagnostics()
+            return shape[None,:,:].repeat(self.nelems,axis=0), gradients, dx, global_coordinates
         elif self._quadratic_tri:
             bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T
             pairs=((0,1),(1,2),(0,2))
@@ -3469,6 +3658,18 @@ class Basis:
                 return (
                     np.ones((self.X.shape[1],1)),
                     np.zeros((self.X.shape[1],1,self._mesh.dim())),
+                )
+            if self._line:
+                x=self.X[0]
+                if isinstance(self._base_element,ElementLineP0):
+                    return np.ones((len(x),1)),np.zeros((len(x),1,1))
+                if self._quadratic_line:
+                    return (
+                        np.column_stack((2*(x-.5)*(x-1.),2*x*(x-.5),4*x*(1-x))),
+                        np.stack((4*x-3.,4*x-1.,4-8*x),axis=1)[:,:,None],
+                    )
+                return np.column_stack((1.-x,x)),np.broadcast_to(
+                    np.array([[-1.],[1.]]),(len(x),2,1)
                 )
             if self._quadratic_tri:
                 bary=np.vstack((1.-self.X.sum(axis=0),self.X)).T

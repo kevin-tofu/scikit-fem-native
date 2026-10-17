@@ -17,6 +17,16 @@ pybind11_add_module(
   cpp/src/assembly/cut_cross_assembler.cpp
   cpp/src/assembly/basis_geometry.cpp
   cpp/src/assembly/edge_topology.cpp
+  cpp/src/assembly/basis_tabulation.cpp
+  cpp/src/assembly/composite_dofs.cpp
+  cpp/src/assembly/curved_surface.cpp
+  cpp/src/assembly/cut_quadrature.cpp
+  cpp/src/assembly/hdiv_assembler.cpp
+  cpp/src/assembly/j2_plasticity.cpp
+  cpp/src/assembly/mesh_promotion.cpp
+  cpp/src/assembly/neo_hookean.cpp
+  cpp/src/assembly/nonlinear_sparse_scatter.cpp
+  cpp/src/assembly/point_evaluation.cpp
 )
 target_compile_features(_skfn PRIVATE cxx_std_17)
 target_include_directories(_skfn PRIVATE cpp/include)

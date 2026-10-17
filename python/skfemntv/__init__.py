@@ -41,6 +41,10 @@ from .basis import (
     MeshTet2,
     MeshWedge1,
     MeshPyramid1,
+    MeshLine,
+    ElementLineP0,
+    ElementLineP1,
+    ElementLineP2,
 )
 from .linear_form import LinearFormDiagnostics, NativeLinearForm
 from .bilinear_form import NativeBilinearForm, NativeCrossBilinearForm
@@ -121,6 +125,22 @@ from .hcurl_assembler import (
     estimate_tet_n1_assembly_memory,
     estimate_tri_n1_assembly_memory,
 )
+from .hdiv_basis import (
+    AffineSimplexRT0Basis,AffineTetRT0Basis,AffineTriRT0Basis,
+)
+from .hdiv_assembler import SimplexRT0Assembler
+from .nonlinear import (
+    J2MaterialEvaluation,
+    J2PlasticityAssembler,
+    J2PlasticityMaterial,
+    J2PlasticityTet4Assembler,
+    NeoHookeanAssembler,
+    NeoHookeanMaterial,
+    NeoHookeanMaterialEvaluation,
+    NeoHookeanTet4Assembler,
+    NonlinearEvaluation,
+    PlasticEvaluation,
+)
 
 try:
     __version__=_distribution_version("scikit-fem-native")
@@ -169,6 +189,20 @@ __all__ = [
     "TriN1LinearAssembler",
     "estimate_tet_n1_assembly_memory",
     "estimate_tri_n1_assembly_memory",
+    "AffineSimplexRT0Basis",
+    "AffineTriRT0Basis",
+    "AffineTetRT0Basis",
+    "SimplexRT0Assembler",
+    "J2MaterialEvaluation",
+    "J2PlasticityAssembler",
+    "J2PlasticityMaterial",
+    "J2PlasticityTet4Assembler",
+    "NeoHookeanAssembler",
+    "NeoHookeanMaterial",
+    "NeoHookeanMaterialEvaluation",
+    "NeoHookeanTet4Assembler",
+    "NonlinearEvaluation",
+    "PlasticEvaluation",
     "LinearFormDiagnostics",
     "NativeLinearForm",
     "NativeBilinearForm",
