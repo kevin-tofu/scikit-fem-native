@@ -272,7 +272,14 @@ P0/P1/P2 bases on affine triangular and tetrahedral meshes. It currently
 projects over the full basis; composite fields and curved meshes are not
 supported.
 
-### Experimental H(curl) simplex slices
+### Experimental H(curl) edge elements
+
+The scalar electrostatic example above uses nodal H1 elements for the
+potential.  When the unknown is the vector electric field itself, an
+edge-based H(curl) space is the appropriate model.  skfem-native already
+provides a deliberately small experimental implementation of lowest-order
+first-family Nedelec edge elements for affine triangles and tetrahedra.
+These are separate APIs from the scalar `Basis`/`asm` path below.
 
 The lowest-order first-family Nédélec element is available as a deliberately
 small experimental API for affine triangular meshes:
