@@ -168,6 +168,13 @@ mechanics: the physical meaning changes from displacement and stress to
 potential and electric field `E = -grad(phi)`, but the readable Python weak
 form stays intact.
 
+The runnable visualization example solves a unit-permittivity parallel-plate
+capacitor and writes a potential heatmap with electric-field arrows:
+[`examples/electrostatic_potential.py`](examples/electrostatic_potential.py)
+and [`examples/electrostatic_potential.png`](examples/electrostatic_potential.png).
+Run it with `python examples/electrostatic_potential.py` after installing
+Matplotlib.
+
 The complete script is [`examples/plate_with_hole_tension.py`](examples/plate_with_hole_tension.py).
 It uses PyVista for rendering.  Install the optional visualization packages
 with `python -m pip install pyvista vtk`, then run
