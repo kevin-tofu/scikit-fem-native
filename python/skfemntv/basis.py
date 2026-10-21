@@ -182,6 +182,21 @@ class _TopologyMesh:
     def interior_facets(self):
         return np.flatnonzero(self.f2t[1]!=-1)
 
+    def boundary_nodes(self):
+        return np.unique(self.facets[:,self.boundary_facets()])
+
+    def interior_nodes(self):
+        return np.setdiff1d(np.arange(self.p.shape[1]),self.boundary_nodes())
+
+    def nodes_satisfying(self,test,boundaries_only=False):
+        mask=np.asarray(test(self.p),dtype=bool)
+        if mask.shape!=(self.p.shape[1],):
+            raise ValueError("node predicate must return one boolean per node")
+        selected=np.flatnonzero(mask)
+        if boundaries_only:
+            return np.intersect1d(selected,self.boundary_nodes())
+        return selected
+
     def elements_satisfying(self,test):
         centers=self.p[:,self.t[:_corner_count(self)]].mean(axis=1)
         mask=np.asarray(test(centers),dtype=bool)
@@ -497,6 +512,36 @@ def _with_subdomains(mesh,subdomains):
             selected=np.asarray(selected,dtype=np.int64).reshape(-1)
         result._subdomains[name]=CellRegion(selected,mesh.nelements)
     return result
+
+
+class MeshLine(_TopologyMesh):
+    """One-dimensional mesh with topology and node selection support."""
+
+    def __init__(self,p=None,t=None):
+        self.p=np.asarray(
+            p if p is not None else [[0.,1.]],dtype=np.float64
+        )
+        self.t=np.asarray(
+            t if t is not None else [[0],[1]],dtype=np.int64
+        )
+        if self.p.ndim!=2 or self.p.shape[0]!=1:
+            raise ValueError("p must have shape (1, nodes)")
+        if self.t.ndim!=2 or self.t.shape[0]!=2:
+            raise ValueError("t must have shape (2, elements)")
+
+    @classmethod
+    def init_tensor(cls,x):
+        points=np.asarray(x,dtype=np.float64).reshape(1,-1)
+        cells=np.vstack((np.arange(points.shape[1]-1),
+                         np.arange(1,points.shape[1])))
+        return cls(points,cells)
+
+    @property
+    def nelements(self):
+        return self.t.shape[1]
+
+    def dim(self):
+        return 1
 
 
 class MeshTri(_TopologyMesh):
@@ -1941,6 +1986,14 @@ class ElementTriP0(_ComposableElement):
         self.doflocs=np.array([[1./3.,1./3.]])
 
 
+class ElementTriRT0(_ComposableElement):
+    """Lowest-order Raviart--Thomas element on affine triangles."""
+
+    def __init__(self):
+        self.doflocs=np.array([[.5,0.],[.5,.5],[0.,.5]])
+        self._dim=2
+
+
 class ElementQuad0(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array([[.5,.5]])
@@ -1949,6 +2002,16 @@ class ElementQuad0(_ComposableElement):
 class ElementTetP0(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array([[.25,.25,.25]])
+
+
+class ElementTetRT0(_ComposableElement):
+    """Lowest-order Raviart--Thomas element on affine tetrahedra."""
+
+    def __init__(self):
+        self.doflocs=np.array([
+            [.5,.5,0.],[.5,0.,.5],[0.,.5,.5],[.5,.5,.5],
+        ])
+        self._dim=3
 
 
 class ElementHex0(_ComposableElement):
@@ -2112,9 +2175,10 @@ class _LazyVectorFields:
 class DiscreteField:
     """Values and physical gradients evaluated at basis quadrature points."""
 
-    def __init__(self,value,grad):
+    def __init__(self,value,grad,div=None):
         self.value=np.asarray(value)
         self.grad=None if grad is None else np.asarray(grad)
+        self._div=None if div is None else np.asarray(div)
 
     def __array__(self,dtype=None):
         return np.asarray(self.value,dtype=dtype)
@@ -2125,6 +2189,8 @@ class DiscreteField:
 
     @property
     def div(self):
+        if self._div is not None:
+            return self._div
         if (
             self.grad is None
             or self.value.ndim!=3
@@ -2701,6 +2767,37 @@ class Basis:
         original_mesh=mesh
         intorder=2 if intorder is None else int(intorder)
         self.intorder=intorder
+        if isinstance(element,(ElementTriRT0,ElementTetRT0)):
+            dimension=2 if isinstance(element,ElementTriRT0) else 3
+            if mesh.dim()!=dimension or mesh.t.shape[0]!=dimension+1:
+                raise NotImplementedError(
+                    "RT0 elements require affine linear simplex meshes"
+                )
+            if elements is not None:
+                raise NotImplementedError(
+                    "RT0 element subsets are not supported"
+                )
+            from .hdiv_basis import AffineTetRT0Basis,AffineTriRT0Basis
+            hdiv=(AffineTriRT0Basis if dimension==2 else AffineTetRT0Basis)(
+                mesh,intorder=intorder,quadrature=quadrature
+            )
+            self.mesh=self._mesh=mesh
+            self.elem=element
+            self._hdiv_basis=hdiv
+            self.N=hdiv.N
+            self.dof_map=hdiv.dof_map
+            self.element_dofs=hdiv.element_dofs
+            self.doflocs=hdiv.doflocs
+            self.dx=hdiv.dx
+            self._geometry_determinants=np.broadcast_to(
+                np.abs(hdiv.detJ)[:,None],hdiv.dx.shape
+            )
+            self.X,self.W=hdiv.X,hdiv.W
+            self.quadrature=(self.X.copy(),self.W.copy())
+            self.global_coordinates=hdiv.global_coordinates.transpose(1,2,0)
+            self.normals=None
+            self.tind=np.arange(mesh.nelements,dtype=np.int64)
+            return
         if isinstance(element,ElementComposite):
             fields=[]
             for field in element.elems:
@@ -2994,6 +3091,12 @@ class Basis:
                 subbasis._interpolate(coefficients)
                 for subbasis in self.subbases
             )
+        hdiv=getattr(self,"_hdiv_basis",None)
+        if hdiv is not None:
+            return DiscreteField(
+                hdiv.evaluate(coefficients),None,
+                div=hdiv.evaluate_divergence(coefficients),
+            )
         return self._interpolate(coefficients)
 
     def project(self,interp,elements=None,dtype=None):
@@ -3187,6 +3290,69 @@ class Basis:
         self,facets=None,elements=None,nodes=None,skip=None,
         *,components=None,fields=None,
     ):
+        hdiv=getattr(self,"_hdiv_basis",None)
+        if hdiv is not None:
+            if components is not None or fields is not None:
+                raise ValueError(
+                    "component and field selection is not defined for facet flux DOFs"
+                )
+            if nodes is not None:
+                raise NotImplementedError(
+                    "RT0 DOFs are facet fluxes, not nodal DOFs"
+                )
+            if elements is not None and facets is not None:
+                raise ValueError("select only one of facets or elements")
+            if elements is not None:
+                selected_elements=self._element_ids(elements)
+                dofs=np.unique(
+                    hdiv.element_dofs[:,selected_elements].reshape(-1)
+                )
+            else:
+                boundary=self._mesh.boundary_facets()
+                if facets is None:
+                    selected=boundary
+                    boundary_selection=True
+                elif isinstance(facets,str):
+                    boundary_selection=True
+                    try:
+                        selected=np.asarray(
+                            self._mesh.boundaries[facets],dtype=np.int64
+                        )
+                    except KeyError as error:
+                        raise KeyError(f"unknown boundary {facets!r}") from error
+                elif callable(facets):
+                    boundary_selection=True
+                    centers=self._mesh.p[
+                        :,self._mesh.facets[:self._mesh.dim(),boundary]
+                    ].mean(axis=1)
+                    mask=np.asarray(facets(centers),dtype=bool)
+                    if mask.shape!=(len(boundary),):
+                        raise ValueError(
+                            "facet predicate must return one boolean per boundary facet"
+                        )
+                    selected=boundary[mask]
+                else:
+                    boundary_selection=False
+                    values=np.asarray(facets)
+                    if values.dtype==bool:
+                        if values.shape!=(len(boundary),):
+                            raise ValueError(
+                                "boundary facet mask has the wrong length"
+                            )
+                        selected=boundary[values]
+                    else:
+                        selected=np.asarray(values,dtype=np.int64).reshape(-1)
+                if boundary_selection:
+                    dofs=hdiv.boundary_dofs(selected)
+                else:
+                    selected=np.asarray(selected,dtype=np.int64).reshape(-1)
+                    if np.any(selected<0) or np.any(
+                        selected>=self._mesh.facets.shape[1]
+                    ):
+                        raise ValueError("facet index is out of range")
+                    dofs=np.unique(selected)
+            view=DofsView(dofs,self.doflocs,{"u^n":dofs})
+            return view.drop(skip) if skip else view
         if sum(value is not None for value in (facets,elements,nodes))>1:
             raise ValueError("select only one of facets, elements, or nodes")
         if nodes is not None:

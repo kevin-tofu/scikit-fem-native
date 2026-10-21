@@ -68,6 +68,8 @@ def main() -> None:
         run(
             str(python),"-c",
             "import skfemntv; from importlib.metadata import version; "
+            "from skfemntv._skfn import integrate_rt0, tabulate_hex27_shapes; "
+            "assert hasattr(skfemntv, 'MeshLine'); "
             "assert skfemntv.__version__ == version('scikit-fem-native'); "
             "print('installed skfemntv:', skfemntv.__file__, skfemntv.__version__)",
             cwd=Path(temporary),

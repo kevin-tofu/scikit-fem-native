@@ -159,6 +159,158 @@ def _compile_linear(form: _LinearForm,basis,kwargs):
     )
 
 
+def _hdiv_basis(basis):
+    wrapped=getattr(basis,"_hdiv_basis",None)
+    if wrapped is not None:
+        return wrapped
+    from .hdiv_basis import AffineSimplexRT0Basis
+    return basis if isinstance(basis,AffineSimplexRT0Basis) else None
+
+
+def _is_dg0_basis(basis):
+    from .basis import ElementDG,ElementTetP0,ElementTriP0,ElementVector
+
+    element=basis.elem
+    if isinstance(element,ElementVector):
+        element=element.elem
+    if isinstance(element,ElementDG):
+        element=element.elem
+    if basis.mesh.dim()==2:
+        return isinstance(element,ElementTriP0)
+    if basis.mesh.dim()==3:
+        return isinstance(element,ElementTetP0)
+    return False
+
+
+def _native_rt0_dg0_mixed_assemble(form,trial_basis,test_basis,kwargs):
+    from .hdiv_assembler import RT0DG0MixedAssembler
+
+    trial_hdiv=_hdiv_basis(trial_basis)
+    test_hdiv=_hdiv_basis(test_basis)
+    if (trial_hdiv is None)==(test_hdiv is None):
+        raise UnsupportedNativeForm(
+            "mixed RT0-DG0 forms require exactly one RT0 basis"
+        )
+    scalar_basis=test_basis if trial_hdiv is not None else trial_basis
+    rt0_basis=trial_hdiv if trial_hdiv is not None else test_hdiv
+    if not _is_dg0_basis(scalar_basis):
+        raise UnsupportedNativeForm(
+            "mixed RT0 assembly currently requires a DG0 scalar basis"
+        )
+    if trial_basis.mesh.dim()!=test_basis.mesh.dim():
+        raise UnsupportedNativeForm(
+            "mixed RT0-DG0 bases must have the same dimension"
+        )
+    geometry={"x":_QuadratureValue(
+        np.moveaxis(test_basis.global_coordinates,-1,0)
+    )}
+    if test_basis.normals is not None:
+        geometry["n"]=_QuadratureValue(
+            np.moveaxis(test_basis.normals,-1,0)
+        )
+    expression=_trace_expression(
+        form.function,(_TrialValue(),_TestValue()),geometry,kwargs,
+        context="mixed RT0-DG0 BilinearForm",
+    )
+    terms=_extract_terms(
+        expression,_BilinearTerm,_BilinearSum,
+        message="mixed RT0-DG0 form must contain a divergence-value coupling",
+    )
+    by_trial=form._cross_cache.setdefault(
+        trial_basis,WeakKeyDictionary()
+    )
+    native=by_trial.get(test_basis)
+    if native is None:
+        native=RT0DG0MixedAssembler(rt0_basis,scalar_basis)
+        by_trial[test_basis]=native
+    result=None
+    for term in terms:
+        if term.kind not in ("row_divergence","column_divergence"):
+            raise UnsupportedNativeForm(
+                "mixed RT0-DG0 supports divergence-value coupling only"
+            )
+        rt0_is_test=test_hdiv is not None
+        if (term.kind=="row_divergence")!=rt0_is_test:
+            raise UnsupportedNativeForm(
+                "divergence must act on the RT0 field in the mixed form"
+            )
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor,squeeze=True
+        )
+        matrix=native.assemble_divergence(
+            coefficient,rt0_is_test=rt0_is_test
+        )
+        result=matrix if result is None else result+matrix
+    return result
+
+
+def _native_hdiv_linear_assemble(form,basis,kwargs):
+    from .hdiv_assembler import SimplexRT0Assembler
+
+    hdiv=_hdiv_basis(basis)
+    geometry={"x":_QuadratureValue(hdiv.global_coordinates)}
+    expression=_trace_expression(
+        form.function,(_TestValue(),),geometry,kwargs,
+        context="RT0 LinearForm",
+    )
+    terms=_extract_terms(
+        expression,_Term,_Sum,
+        message="RT0 LinearForm must reduce to dot(vector, v)",
+    )
+    native=form._native_cache.get(basis)
+    if native is None:
+        native=SimplexRT0Assembler(hdiv)
+        form._native_cache[basis]=native
+    result=None
+    for term in terms:
+        if term.kind!="value":
+            raise UnsupportedNativeForm("RT0 LinearForm supports vector loads only")
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor
+        )
+        vector=native.assemble_vector_load(coefficient)
+        result=vector if result is None else result+vector
+    return result
+
+
+def _native_hdiv_bilinear_assemble(form,basis,kwargs):
+    from .hdiv_assembler import SimplexRT0Assembler
+
+    hdiv=_hdiv_basis(basis)
+    geometry={"x":_QuadratureValue(hdiv.global_coordinates)}
+    expression=_trace_expression(
+        form.function,(_TrialValue(),_TestValue()),geometry,kwargs,
+        context="RT0 BilinearForm",
+    )
+    terms=_extract_terms(
+        expression,_BilinearTerm,_BilinearSum,
+        message=(
+            "RT0 BilinearForm supports dot(u, v) and "
+            "div(u) * div(v)"
+        ),
+    )
+    native=form._native_cache.get(basis)
+    if native is None:
+        native=SimplexRT0Assembler(hdiv)
+        form._native_cache[basis]=native
+    result=None
+    for term in terms:
+        if term.kind not in ("value","divergence"):
+            raise UnsupportedNativeForm(
+                f"RT0 BilinearForm does not support {term.kind!r}"
+            )
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor,squeeze=True
+        )
+        matrix=(
+            native.assemble(value=coefficient)
+            if term.kind=="value" else
+            native.assemble(divergence=coefficient)
+        )
+        result=matrix if result is None else result+matrix
+    return result
+
+
 def _native_linear_assemble(form,basis,kwargs,num_threads=0):
     terms = _compile_linear(form,basis,kwargs)
     native = form._native_cache.get(basis)
@@ -744,6 +896,12 @@ def asm(
                 form,integration,kwargs,requested_threads
             )
         if len(bases)==1:
+            if _hdiv_basis(bases[0]) is not None:
+                if num_threads is not None:
+                    raise UnsupportedNativeForm(
+                        "per-call threads are not yet supported for RT0 LinearForm"
+                    )
+                return _native_hdiv_linear_assemble(form,bases[0],kwargs)
             if hasattr(bases[0],"subbases"):
                 if num_threads is not None:
                     raise UnsupportedNativeForm(
@@ -789,6 +947,13 @@ def asm(
                     "per-call threads are not yet supported for "
                     "cross-basis BilinearForm"
                 )
+            if (
+                _hdiv_basis(bases[0]) is not None
+                or _hdiv_basis(bases[1]) is not None
+            ):
+                return _native_rt0_dg0_mixed_assemble(
+                    form,bases[0],bases[1],kwargs
+                )
             return _native_cross_bilinear_assemble(
                 form,bases[0],bases[1],None,kwargs,
                 memory_limit_bytes=memory_limit_bytes,
@@ -798,6 +963,12 @@ def asm(
             raise UnsupportedNativeForm(
                 "native BilinearForm currently requires one shared basis"
             )
+        if _hdiv_basis(bases[0]) is not None:
+            if num_threads is not None:
+                raise UnsupportedNativeForm(
+                    "per-call threads are not yet supported for RT0 BilinearForm"
+                )
+            return _native_hdiv_bilinear_assemble(form,bases[0],kwargs)
         if hasattr(bases[0],"subbases"):
             if num_threads is not None:
                 raise UnsupportedNativeForm(

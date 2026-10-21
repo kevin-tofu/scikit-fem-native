@@ -5,7 +5,10 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import coo_matrix
 
-from ._skfn import integrate_rt0,integrate_rt0_vector_load
+from ._skfn import (
+    integrate_rt0,integrate_rt0_dg0_divergence,
+    integrate_rt0_vector_load,
+)
 from .hdiv_basis import AffineSimplexRT0Basis
 
 
@@ -79,4 +82,63 @@ class SimplexRT0Assembler:
         return result
 
 
-__all__=["SimplexRT0Assembler"]
+class RT0DG0MixedAssembler:
+    """Assemble RT0-to-DG0 divergence blocks on aligned simplex bases."""
+
+    def __init__(self,rt0_basis,scalar_basis):
+        if not isinstance(rt0_basis,AffineSimplexRT0Basis):
+            raise TypeError("rt0_basis must be an affine simplex RT0 basis")
+        if rt0_basis.mesh.dim()!=scalar_basis.mesh.dim():
+            raise ValueError("RT0 and DG0 bases must have the same dimension")
+        if rt0_basis.dx.shape!=scalar_basis.dx.shape or not np.allclose(
+            rt0_basis.dx,scalar_basis.dx
+        ):
+            raise ValueError("RT0 and DG0 quadrature weights must match")
+        if not np.allclose(
+            rt0_basis.global_coordinates,
+            np.moveaxis(scalar_basis.global_coordinates,-1,0),
+        ):
+            raise ValueError("RT0 and DG0 quadrature coordinates must match")
+        if scalar_basis.tabulated_shape.shape[2]!=1:
+            raise ValueError("scalar basis must have one DG0 DOF per cell")
+        self.rt0_basis=rt0_basis
+        self.scalar_basis=scalar_basis
+        self._scalar_shapes=np.ascontiguousarray(
+            scalar_basis.tabulated_shape.transpose(0,2,1)
+        )
+
+    def assemble_divergence(self,coefficient=1.,*,rt0_is_test=True):
+        rt0=self.rt0_basis
+        scalar=self.scalar_basis
+        weights=np.asarray(coefficient,dtype=np.float64)
+        try:
+            weights=np.ascontiguousarray(np.broadcast_to(weights,rt0.dx.shape))
+        except ValueError as error:
+            raise ValueError(
+                f"coefficient must broadcast to {rt0.dx.shape}"
+            ) from error
+        rows=rt0.element_dofs.T if rt0_is_test else scalar.element_dofs.T
+        columns=scalar.element_dofs.T if rt0_is_test else rt0.element_dofs.T
+        row_local=rows.shape[1]
+        column_local=columns.shape[1]
+        local=np.empty(
+            (rt0.mesh.nelements,row_local,column_local),dtype=np.float64
+        )
+        integrate_rt0_dg0_divergence(
+            rt0._element_divergences,self._scalar_shapes,rt0.dx,weights,
+            rt0_is_test,local,
+        )
+        row_ids=np.broadcast_to(rows[:,:,None],local.shape).reshape(-1)
+        column_ids=np.broadcast_to(
+            columns[:,None,:],local.shape
+        ).reshape(-1)
+        return coo_matrix(
+            (local.reshape(-1),(row_ids,column_ids)),
+            shape=(
+                self.rt0_basis.N if rt0_is_test else self.scalar_basis.N,
+                self.scalar_basis.N if rt0_is_test else self.rt0_basis.N,
+            ),
+        ).tocsr()
+
+
+__all__=["RT0DG0MixedAssembler","SimplexRT0Assembler"]
