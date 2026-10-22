@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/scikit-fem-native.svg)](https://pypi.org/project/scikit-fem-native/)
 [![CI](https://github.com/kevin-tofu/scikit-fem-native/actions/workflows/ci.yml/badge.svg)](https://github.com/kevin-tofu/scikit-fem-native/actions/workflows/ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/scikit-fem-native/badge/?version=latest)](https://scikit-fem-native.readthedocs.io/en/latest/)
-[![License: LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-blue.svg)](https://github.com/kevin-tofu/scikit-fem-native/blob/main/LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/kevin-tofu/scikit-fem-native/blob/main/LICENSE)
 
 **scikit-fem-native** is an independent native finite-element assembly engine for
 [scikit-fem](https://github.com/kinnala/scikit-fem)-style Python workflows.  It
@@ -93,20 +93,33 @@ remain explicit.
 
 ## Experimental H(div): affine RT0 simplices
 
-Affine triangle and tetrahedron RT0 bases are available through the dedicated
-`AffineTriRT0Basis` / `AffineTetRT0Basis` API. `SimplexRT0Assembler` assembles
-vector mass, divergence-divergence, and vector-load terms. Cell quadrature is
+Affine triangle and tetrahedron RT0 elements are available through the public
+`Basis` / `asm` API. `dot(u, v)`, `div(u) * div(v)`, vector-load forms, and
+rectangular `div(q) * p` coupling to DG0 are supported. Cell quadrature is
 computed by the C++ backend; sparse facet-DOF accumulation currently uses
-Python/SciPy. This experimental path is separate from `Basis` and `asm`.
+Python/SciPy. Curved and higher-order H(div) elements are not implemented.
 
 ```python
 import skfemntv
 
 mesh = skfemntv.MeshTri.init_tensor([0., 0.5, 1.], [0., 0.5, 1.])
-basis = skfemntv.AffineTriRT0Basis(mesh, intorder=4)
-assembler = skfemntv.SimplexRT0Assembler(basis)
-mass = assembler.assemble(value=1.0)
-divergence = assembler.assemble(divergence=1.0)
+basis = skfemntv.Basis(mesh, skfemntv.ElementTriRT0(), intorder=4)
+
+@skfemntv.BilinearForm
+def mass(u, v, w):
+    return skfemntv.helpers.dot(u, v)
+
+matrix = skfemntv.asm(mass, basis)
+
+pressure = skfemntv.Basis(
+    mesh, skfemntv.ElementDG(skfemntv.ElementTriP0()), intorder=4
+)
+
+@skfemntv.BilinearForm
+def mixed_divergence(q, p, w):
+    return skfemntv.helpers.div(q) * p
+
+mixed_block = skfemntv.asm(mixed_divergence, basis, pressure)
 ```
 
 ## Example analysis: tension of a plate with a hole
@@ -123,57 +136,6 @@ from `180×20` to `360×40`, `720×80`, and `1080×120` gave peak ratios of
 hole diameter equal to 36% of its height, so its boundaries affect the peak.
 
 ![Von Mises stress around the hole in a tensioned plate](examples/plate_with_hole_tension.png)
-
-## Example analysis: electrostatic potential
-
-The same finite-element workflow also applies to a different physical model:
-electrostatics.  Structural mechanics solves for a vector displacement field
-`u` using an elasticity operator.  Electrostatics solves for a scalar potential
-`phi` using the Poisson/Laplace operator
-`-div(epsilon grad(phi)) = rho`, with electrical potential or charge-flux
-boundary conditions.  The governing equation and unknown are different, while
-the mesh, basis, weak-form, sparse assembly, and linear solve workflow remain
-the same.
-
-For example, the following assembles the Laplace operator for a unit square
-with a uniform permittivity.  The left and right Dirichlet values can then be
-handled by the application's preferred sparse-system utility.
-
-```python
-import numpy as np
-import skfemntv
-from skfemntv.helpers import ddot, grad
-
-mesh = skfemntv.MeshTri.init_tensor(
-    np.linspace(0., 1., 21), np.linspace(0., 1., 21)
-)
-basis = skfemntv.Basis(mesh, skfemntv.ElementTriP1())
-
-@skfemntv.BilinearForm
-def electrostatic_laplace(u, v, w):
-    epsilon = 1.0
-    return epsilon * ddot(grad(u), grad(v))
-
-stiffness = skfemntv.asm(electrostatic_laplace, basis)
-left = basis.get_dofs(
-    nodes=lambda x: np.isclose(x[0], 0.)
-).all()
-right = basis.get_dofs(
-    nodes=lambda x: np.isclose(x[0], 1.)
-).all()
-```
-
-This is a compact example of extending the package beyond structural
-mechanics: the physical meaning changes from displacement and stress to
-potential and electric field `E = -grad(phi)`, but the readable Python weak
-form stays intact.
-
-The runnable visualization example solves a unit-permittivity parallel-plate
-capacitor and writes a potential heatmap with electric-field arrows:
-[`examples/electrostatic_potential.py`](examples/electrostatic_potential.py)
-and [`examples/electrostatic_potential.png`](examples/electrostatic_potential.png).
-Run it with `python examples/electrostatic_potential.py` after installing
-Matplotlib.
 
 The complete script is [`examples/plate_with_hole_tension.py`](examples/plate_with_hole_tension.py).
 It uses PyVista for rendering.  Install the optional visualization packages
@@ -279,14 +241,7 @@ P0/P1/P2 bases on affine triangular and tetrahedral meshes. It currently
 projects over the full basis; composite fields and curved meshes are not
 supported.
 
-### Experimental H(curl) edge elements
-
-The scalar electrostatic example above uses nodal H1 elements for the
-potential.  When the unknown is the vector electric field itself, an
-edge-based H(curl) space is the appropriate model.  skfem-native already
-provides a deliberately small experimental implementation of lowest-order
-first-family Nedelec edge elements for affine triangles and tetrahedra.
-These are separate APIs from the scalar `Basis`/`asm` path below.
+### Experimental H(curl) simplex slices
 
 The lowest-order first-family Nédélec element is available as a deliberately
 small experimental API for affine triangular meshes:

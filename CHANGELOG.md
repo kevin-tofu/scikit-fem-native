@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.8 - 2026-10-22
+
+- Replace the license file with the canonical Apache-2.0 text and align the
+  README badge and NOTICE with the package license metadata.
+
 ## 0.3.7 - 2026-10-22
 
 - Synchronize the optimizer and standalone implementations while preserving
