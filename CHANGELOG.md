@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.7 - 2026-10-22
+
+- Synchronize the optimizer and standalone implementations while preserving
+  line-element and C++ bindings from the standalone package.
+- Expose selected affine RT0 H(div) `Basis`/`asm` forms, including RT0-DG0
+  divergence coupling, and check them in the native test suite.
+- Fix nonlinear CSR scatter's signed-index dtype detection on Windows.
+- Keep the reported memory-calibration peak at least as high as sampled RSS
+  when operating-system peak counters lag the current reading.
+- Keep unsupported scikit-fem parity cases visible as explicit pytest skips;
+  passing cases in the same modules remain active.
+
 ## 0.3.6 — 2026-10-17
 
 - Add a runnable electrostatic potential visualization with electric-field

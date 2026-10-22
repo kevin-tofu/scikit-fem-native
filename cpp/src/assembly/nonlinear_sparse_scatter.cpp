@@ -57,6 +57,8 @@ py::tuple assemble_nonlinear_global(
         throw std::invalid_argument("local_tangent must have shape (elements, local_dofs, local_dofs)");
     if (s.ndim != 3 || s.shape[0] != ne || s.shape[1] != nd || s.shape[2] != nd)
         throw std::invalid_argument("tangent_scatter must match local_tangent shape");
+    if ((tangent_scatter.flags() & py::array::c_style) == 0)
+        throw std::invalid_argument("tangent_scatter must be C-contiguous");
     if (ndofs < 0 || nnz < 0)
         throw std::invalid_argument("global dimensions must be nonnegative");
 
@@ -81,11 +83,9 @@ py::tuple assemble_nonlinear_global(
         py::gil_scoped_release release;
         accumulate_local_blocks(di, rv, kv, map, ne, nd, ndofs, nnz, ro, to);
     };
-    if (s.itemsize == static_cast<py::ssize_t>(sizeof(std::int32_t)) &&
-        s.format == py::format_descriptor<std::int32_t>::format()) {
+    if (tangent_scatter.dtype().is(py::dtype::of<std::int32_t>())) {
         scatter(static_cast<const std::int32_t*>(s.ptr));
-    } else if (s.itemsize == static_cast<py::ssize_t>(sizeof(std::int64_t)) &&
-               s.format == py::format_descriptor<std::int64_t>::format()) {
+    } else if (tangent_scatter.dtype().is(py::dtype::of<std::int64_t>())) {
         scatter(static_cast<const std::int64_t*>(s.ptr));
     } else {
         throw std::invalid_argument("tangent_scatter must use int32 or int64 indices");

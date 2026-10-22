@@ -161,7 +161,7 @@ def run_case(family: str, target_dofs: int, components: int, budget_bytes: int) 
             "assembly_seconds": "",
             "actual_nnz": "",
             "nnz_upper_ratio": "",
-            "rss_peak": _rss_peak_bytes(),
+            "rss_peak": max(_rss_peak_bytes(), rss_before, rss_after_basis),
             "rss_assembler_peak_delta": "",
             "peak_estimate_to_rss_ratio": "",
         }
@@ -172,7 +172,9 @@ def run_case(family: str, target_dofs: int, components: int, budget_bytes: int) 
     started = time.perf_counter()
     matrix = assembler.assemble(gradient=1.0)
     assembly_seconds = time.perf_counter() - started
-    rss_peak = _rss_peak_bytes()
+    rss_peak = max(
+        _rss_peak_bytes(), rss_before, rss_after_basis, _rss_current_bytes()
+    )
     rss_peak_delta = max(0, rss_peak - rss_after_basis)
     measured_total = max(1, rss_peak - rss_before)
     return {

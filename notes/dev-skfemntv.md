@@ -26,6 +26,12 @@ demos. The skip only keeps CI honest about the current supported surface.
   topology helpers, and C++ bindings. `MeshLine` FEM parity is still
   incomplete; merely exporting `MeshLine` is not sufficient.
 - Hex27 basis tabulation and the C++ binding set are checked in wheel smoke.
+- Nonlinear CSR scatter accepts NumPy signed 32/64-bit index dtypes on both
+  Linux and Windows. Its earlier buffer-format-string comparison failed on
+  Windows despite the index widths being correct; dtype and contiguity are
+  checked directly now.
+- Memory-calibration peak RSS is bounded by the sampled current RSS at each
+  phase; Linux `ru_maxrss` can briefly report less than `/proc/self/status`.
 
 ## Open parity work
 
