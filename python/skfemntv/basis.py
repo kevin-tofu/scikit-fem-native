@@ -3918,6 +3918,12 @@ class FacetBasis:
         *,_side=0,_interior=False
     ):
         intorder=2 if intorder is None else int(intorder)
+        if isinstance(element,(ElementTriRT0,ElementTetRT0)):
+            self._init_hdiv_simplex(
+                mesh,element,facets,intorder,quadrature=quadrature,
+                side=_side,interior=_interior,
+            )
+            return
         if not isinstance(element,(ElementVector,ElementComposite)):
             element=ElementVector(element,dim=1)
         if isinstance(facets,str):
@@ -4155,6 +4161,163 @@ class FacetBasis:
                 self.dx[f,q]=np.linalg.norm(np.cross(tangents[:,0],tangents[:,1]))*face_weights[q]
         self.basis = self._vector_fields()
         self.volume_basis=volume
+
+    def _init_hdiv_simplex(
+        self,mesh,element,facets,intorder,*,quadrature,side,interior,
+    ):
+        from ._raviart_thomas import tet_rt0_basis,tri_rt0_basis
+        from .hcurl_basis import _triangle_quadrature
+
+        dimension=mesh.dim()
+        if (
+            (dimension==2 and not isinstance(element,ElementTriRT0))
+            or (dimension==3 and not isinstance(element,ElementTetRT0))
+            or mesh.t.shape[0]!=dimension+1
+        ):
+            raise NotImplementedError(
+                "RT0 FacetBasis requires affine linear triangles or tetrahedra"
+            )
+        volume=Basis(mesh,element,intorder=intorder)
+        if isinstance(facets,FacetRegion):
+            selected=np.asarray(facets,dtype=np.int64)
+            sides=facets.sides
+            normal_signs=facets.normal_signs
+        else:
+            sides=None
+            normal_signs=None
+            selected=(
+                mesh.interior_facets() if interior else mesh.boundary_facets()
+            ) if facets is None else np.asarray(facets,dtype=np.int64).reshape(-1)
+        selected=np.asarray(selected,dtype=np.int64).reshape(-1)
+        if np.any(selected<0) or np.any(selected>=mesh.facets.shape[1]):
+            raise ValueError("facet index is out of range")
+        count=len(selected)
+        if sides is None:
+            sides=np.full(count,side,dtype=np.int8)
+        else:
+            sides=np.asarray(sides,dtype=np.int8)
+        if normal_signs is None:
+            normal_signs=np.ones(count,dtype=np.int8)
+        else:
+            normal_signs=np.asarray(normal_signs,dtype=np.int8)
+        if sides.shape!=(count,) or normal_signs.shape!=(count,):
+            raise ValueError("facet orientation metadata has the wrong shape")
+        if dimension==2:
+            if quadrature is None:
+                order=max(2,(intorder+2)//2)
+                points,weights=np.polynomial.legendre.leggauss(order)
+                points=(points+1.)/2.
+                weights=weights/2.
+                face_points=points[None,:]
+            else:
+                face_points,weights=_validate_quadrature(quadrature,1)
+            reference_vertices=np.array([[0.,0.],[1.,0.],[0.,1.]])
+            local_facets=((0,1),(1,2),(0,2))
+            basis_function=tri_rt0_basis
+        else:
+            if quadrature is None:
+                face_points,weights=_triangle_quadrature(intorder)
+            else:
+                face_points,weights=_validate_quadrature(quadrature,2)
+            reference_vertices=np.array([
+                [0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.],
+            ])
+            local_facets=((0,1,2),(0,1,3),(0,2,3),(1,2,3))
+            basis_function=tet_rt0_basis
+        points_count=face_points.shape[1]
+        rt0=volume._hdiv_basis
+        local_dofs=dimension+1
+        self.mesh,self.elem=mesh,element
+        self.N=volume.N
+        self.doflocs=volume.doflocs
+        self.dof_map=volume.dof_map
+        self.X=face_points.copy()
+        self.W=np.asarray(weights,dtype=np.float64)
+        self.quadrature=(self.X.copy(),self.W.copy())
+        self.facet_ids=selected.copy()
+        self.facet_sides=sides.copy()
+        self.normal_signs=normal_signs.copy()
+        self.parent_elements=np.empty(count,dtype=np.int64)
+        self.element_dofs=np.empty((local_dofs,count),dtype=np.int64)
+        self._facet_values=np.empty(
+            (count,local_dofs,dimension,points_count),dtype=np.float64
+        )
+        self._facet_divergences=np.empty(
+            (count,local_dofs,points_count),dtype=np.float64
+        )
+        self.dx=np.empty((count,points_count),dtype=np.float64)
+        self.global_coordinates=np.empty(
+            (count,points_count,dimension),dtype=np.float64
+        )
+        self.normals=np.empty_like(self.global_coordinates)
+        for facet_position,facet_id in enumerate(selected):
+            parent=int(mesh.f2t[int(sides[facet_position]),facet_id])
+            if parent<0:
+                raise ValueError(
+                    f"facet {facet_id} has no adjacent cell on side "
+                    f"{int(sides[facet_position])}"
+                )
+            local_index=int(np.flatnonzero(mesh.t2f[:,parent]==facet_id)[0])
+            self.parent_elements[facet_position]=parent
+            self.element_dofs[:,facet_position]=rt0.element_dofs[:,parent]
+            jacobian=rt0.jacobians[:,:,parent]
+            determinant=abs(float(rt0.detJ[parent]))
+            origin=mesh.p[:,mesh.t[0,parent]]
+            cell_center=mesh.p[:,mesh.t[:,parent]].mean(axis=1)
+            facet_vertices=mesh.facets[:dimension,facet_id]
+            cell_vertices=mesh.t[:dimension+1,parent]
+            local_corner_ids=np.asarray([
+                int(np.flatnonzero(cell_vertices==vertex)[0])
+                for vertex in facet_vertices
+            ])
+            ref_corners=reference_vertices[local_corner_ids]
+            reference_points=np.empty((dimension,points_count))
+            for q in range(points_count):
+                if dimension==2:
+                    parameter=face_points[0,q]
+                    reference=(1.-parameter)*ref_corners[0]+parameter*ref_corners[1]
+                    tangent=jacobian@(ref_corners[1]-ref_corners[0])
+                    measure=np.linalg.norm(tangent)
+                    normal=np.array([tangent[1],-tangent[0]])
+                    point=origin+jacobian@reference
+                else:
+                    r,s=face_points[:,q]
+                    reference=(1.-r-s)*ref_corners[0]+r*ref_corners[1]+s*ref_corners[2]
+                    tangents=jacobian@np.stack((
+                        ref_corners[1]-ref_corners[0],
+                        ref_corners[2]-ref_corners[0],
+                    ),axis=1)
+                    normal=np.cross(tangents[:,0],tangents[:,1])
+                    measure=np.linalg.norm(normal)
+                    point=origin+jacobian@reference
+                reference_points[:,q]=reference
+                if np.dot(normal,point-cell_center)<0.:
+                    normal=-normal
+                if interior and int(sides[facet_position])==1:
+                    normal=-normal
+                normal*=normal_signs[facet_position]
+                self.global_coordinates[facet_position,q]=point
+                self.normals[facet_position,q]=normal/measure
+                self.dx[facet_position,q]=measure*self.W[q]
+            reference_values,_=basis_function(reference_points)
+            mapped=np.einsum("ij,bjq->biq",jacobian,reference_values)
+            mapped/=determinant
+            mapped*=rt0.basis_signs[:,parent,None,None]
+            self._facet_values[facet_position]=mapped
+            self._facet_divergences[facet_position]=(
+                dimension*rt0.basis_signs[:,parent,None]/determinant
+            )
+        self._hdiv_facet_basis=True
+        self._rt0_basis=rt0
+        self.volume_basis=volume
+        self.basis=None
+
+    def normal_trace(self,coefficients):
+        """Evaluate the scalar outward-normal trace at facet quadrature points."""
+        if not getattr(self,"_hdiv_facet_basis",False):
+            raise TypeError("normal_trace is available for RT0 FacetBasis only")
+        field=self.interpolate(coefficients)
+        return np.einsum("dfq,fqd->fq",field.value,self.normals)
 
     def _init_mixed_3d(
         self,mesh,element,facets,intorder,*,side,interior,quadrature,
@@ -4459,6 +4622,13 @@ class FacetBasis:
             raise ValueError(
                 f"coefficients must have shape ({self.N},)"
             )
+        if getattr(self,"_hdiv_facet_basis",False):
+            local=coefficients[self.element_dofs.T]
+            value=np.einsum("fb,fbdq->dfq",local,self._facet_values)
+            divergence=np.einsum(
+                "fb,fbq->fq",local,self._facet_divergences
+            )
+            return DiscreteField(value,None,div=divergence)
         return Basis._interpolate(self,coefficients)
 
     def _vector_fields(self):

@@ -97,7 +97,11 @@ Affine triangle and tetrahedron RT0 elements are available through the public
 `Basis` / `asm` API. `dot(u, v)`, `div(u) * div(v)`, vector-load forms, and
 rectangular `div(q) * p` coupling to DG0 are supported. Cell quadrature is
 computed by the C++ backend; sparse facet-DOF accumulation currently uses
-Python/SciPy. Curved and higher-order H(div) elements are not implemented.
+Python/SciPy. `FacetBasis` supports normal-trace evaluation, linear loads such
+as `dot(q, w.n)`, and weighted normal-trace bilinear forms such as
+`dot(u, w.n) * dot(v, w.n)`. Tensor-weighted mass forms such as
+`dot(mul(K, u), v)` accept constant tensors and component-first quadrature
+tensors. Curved and higher-order H(div) elements are not implemented.
 
 ```python
 import skfemntv

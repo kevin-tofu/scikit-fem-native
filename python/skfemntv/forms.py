@@ -83,6 +83,41 @@ class _Functional:
         return asm(self,*bases,**kwargs)
 
 
+@dataclass(frozen=True)
+class _NormalTrace:
+    role: str
+    factor: float = 1.0
+    coefficient: Any = None
+    _is_normal_trace = True
+
+    def with_coefficient(self,coefficient):
+        if self.coefficient is not None:
+            raise UnsupportedNativeForm(
+                "multiple normal-trace coefficients are not supported"
+            )
+        return _NormalTrace(self.role,self.factor,coefficient)
+
+    def __mul__(self,other):
+        if np.isscalar(other):
+            return _NormalTrace(
+                self.role,self.factor*other,self.coefficient
+            )
+        if isinstance(other,_NormalTrace) and self.role!=other.role:
+            if self.coefficient is not None and other.coefficient is not None:
+                raise UnsupportedNativeForm(
+                    "multiple normal-trace coefficients are not supported"
+                )
+            return _BilinearTerm(
+                "normal_trace",
+                (self.coefficient if self.coefficient is not None
+                 else other.coefficient),
+                self.factor*other.factor,
+            )
+        return NotImplemented
+
+    __rmul__=__mul__
+
+
 class _BilinearForm:
     def __init__(self, function: Callable):
         self.function = function
@@ -270,6 +305,77 @@ def _native_hdiv_linear_assemble(form,basis,kwargs):
         )
         vector=native.assemble_vector_load(coefficient)
         result=vector if result is None else result+vector
+    return result
+
+
+def _native_hdiv_facet_linear_assemble(form,basis,kwargs):
+    from .hdiv_assembler import RT0FacetLinearAssembler
+
+    geometry={
+        "x":_QuadratureValue(np.moveaxis(basis.global_coordinates,-1,0)),
+        "n":_QuadratureValue(np.moveaxis(basis.normals,-1,0)),
+    }
+    expression=_trace_expression(
+        form.function,(_TestValue(),),geometry,kwargs,
+        context="RT0 facet LinearForm",
+    )
+    terms=_extract_terms(
+        expression,_Term,_Sum,
+        message="RT0 facet LinearForm must reduce to dot(vector, v)",
+    )
+    native=form._native_cache.get(basis)
+    if native is None:
+        native=RT0FacetLinearAssembler(basis)
+        form._native_cache[basis]=native
+    result=None
+    for term in terms:
+        if term.kind!="value":
+            raise UnsupportedNativeForm(
+                "RT0 facet LinearForm supports vector loads only"
+            )
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor
+        )
+        vector=native.assemble_vector_load(coefficient)
+        result=vector if result is None else result+vector
+    return result
+
+
+def _native_hdiv_facet_bilinear_assemble(form,basis,kwargs):
+    from .hdiv_assembler import RT0FacetNormalMassAssembler
+
+    geometry={
+        "x":_QuadratureValue(np.moveaxis(basis.global_coordinates,-1,0)),
+        "n":_QuadratureValue(
+            np.moveaxis(basis.normals,-1,0),parameter_name="_normal_trace"
+        ),
+    }
+    expression=_trace_expression(
+        form.function,(_TrialValue(),_TestValue()),geometry,kwargs,
+        context="RT0 facet BilinearForm",
+    )
+    terms=_extract_terms(
+        expression,_BilinearTerm,_BilinearSum,
+        message=(
+            "RT0 facet BilinearForm supports weighted products "
+            "dot(u, w.n) * dot(v, w.n)"
+        ),
+    )
+    native=form._native_cache.get(basis)
+    if native is None:
+        native=RT0FacetNormalMassAssembler(basis)
+        form._native_cache[basis]=native
+    result=None
+    for term in terms:
+        if term.kind!="normal_trace":
+            raise UnsupportedNativeForm(
+                "RT0 facet BilinearForm supports normal-trace products only"
+            )
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor,squeeze=True
+        )
+        matrix=native.assemble(coefficient)
+        result=matrix if result is None else result+matrix
     return result
 
 
@@ -896,6 +1002,14 @@ def asm(
                 form,integration,kwargs,requested_threads
             )
         if len(bases)==1:
+            if getattr(bases[0],"_hdiv_facet_basis",False):
+                if num_threads is not None:
+                    raise UnsupportedNativeForm(
+                        "per-call threads are not yet supported for RT0 facet LinearForm"
+                    )
+                return _native_hdiv_facet_linear_assemble(
+                    form,bases[0],kwargs
+                )
             if _hdiv_basis(bases[0]) is not None:
                 if num_threads is not None:
                     raise UnsupportedNativeForm(
@@ -963,6 +1077,14 @@ def asm(
             raise UnsupportedNativeForm(
                 "native BilinearForm currently requires one shared basis"
             )
+        if getattr(bases[0],"_hdiv_facet_basis",False):
+            if num_threads is not None:
+                raise UnsupportedNativeForm(
+                    "per-call threads are not yet supported for RT0 facet BilinearForm"
+                )
+            return _native_hdiv_facet_bilinear_assemble(
+                form,bases[0],kwargs
+            )
         if _hdiv_basis(bases[0]) is not None:
             if num_threads is not None:
                 raise UnsupportedNativeForm(
@@ -991,6 +1113,20 @@ def asm(
 
 
 def dot(left, right):
+def dot(left, right):
+    if isinstance(left,(_TrialValue,_TestValue)) and isinstance(
+        right,_QuadratureValue
+    ):
+        if (right.parameter_name=="_normal_trace"
+                and np.asarray(right.value).ndim>=2):
+            return _NormalTrace(
+                "trial" if isinstance(left,_TrialValue) else "test",
+                left.factor,
+            )
+    if isinstance(right,(_TrialValue,_TestValue)) and isinstance(
+        left,_QuadratureValue
+    ):
+        return dot(right,left)
     if isinstance(left,_Curl) and isinstance(right,_Curl):
         if left.role==right.role:
             raise UnsupportedNativeForm(

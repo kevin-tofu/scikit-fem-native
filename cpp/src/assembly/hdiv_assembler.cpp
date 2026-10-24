@@ -83,6 +83,68 @@ void integrate_rt0(
     }
 }
 
+void integrate_rt0_tensor_mass(
+    py::array_t<double, py::array::c_style | py::array::forcecast> values,
+    py::array_t<double, py::array::c_style | py::array::forcecast> dx,
+    py::array_t<double, py::array::c_style | py::array::forcecast> tensor,
+    py::array_t<double, py::array::c_style> output) {
+    const auto v = values.request();
+    const auto measure = dx.request();
+    const auto coefficient = tensor.request();
+    const auto out = output.request();
+    if (v.ndim != 4 || measure.ndim != 2 || coefficient.ndim != 4 ||
+        out.ndim != 3)
+        throw std::invalid_argument("invalid RT0 tensor-mass input rank");
+    const py::ssize_t cells = v.shape[0];
+    const py::ssize_t local = v.shape[1];
+    const py::ssize_t dim = v.shape[2];
+    const py::ssize_t points = v.shape[3];
+    if ((dim != 2 || local != 3) && (dim != 3 || local != 4))
+        throw std::invalid_argument("RT0 supports triangles and tetrahedra");
+    if (measure.shape[0] != cells || measure.shape[1] != points ||
+        coefficient.shape[0] != cells || coefficient.shape[1] != points ||
+        coefficient.shape[2] != dim || coefficient.shape[3] != dim ||
+        out.shape[0] != cells || out.shape[1] != local ||
+        out.shape[2] != local)
+        throw std::invalid_argument("incompatible RT0 tensor-mass shapes");
+    const auto* value_data = static_cast<const double*>(v.ptr);
+    const auto* dx_data = static_cast<const double*>(measure.ptr);
+    const auto* coefficient_data = static_cast<const double*>(coefficient.ptr);
+    auto* output_data = static_cast<double*>(out.ptr);
+    {
+        py::gil_scoped_release release;
+        native_fem::parallel_for(static_cast<std::size_t>(cells),
+            [&](std::size_t begin, std::size_t end) {
+                for (py::ssize_t cell = static_cast<py::ssize_t>(begin);
+                     cell < static_cast<py::ssize_t>(end); ++cell) {
+                    for (py::ssize_t row = 0; row < local; ++row) {
+                        for (py::ssize_t column = 0; column < local; ++column) {
+                            double result = 0.;
+                            for (py::ssize_t q = 0; q < points; ++q) {
+                                double contraction = 0.;
+                                for (py::ssize_t i = 0; i < dim; ++i) {
+                                    const auto row_index =
+                                        ((cell * local + row) * dim + i) * points + q;
+                                    for (py::ssize_t j = 0; j < dim; ++j) {
+                                        const auto column_index =
+                                            ((cell * local + column) * dim + j) * points + q;
+                                        const auto tensor_index =
+                                            ((cell * points + q) * dim + i) * dim + j;
+                                        contraction += value_data[row_index] *
+                                            coefficient_data[tensor_index] *
+                                            value_data[column_index];
+                                    }
+                                }
+                                result += dx_data[cell * points + q] * contraction;
+                            }
+                            output_data[(cell * local + row) * local + column] = result;
+                        }
+                    }
+                }
+            });
+    }
+}
+
 void integrate_rt0_vector_load(
     py::array_t<double, py::array::c_style | py::array::forcecast> values,
     py::array_t<double, py::array::c_style | py::array::forcecast> field,
@@ -124,6 +186,107 @@ void integrate_rt0_vector_load(
                             result += dx_data[cell * points + q] * dot;
                         }
                         output_data[cell * local + basis] = result;
+                    }
+                }
+            });
+    }
+}
+
+void integrate_rt0_facet_load(
+    py::array_t<double, py::array::c_style | py::array::forcecast> values,
+    py::array_t<double, py::array::c_style | py::array::forcecast> field,
+    py::array_t<double, py::array::c_style | py::array::forcecast> dx,
+    py::array_t<double, py::array::c_style> output) {
+    const auto v=values.request();
+    const auto f=field.request();
+    const auto measure=dx.request();
+    const auto out=output.request();
+    if(v.ndim!=4||f.ndim!=3||measure.ndim!=2||out.ndim!=2)
+        throw std::invalid_argument("invalid RT0 facet-load input rank");
+    const py::ssize_t facets=v.shape[0];
+    const py::ssize_t local=v.shape[1];
+    const py::ssize_t dim=v.shape[2];
+    const py::ssize_t points=v.shape[3];
+    if(f.shape[0]!=dim||f.shape[1]!=facets||f.shape[2]!=points||
+       measure.shape[0]!=facets||measure.shape[1]!=points||
+       out.shape[0]!=facets||out.shape[1]!=local)
+        throw std::invalid_argument("incompatible RT0 facet-load shapes");
+    const auto* value_data=static_cast<const double*>(v.ptr);
+    const auto* field_data=static_cast<const double*>(f.ptr);
+    const auto* dx_data=static_cast<const double*>(measure.ptr);
+    auto* output_data=static_cast<double*>(out.ptr);
+    {
+        py::gil_scoped_release release;
+        native_fem::parallel_for(static_cast<std::size_t>(facets),
+            [&](std::size_t begin,std::size_t end){
+                for(py::ssize_t facet=static_cast<py::ssize_t>(begin);
+                    facet<static_cast<py::ssize_t>(end);++facet){
+                    for(py::ssize_t basis=0;basis<local;++basis){
+                        double result=0.;
+                        for(py::ssize_t q=0;q<points;++q){
+                            double contraction=0.;
+                            for(py::ssize_t component=0;component<dim;++component){
+                                const auto vi=((facet*local+basis)*dim+component)*points+q;
+                                const auto fi=(component*facets+facet)*points+q;
+                                contraction+=value_data[vi]*field_data[fi];
+                            }
+                            result+=dx_data[facet*points+q]*contraction;
+                        }
+                        output_data[facet*local+basis]=result;
+                    }
+                }
+            });
+    }
+}
+
+void integrate_rt0_facet_normal_mass(
+    py::array_t<double, py::array::c_style | py::array::forcecast> values,
+    py::array_t<double, py::array::c_style | py::array::forcecast> normals,
+    py::array_t<double, py::array::c_style | py::array::forcecast> weights,
+    py::array_t<double, py::array::c_style | py::array::forcecast> dx,
+    py::array_t<double, py::array::c_style> output) {
+    const auto v=values.request();
+    const auto n=normals.request();
+    const auto c=weights.request();
+    const auto measure=dx.request();
+    const auto out=output.request();
+    if(v.ndim!=4||n.ndim!=3||c.ndim!=2||measure.ndim!=2||out.ndim!=3)
+        throw std::invalid_argument("invalid RT0 facet-mass input rank");
+    const py::ssize_t facets=v.shape[0], local=v.shape[1];
+    const py::ssize_t dim=v.shape[2], points=v.shape[3];
+    if(n.shape[0]!=facets||n.shape[1]!=points||n.shape[2]!=dim||
+       c.shape[0]!=facets||c.shape[1]!=points||
+       measure.shape[0]!=facets||measure.shape[1]!=points||
+       out.shape[0]!=facets||out.shape[1]!=local||out.shape[2]!=local)
+        throw std::invalid_argument("incompatible RT0 facet-mass shapes");
+    const auto* value_data=static_cast<const double*>(v.ptr);
+    const auto* normal_data=static_cast<const double*>(n.ptr);
+    const auto* coefficient_data=static_cast<const double*>(c.ptr);
+    const auto* dx_data=static_cast<const double*>(measure.ptr);
+    auto* output_data=static_cast<double*>(out.ptr);
+    {
+        py::gil_scoped_release release;
+        native_fem::parallel_for(static_cast<std::size_t>(facets),
+            [&](std::size_t begin,std::size_t end){
+                for(py::ssize_t facet=static_cast<py::ssize_t>(begin);
+                    facet<static_cast<py::ssize_t>(end);++facet){
+                    for(py::ssize_t i=0;i<local;++i){
+                        for(py::ssize_t j=0;j<local;++j){
+                            double result=0.;
+                            for(py::ssize_t q=0;q<points;++q){
+                                double trace_i=0.,trace_j=0.;
+                                for(py::ssize_t d=0;d<dim;++d){
+                                    const auto ni=(facet*points+q)*dim+d;
+                                    const auto vi=((facet*local+i)*dim+d)*points+q;
+                                    const auto vj=((facet*local+j)*dim+d)*points+q;
+                                    trace_i+=value_data[vi]*normal_data[ni];
+                                    trace_j+=value_data[vj]*normal_data[ni];
+                                }
+                                const auto qi=facet*points+q;
+                                result+=dx_data[qi]*coefficient_data[qi]*trace_i*trace_j;
+                            }
+                            output_data[(facet*local+i)*local+j]=result;
+                        }
                     }
                 }
             });
@@ -192,7 +355,10 @@ void integrate_rt0_dg0_divergence(
 
 void native_fem::bind_hdiv_assembler(py::module_& module) {
     module.def("integrate_rt0", &integrate_rt0);
+    module.def("integrate_rt0_tensor_mass", &integrate_rt0_tensor_mass);
     module.def("integrate_rt0_vector_load", &integrate_rt0_vector_load);
+    module.def("integrate_rt0_facet_load", &integrate_rt0_facet_load);
+    module.def("integrate_rt0_facet_normal_mass", &integrate_rt0_facet_normal_mass);
     module.def(
         "integrate_rt0_dg0_divergence",
         &integrate_rt0_dg0_divergence

@@ -68,7 +68,7 @@ _ENTRIES = (
     Capability("assembly.hcurl_tet_n1", "assembly", CapabilityStatus.EXPERIMENTAL, "Dedicated reusable CSR mass/curl-curl/Maxwell assembly for AffineTetN1Basis; separate from public asm."),
     Capability("assembly.hcurl_tet_n1_load", "assembly", CapabilityStatus.EXPERIMENTAL, "Reusable vector-load assembly for AffineTetN1Basis from callables or quadrature arrays."),
     Capability("assembly.hcurl_tri_n1_load", "assembly", CapabilityStatus.EXPERIMENTAL, "Reusable vector-load assembly for AffineTriN1Basis from callables or quadrature arrays."),
-    Capability("assembly.hdiv_rt0", "assembly", CapabilityStatus.EXPERIMENTAL, "Public asm mass, divergence-divergence, vector-load, and rectangular RT0-DG0 divergence coupling for affine simplex RT0; C++ cell integration and Python/SciPy sparse scatter."),
+    Capability("assembly.hdiv_rt0", "assembly", CapabilityStatus.EXPERIMENTAL, "Public asm mass, divergence-divergence, vector-load, rectangular RT0-DG0 divergence coupling, and RT0 facet normal-trace linear/bilinear forms for affine simplex RT0; C++ integration and Python/SciPy sparse scatter."),
     Capability("evaluation.quadrature", "evaluation", CapabilityStatus.SUPPORTED, "Interpolation at basis quadrature points."),
     Capability("evaluation.l2_projection", "evaluation", CapabilityStatus.EXPERIMENTAL, "L2 projection on full affine triangular/tetrahedral scalar/vector P0/P1/P2 bases; subset projection, composites, and curved geometry remain unavailable."),
     Capability("evaluation.hcurl_tri_n1", "evaluation", CapabilityStatus.EXPERIMENTAL, "Edge-moment interpolation and value/curl evaluation for AffineTriN1Basis."),

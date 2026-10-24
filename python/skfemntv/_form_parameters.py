@@ -48,6 +48,8 @@ class QuadratureValue:
         return QuadratureValue(getattr(ufunc,method)(*values,**kwargs))
 
     def __mul__(self,other):
+        if getattr(other,"_is_normal_trace",False):
+            return other.with_coefficient(self)
         if isinstance(other,(
             BilinearTerm,CompositeBilinearTerm,InterfaceBilinearTerm,
         )):
@@ -59,6 +61,8 @@ class QuadratureValue:
         return QuadratureValue(self.value*np.asarray(other))
 
     def __rmul__(self,other):
+        if getattr(other,"_is_normal_trace",False):
+            return other.with_coefficient(self)
         if isinstance(other,(
             BilinearTerm,CompositeBilinearTerm,InterfaceBilinearTerm,
         )):

@@ -6,7 +6,8 @@ import numpy as np
 from scipy.sparse import coo_matrix
 
 from ._skfn import (
-    integrate_rt0,integrate_rt0_dg0_divergence,
+    integrate_rt0,integrate_rt0_dg0_divergence,integrate_rt0_facet_load,
+    integrate_rt0_facet_normal_mass,integrate_rt0_tensor_mass,
     integrate_rt0_vector_load,
 )
 from .hdiv_basis import AffineSimplexRT0Basis
@@ -52,6 +53,49 @@ class SimplexRT0Assembler:
             basis._element_values,basis._element_divergences,basis.dx,
             value_coefficient,divergence_coefficient,value is not None,
             divergence is not None,self._local,
+        )
+        dofs=basis.element_dofs.T
+        rows=np.broadcast_to(dofs[:,:,None],self._local.shape).reshape(-1)
+        columns=np.broadcast_to(dofs[:,None,:],self._local.shape).reshape(-1)
+        return coo_matrix(
+            (self._local.reshape(-1),(rows,columns)),shape=(basis.N,basis.N)
+        ).tocsr()
+
+    def assemble_tensor_mass(self,coefficient):
+        basis=self.basis
+        dimension=basis.mesh.dim()
+        coefficient=np.asarray(coefficient,dtype=np.float64)
+        component_shape=(dimension,dimension)+basis.dx.shape
+        native_shape=basis.dx.shape+(dimension,dimension)
+        if coefficient.shape==(dimension,dimension):
+            coefficient=np.broadcast_to(
+                coefficient,native_shape
+            )
+        elif coefficient.shape[:2]==(dimension,dimension):
+            try:
+                coefficient=np.broadcast_to(coefficient,component_shape)
+            except ValueError as error:
+                raise ValueError(
+                    "tensor coefficient must have shape "
+                    f"({dimension}, {dimension}), "
+                    f"({dimension}, {dimension}, {basis.dx.shape[0]}, "
+                    f"{basis.dx.shape[1]}), or "
+                    f"{native_shape}"
+                ) from error
+            coefficient=np.moveaxis(coefficient,(0,1),(-2,-1))
+        else:
+            try:
+                coefficient=np.broadcast_to(coefficient,native_shape)
+            except ValueError as error:
+                raise ValueError(
+                    "tensor coefficient must have shape "
+                    f"({dimension}, {dimension}), "
+                    f"({dimension}, {dimension}, {basis.dx.shape[0]}, "
+                    f"{basis.dx.shape[1]}), or {native_shape}"
+                ) from error
+        coefficient=np.ascontiguousarray(coefficient,dtype=np.float64)
+        integrate_rt0_tensor_mass(
+            basis._element_values,basis.dx,coefficient,self._local
         )
         dofs=basis.element_dofs.T
         rows=np.broadcast_to(dofs[:,:,None],self._local.shape).reshape(-1)
@@ -141,4 +185,78 @@ class RT0DG0MixedAssembler:
         ).tocsr()
 
 
-__all__=["RT0DG0MixedAssembler","SimplexRT0Assembler"]
+class RT0FacetLinearAssembler:
+    """Assemble vector loads against RT0 traces on a facet basis."""
+
+    def __init__(self,basis):
+        if not getattr(basis,"_hdiv_facet_basis",False):
+            raise TypeError("basis must be an RT0 FacetBasis")
+        self.basis=basis
+        self._local=np.empty(
+            (basis.dx.shape[0],basis.element_dofs.shape[0]),dtype=np.float64
+        )
+
+    def assemble_vector_load(self,field):
+        basis=self.basis
+        values=field(basis.global_coordinates) if callable(field) else field
+        values=np.asarray(values,dtype=np.float64)
+        dimension=basis.mesh.dim()
+        expected=(dimension,)+basis.dx.shape
+        if values.shape==(dimension,):
+            values=values[:,None,None]
+        elif values.shape==(dimension,basis.dx.shape[0]):
+            values=values[:,:,None]
+        try:
+            values=np.ascontiguousarray(np.broadcast_to(values,expected))
+        except ValueError as error:
+            raise ValueError(
+                f"facet vector load must broadcast to {expected}"
+            ) from error
+        integrate_rt0_facet_load(
+            basis._facet_values,values,basis.dx,self._local
+        )
+        result=np.zeros(basis.N,dtype=np.float64)
+        np.add.at(
+            result,basis.element_dofs.T.reshape(-1),self._local.reshape(-1)
+        )
+        return result
+
+
+class RT0FacetNormalMassAssembler:
+    """Assemble weighted products of RT0 normal traces on facets."""
+
+    def __init__(self,basis):
+        if not getattr(basis,"_hdiv_facet_basis",False):
+            raise TypeError("basis must be an RT0 FacetBasis")
+        self.basis=basis
+        count,local=basis.element_dofs.shape[1],basis.element_dofs.shape[0]
+        self._local=np.empty((count,local,local),dtype=np.float64)
+
+    def assemble(self,coefficient):
+        basis=self.basis
+        values=(coefficient(basis.global_coordinates)
+                if callable(coefficient) else coefficient)
+        values=np.asarray(values,dtype=np.float64)
+        try:
+            values=np.ascontiguousarray(np.broadcast_to(values,basis.dx.shape))
+        except ValueError as error:
+            raise ValueError(
+                f"facet coefficient must broadcast to {basis.dx.shape}"
+            ) from error
+        integrate_rt0_facet_normal_mass(
+            basis._facet_values,basis.normals,values,basis.dx,self._local
+        )
+        from scipy.sparse import coo_matrix
+        dofs=basis.element_dofs.T
+        rows=np.broadcast_to(dofs[:,:,None],self._local.shape).reshape(-1)
+        columns=np.broadcast_to(dofs[:,None,:],self._local.shape).reshape(-1)
+        return coo_matrix(
+            (self._local.reshape(-1),(rows,columns)),
+            shape=(basis.N,basis.N),
+        ).tocsr()
+
+
+__all__=[
+    "RT0DG0MixedAssembler","RT0FacetLinearAssembler",
+    "RT0FacetNormalMassAssembler","SimplexRT0Assembler",
+]
