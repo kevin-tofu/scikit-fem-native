@@ -92,8 +92,8 @@ class _TopologyMesh:
                    (2,4,7,6),(1,5,7,4),(3,6,7,5))
             if not full:
                 return faces
-            edges=((0,1),(1,4),(4,2),(2,0),(3,5),(5,7),
-                   (7,6),(6,3),(0,3),(1,5),(4,7),(2,6))
+            edges=((0,1),(0,2),(0,3),(1,4),(1,5),(2,4),
+                   (2,6),(3,5),(3,6),(4,7),(5,7),(6,7))
             edge_node={tuple(sorted(edge)):8+i for i,edge in enumerate(edges)}
             return tuple(
                 face+tuple(
@@ -102,17 +102,24 @@ class _TopologyMesh:
                 )
                 for face in faces
             )
-        index=lambda i,j,k:i+3*j+9*k
-        full_faces=(
-            tuple(index(i,j,0) for j in range(3) for i in range(3)),
-            tuple(index(0,j,k) for k in range(3) for j in range(3)),
-            tuple(index(i,0,k) for k in range(3) for i in range(3)),
-            tuple(index(i,2,k) for k in range(3) for i in range(3)),
-            tuple(index(2,j,k) for k in range(3) for j in range(3)),
-            tuple(index(i,j,2) for j in range(3) for i in range(3)),
-        )
+        corner_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
+                      (2,4,7,6),(1,5,7,4),(3,6,7,5))
+        edge_list=((0,1),(0,2),(0,3),(1,4),(1,5),(2,4),
+                   (2,6),(3,5),(3,6),(4,7),(5,7),(6,7))
+        edge_node={tuple(sorted(edge)):8+i for i,edge in enumerate(edge_list)}
+        hex2_locs=ElementHex2().doflocs
+        full_faces=[]
+        for corners in corner_faces:
+            face_edges=tuple(
+                edge_node[tuple(sorted((corners[i],corners[(i+1)%4])))]
+                for i in range(4)
+            )
+            center=np.mean(ElementHex1().doflocs[list(corners)],axis=0)
+            center_node=int(np.argmin(np.linalg.norm(hex2_locs-center,axis=1)))
+            full_faces.append(tuple(corners)+face_edges+(center_node,))
+        full_faces=tuple(full_faces)
         return full_faces if full else tuple(
-            (face[0],face[2],face[8],face[6]) for face in full_faces
+            face[:4] for face in full_faces
         )
 
     def _build_topology(self):
@@ -1769,20 +1776,14 @@ class MeshPyramid1(_TopologyMesh):
 
 
 class MeshHex(_TopologyMesh):
-    """Hexahedral mesh using the native local corner order.
-
-    The local vertices follow ``000, 100, 010, 001, 110, 101, 011, 111``.
-    This order is used by the native Hex elements and must stay paired with
-    their basis-function and facet tables. Its connectivity can differ from
-    scikit-fem's while representing the same physical mesh.
-    """
+    """Hexahedral mesh using scikit-fem's reference-corner order."""
 
     def __init__(self, p: np.ndarray | None = None, t: np.ndarray | None = None):
         self.p = np.asarray(
             p if p is not None else
-            [[0.,1.,0.,0.,1.,1.,0.,1.],
+            [[0.,0.,0.,1.,0.,1.,1.,1.],
              [0.,0.,1.,0.,1.,0.,1.,1.],
-             [0.,0.,0.,1.,0.,1.,1.,1.]], dtype=np.float64
+             [0.,1.,0.,0.,1.,1.,0.,1.]], dtype=np.float64
         )
         self.t = np.asarray(
             t if t is not None else np.arange(8)[:, None], dtype=np.int64
@@ -1795,22 +1796,24 @@ class MeshHex(_TopologyMesh):
 
     @classmethod
     def init_tensor(cls, x, y, z):
-        x, y, z = map(np.asarray, (x, y, z))
-        points = np.array(
-            [[a,b,c] for c in z for b in y for a in x], dtype=float
-        ).T
-        nx, ny = len(x), len(y)
-        node = lambda i,j,k: i + nx*(j + ny*k)
-        cells = []
-        for k in range(len(z)-1):
-            for j in range(len(y)-1):
-                for i in range(len(x)-1):
+        x,y,z=map(lambda values:np.sort(np.asarray(values,dtype=float)),(x,y,z))
+        nx,ny,nz=len(x),len(y),len(z)
+        X,Y,Z=np.meshgrid(x,y,z)
+        points=np.vstack((X.flatten("F"),Y.flatten("F"),Z.flatten("F")))
+        # Scikit-fem numbers tensor-product nodes with y varying fastest.
+        def node(i,j,k):
+            return j+ny*(i+nx*k)
+        cells=[]
+        for k in range(nz-1):
+            for i in range(nx-1):
+                for j in range(ny-1):
                     cells.append((
-                        node(i,j,k), node(i+1,j,k), node(i,j+1,k), node(i,j,k+1),
-                        node(i+1,j+1,k), node(i+1,j,k+1),
-                        node(i,j+1,k+1), node(i+1,j+1,k+1),
+                        node(i,j,k),node(i,j+1,k),
+                        node(i+1,j,k),node(i,j,k+1),
+                        node(i+1,j+1,k),node(i,j+1,k+1),
+                        node(i+1,j,k+1),node(i+1,j+1,k+1),
                     ))
-        return cls(points, np.asarray(cells, dtype=np.int64).T)
+        return cls(points,np.asarray(cells,dtype=np.int64).T)
 
     @property
     def nelements(self):
@@ -1820,32 +1823,11 @@ class MeshHex(_TopologyMesh):
         return 3
 
     def _legacy_boundary_facets(self):
-        if self.t.shape[0] in (8,20):
-            local_faces=((0,1,4,2),(3,6,7,5),(0,3,5,1),
-                         (2,4,7,6),(0,2,6,3),(1,5,7,4))
-            corners=local_faces
-            if self.t.shape[0]==20:
-                edges=((0,1),(1,4),(4,2),(2,0),(3,5),(5,7),
-                       (7,6),(6,3),(0,3),(1,5),(4,7),(2,6))
-                edge_node={tuple(sorted(edge)):8+i for i,edge in enumerate(edges)}
-                local_faces=tuple(
-                    face+tuple(
-                        edge_node[tuple(sorted((face[i],face[(i+1)%4])))]
-                        for i in range(4)
-                    )
-                    for face in local_faces
-                )
-        else:
-            index=lambda i,j,k:i+3*j+9*k
-            local_faces=(
-                tuple(index(i,j,0) for j in range(3) for i in range(3)),
-                tuple(index(i,j,2) for j in range(3) for i in range(3)),
-                tuple(index(i,0,k) for k in range(3) for i in range(3)),
-                tuple(index(i,2,k) for k in range(3) for i in range(3)),
-                tuple(index(0,j,k) for k in range(3) for j in range(3)),
-                tuple(index(2,j,k) for k in range(3) for j in range(3)),
-            )
-            corners=tuple((face[0],face[2],face[8],face[6]) for face in local_faces)
+        local_faces=self._local_facets(full=self.t.shape[0] in (20,27))
+        corners=(
+            tuple(face[:4] for face in local_faces)
+            if self.t.shape[0] in (20,27) else local_faces
+        )
         found={}
         for e,nodes in enumerate(self.t.T):
             for face,corner in zip(local_faces,corners):
@@ -1865,22 +1847,18 @@ class MeshHex2(MeshHex):
     @classmethod
     def from_mesh(cls,mesh:MeshHex):
         points=[];lookup={};cells=[]
-        bits=np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1],
-                       [1,1,0],[1,0,1],[0,1,1],[1,1,1]])
-        grid=(0.,.5,1.)
+        bits=ElementHex1().doflocs
+        local_nodes=ElementHex2().doflocs
         for vertices in mesh.t.T:
             xyz=mesh.p[:,vertices];cell=[]
-            for zeta in grid:
-                for eta in grid:
-                    for xi in grid:
-                        point=np.zeros(3)
-                        for n,bit in enumerate(bits):
-                            factors=np.where(bit,(xi,eta,zeta),1.-np.array((xi,eta,zeta)))
-                            point+=np.prod(factors)*xyz[:,n]
-                        key=tuple(np.round(point,14))
-                        if key not in lookup:
-                            lookup[key]=len(points);points.append(point)
-                        cell.append(lookup[key])
+            for local in local_nodes:
+                factors=np.where(bits,local,1.-local)
+                weights=np.prod(factors,axis=1)
+                point=xyz@weights
+                key=tuple(np.round(point,14))
+                if key not in lookup:
+                    lookup[key]=len(points);points.append(point)
+                cell.append(lookup[key])
             cells.append(cell)
         return cls(np.asarray(points).T,np.asarray(cells,dtype=np.int64).T)
 
@@ -1899,8 +1877,8 @@ class MeshHex2(MeshHex):
 class MeshHex20(MeshHex):
     """Twenty-node serendipity hexahedral mesh."""
 
-    _edges=((0,1),(1,4),(4,2),(2,0),(3,5),(5,7),
-            (7,6),(6,3),(0,3),(1,5),(4,7),(2,6))
+    _edges=((0,1),(0,2),(0,3),(1,4),(1,5),(2,4),
+            (2,6),(3,5),(3,6),(4,7),(5,7),(6,7))
 
     @classmethod
     def from_mesh(cls,mesh:MeshHex):
@@ -2071,17 +2049,22 @@ class ElementPyramid1(_ComposableElement):
 class ElementHex1(_ComposableElement):
     def __init__(self):
         self.doflocs = np.array(
-            [[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.],
-             [1.,1.,0.],[1.,0.,1.],[0.,1.,1.],[1.,1.,1.]]
+            [[1.,1.,1.],[1.,1.,0.],[1.,0.,1.],[0.,1.,1.],
+             [1.,0.,0.],[0.,1.,0.],[0.,0.,1.],[0.,0.,0.]]
         )
 
 
 class ElementHex2(_ComposableElement):
     def __init__(self):
-        self.doflocs=np.array(
-            [[x,y,z] for z in (0.,.5,1.) for y in (0.,.5,1.)
-             for x in (0.,.5,1.)]
-        )
+        self.doflocs=np.array([
+            [1.,1.,1.],[1.,1.,0.],[1.,0.,1.],[0.,1.,1.],
+            [1.,0.,0.],[0.,1.,0.],[0.,0.,1.],[0.,0.,0.],
+            [1.,1.,.5],[1.,.5,1.],[.5,1.,1.],[1.,.5,0.],
+            [.5,1.,0.],[1.,0.,.5],[.5,0.,1.],[0.,1.,.5],
+            [0.,.5,1.],[.5,0.,0.],[0.,.5,0.],[0.,0.,.5],
+            [1.,.5,.5],[.5,.5,1.],[.5,1.,.5],[.5,0.,.5],
+            [.5,.5,0.],[0.,.5,.5],[.5,.5,.5],
+        ])
 
 
 class ElementHex20(_ComposableElement):
@@ -2438,24 +2421,8 @@ def _interior_facets_3d(mesh):
             for face in corner_faces
         ) if mesh.t.shape[0]==10 else corner_faces
     else:
-        if mesh.t.shape[0]==8:
-            corner_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
-                          (2,4,7,6),(1,5,7,4),(3,6,7,5))
-            full_faces=corner_faces
-        else:
-            index=lambda i,j,k:i+3*j+9*k
-            full_faces=(
-                tuple(index(i,j,0) for j in range(3) for i in range(3)),
-                tuple(index(0,j,k) for k in range(3) for j in range(3)),
-                tuple(index(i,0,k) for k in range(3) for i in range(3)),
-                tuple(index(i,2,k) for k in range(3) for i in range(3)),
-                tuple(index(2,j,k) for k in range(3) for j in range(3)),
-                tuple(index(i,j,2) for j in range(3) for i in range(3)),
-            )
-            corner_faces=tuple(
-                (face[0],face[2],face[8],face[6])
-                for face in full_faces
-            )
+        full_faces=mesh._local_facets(full=mesh.t.shape[0] in (20,27))
+        corner_faces=tuple(face[:4] for face in full_faces)
     found={}
     for nodes in mesh.t.T:
         for corner,full in zip(corner_faces,full_faces):
@@ -2512,7 +2479,11 @@ def _hex_shapes(points,quadratic):
     points=np.asarray(points)
     dimension=points.shape[0]
     if quadratic:
-        count=3**dimension
+        locations=(
+            ElementHex2().doflocs if dimension==3 else
+            np.array([[x,y] for y in (0.,.5,1.) for x in (0.,.5,1.)])
+        )
+        count=len(locations)
         shape=np.empty((points.shape[1],count))
         grad=np.empty((points.shape[1],count,dimension))
         for q,coordinate in enumerate(points.T):
@@ -2524,8 +2495,8 @@ def _hex_shapes(points,quadratic):
                 np.array([4*x-3,4-8*x,4*x-1])
                 for x in coordinate
             ]
-            for node,index in enumerate(np.ndindex(*(3,)*dimension)):
-                index=index[::-1]
+            for node,location in enumerate(locations):
+                index=np.rint(2.*location).astype(int)
                 shape[q,node]=np.prod([
                     values[d][index[d]] for d in range(dimension)
                 ])
@@ -2537,8 +2508,7 @@ def _hex_shapes(points,quadratic):
         return shape,grad
     bits=(
         ((0,0),(1,0),(1,1),(0,1)) if dimension==2 else
-        ((0,0,0),(1,0,0),(0,1,0),(0,0,1),
-         (1,1,0),(1,0,1),(0,1,1),(1,1,1))
+        tuple(map(tuple,ElementHex1().doflocs.astype(int)))
     )
     shape=np.empty((points.shape[1],len(bits)))
     grad=np.empty((points.shape[1],len(bits),dimension))
@@ -3633,7 +3603,12 @@ class Basis:
             return mesh.t[:5]
         if isinstance(scalar,ElementHex1):
             if mesh.t.shape[0]==27:
-                return mesh.t[[0,2,6,18,8,20,24,26]]
+                local=np.asarray([
+                    np.argmin(np.linalg.norm(
+                        ElementHex2().doflocs-location,axis=1
+                    )) for location in ElementHex1().doflocs
+                ])
+                return mesh.t[local]
             return mesh.t[:8]
         if isinstance(scalar,ElementHex2):
             return mesh.t[:27]
@@ -3720,33 +3695,9 @@ class Basis:
         elif self._serendipity_hex:
             shape,refgrad=_hex20_shapes(self.X)
         elif self._quadratic_hex:
-            grid=(0.,.5,1.)
-            def values(x):
-                return np.array([2.*(x-.5)*(x-1.),4.*x*(1.-x),2.*x*(x-.5)])
-            def derivatives(x):
-                return np.array([4.*x-3.,4.-8.*x,4.*x-1.])
-            nq=self.X.shape[1];shape=np.empty((nq,27));refgrad=np.empty((nq,27,3))
-            for q,(x,y,z) in enumerate(self.X.T):
-                v=(values(x),values(y),values(z));d=(derivatives(x),derivatives(y),derivatives(z))
-                n=0
-                for k in range(3):
-                    for j in range(3):
-                        for i in range(3):
-                            shape[q,n]=v[0][i]*v[1][j]*v[2][k]
-                            refgrad[q,n]=(
-                                d[0][i]*v[1][j]*v[2][k],
-                                v[0][i]*d[1][j]*v[2][k],
-                                v[0][i]*v[1][j]*d[2][k],
-                            );n+=1
+            shape,refgrad=_hex_shapes(self.X,True)
         else:
-            bits=np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1],
-                           [1,1,0],[1,0,1],[0,1,1],[1,1,1]])
-            shape=np.empty((self.X.shape[1],8));refgrad=np.empty((self.X.shape[1],8,3))
-            for q,xi in enumerate(self.X.T):
-                for n,bit in enumerate(bits):
-                    factors=np.where(bit,xi,1.-xi);shape[q,n]=np.prod(factors)
-                    for j in range(3):
-                        refgrad[q,n,j]=(1. if bit[j] else -1.)*np.prod(np.delete(factors,j))
+            shape,refgrad=_hex_shapes(self.X,False)
         geometry_shape=shape
         geometry_refgrad=refgrad
         geometry_nodes=self._mesh.t.shape[0]
@@ -3898,28 +3849,8 @@ class Basis:
             if self._serendipity_hex:
                 return _hex20_shapes(self.X)
             if self._quadratic_hex:
-                values=lambda x:np.array([2*(x-.5)*(x-1),4*x*(1-x),2*x*(x-.5)])
-                deriv=lambda x:np.array([4*x-3,4-8*x,4*x-1])
-                shape=np.empty((self.X.shape[1],27));grad=np.empty((self.X.shape[1],27,3))
-                for q,(x,y,z) in enumerate(self.X.T):
-                    v=(values(x),values(y),values(z));d=(deriv(x),deriv(y),deriv(z));n=0
-                    for k in range(3):
-                        for j in range(3):
-                            for i in range(3):
-                                shape[q,n]=v[0][i]*v[1][j]*v[2][k]
-                                grad[q,n]=(d[0][i]*v[1][j]*v[2][k],
-                                           v[0][i]*d[1][j]*v[2][k],
-                                           v[0][i]*v[1][j]*d[2][k]);n+=1
-                return shape,grad
-            bits=np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1],
-                           [1,1,0],[1,0,1],[0,1,1],[1,1,1]])
-            shape=np.empty((self.X.shape[1],8));grad=np.empty((self.X.shape[1],8,3))
-            for q,xi in enumerate(self.X.T):
-                for n,bit in enumerate(bits):
-                    factors=np.where(bit,xi,1-xi);shape[q,n]=np.prod(factors)
-                    for j in range(3):
-                        grad[q,n,j]=(1 if bit[j] else -1)*np.prod(np.delete(factors,j))
-            return shape,grad
+                return _hex_shapes(self.X,True)
+            return _hex_shapes(self.X,False)
         finally:
             self.X = old_points
 
@@ -4022,20 +3953,8 @@ class FacetBasis:
                 face_weights=np.full(3,1/6)
             face_points=bary[:,1:]
         else:
-            if mesh.t.shape[0]!=27:
-                local_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
-                             (2,4,7,6),(1,5,7,4),(3,6,7,5))
-                corners=local_faces
-            else:
-                index=lambda i,j,k:i+3*j+9*k
-                local_faces=(
-                    tuple(index(i,j,0) for j in range(3) for i in range(3)),
-                    tuple(index(0,j,k) for k in range(3) for j in range(3)),
-                    tuple(index(i,0,k) for k in range(3) for i in range(3)),
-                    tuple(index(i,2,k) for k in range(3) for i in range(3)),
-                    tuple(index(2,j,k) for k in range(3) for j in range(3)),
-                    tuple(index(i,j,2) for j in range(3) for i in range(3)))
-                corners=tuple((face[0],face[2],face[8],face[6]) for face in local_faces)
+            local_faces=mesh._local_facets(full=mesh.t.shape[0] in (20,27))
+            corners=tuple(face[:4] for face in local_faces)
             order=3 if intorder>=4 else 2
             points,weights=np.polynomial.legendre.leggauss(order)
             points=(points+1.)/2.;weights=weights/2.
@@ -4095,8 +4014,7 @@ class FacetBasis:
         self.normal_signs=facet_signs.copy()
         self.local_faces=[]
         for f, face in enumerate(facets.T):
-            face_corners=face[:3] if is_tet else (face[0],face[2] if len(face)==9 else face[1],
-                face[8] if len(face)==9 else face[2],face[6] if len(face)==9 else face[3])
+            face_corners=face[:3] if is_tet else face[:4]
             adjacent=lookup[tuple(sorted(map(int,face_corners)))]
             local_side=int(facet_sides[f])
             if selected_ids is not None:

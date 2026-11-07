@@ -45,6 +45,52 @@ def _native_to_reference_dofs(native_basis, reference_basis):
     return result
 
 
+def test_hex_local_and_tensor_mesh_order_matches_scikit_fem():
+    x = np.asarray([0.0, 1.0, 2.0])
+    y = np.asarray([0.0, 0.5, 1.0])
+    z = np.asarray([0.0, 1.0])
+    native_mesh = skfemntv.MeshHex.init_tensor(x, y, z)
+    reference_mesh = skfem.MeshHex.init_tensor(x, y, z)
+
+    np.testing.assert_array_equal(native_mesh.p, reference_mesh.p)
+    np.testing.assert_array_equal(native_mesh.t, reference_mesh.t)
+    np.testing.assert_array_equal(
+        skfemntv.ElementHex1().doflocs,
+        skfem.ElementHex1().doflocs,
+    )
+    np.testing.assert_array_equal(
+        skfemntv.ElementHex2().doflocs,
+        skfem.ElementHex2().doflocs,
+    )
+    np.testing.assert_array_equal(
+        skfemntv.MeshHex().p, skfem.MeshHex().p
+    )
+    np.testing.assert_array_equal(
+        skfemntv.MeshHex().t, skfem.MeshHex().t
+    )
+
+    native_basis = skfemntv.Basis(native_mesh, skfemntv.ElementHex1())
+    reference_basis = skfem.Basis(reference_mesh, skfem.ElementHex1())
+    np.testing.assert_array_equal(
+        native_basis.element_dofs, reference_basis.element_dofs
+    )
+
+    native_quadratic = skfemntv.Basis(
+        skfemntv.MeshHex2.from_mesh(skfemntv.MeshHex()),
+        skfemntv.ElementHex2(),
+    )
+    reference_quadratic = skfem.Basis(
+        skfem.MeshHex2.from_mesh(skfem.MeshHex()),
+        skfem.ElementHex2(),
+    )
+    np.testing.assert_allclose(
+        native_quadratic.mesh.p[:, native_quadratic.element_dofs[:, 0]],
+        reference_quadratic.mesh.p[
+            :, reference_quadratic.element_dofs[:, 0]
+        ],
+    )
+
+
 def test_tensor_hex_orderings_produce_same_vector_operators():
     x = np.asarray([0.0, 1.0, 2.0])
     y = np.asarray([0.0, 0.5, 1.0])
