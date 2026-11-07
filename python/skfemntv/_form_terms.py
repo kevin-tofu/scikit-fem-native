@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 
@@ -13,40 +13,19 @@ from ._errors import UnsupportedNativeForm
 
 @dataclass(frozen=True)
 class LinearTerm:
-    __array_priority__: ClassVar[int] = 1000
     kind: str
     coefficient: Any
     factor: float = 1.0
-    component: int | None = None
 
     def __neg__(self):
-        return LinearTerm(
-            self.kind, self.coefficient, -self.factor, self.component
-        )
+        return LinearTerm(self.kind, self.coefficient, -self.factor)
 
     def __mul__(self, value):
         if np.isscalar(value):
-            return LinearTerm(
-                self.kind, self.coefficient, self.factor * value,
-                self.component,
-            )
-        if isinstance(value, np.ndarray):
-            coefficient = (
-                value if self.coefficient is None
-                else np.asarray(self.coefficient) * value
-            )
-            return LinearTerm(
-                self.kind, coefficient, self.factor, self.component
-            )
+            return LinearTerm(self.kind, self.coefficient, self.factor * value)
         return NotImplemented
 
     __rmul__ = __mul__
-
-    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
-        if ufunc is np.multiply and method == "__call__":
-            other = inputs[0] if inputs[1] is self else inputs[1]
-            return self.__mul__(other)
-        return NotImplemented
 
     def __add__(self, other):
         return LinearSum((self,)) + other
@@ -68,19 +47,6 @@ class LinearSum:
 
     __radd__ = __add__
 
-    def __mul__(self, value):
-        if np.isscalar(value) or isinstance(value, np.ndarray):
-            return LinearSum(tuple(term * value for term in self.terms))
-        return NotImplemented
-
-    __rmul__ = __mul__
-
-    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
-        if ufunc is np.multiply and method == "__call__":
-            other = inputs[0] if inputs[1] is self else inputs[1]
-            return self.__mul__(other)
-        return NotImplemented
-
     def __neg__(self):
         return LinearSum(tuple(-term for term in self.terms))
 
@@ -90,7 +56,6 @@ class LinearSum:
 
 @dataclass(frozen=True)
 class BilinearTerm:
-    __array_priority__: ClassVar[int] = 1000
     kind: str
     coefficient: Any = None
     factor: float = 1.0
@@ -113,12 +78,6 @@ class BilinearTerm:
         return NotImplemented
 
     __rmul__ = __mul__
-
-    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
-        if ufunc is np.multiply and method == "__call__":
-            other = inputs[0] if inputs[1] is self else inputs[1]
-            return self.__mul__(other)
-        return NotImplemented
 
     def __neg__(self):
         return BilinearTerm(self.kind, self.coefficient, -self.factor)

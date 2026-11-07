@@ -6,10 +6,8 @@ import numpy as np
 
 from ._coefficients import Coefficient
 from ._composite_fields import CompositeField,CompositeWeightedField
-from ._form_terms import (
-    BilinearTerm,CompositeBilinearTerm,LinearSum,LinearTerm,
-)
-from ._h1_fields import Divergence,TestValue,TrialValue
+from ._form_terms import BilinearTerm,CompositeBilinearTerm
+from ._h1_fields import Curl,Divergence
 from ._interface_terms import InterfaceBilinearTerm
 
 
@@ -24,11 +22,6 @@ class QuadratureValue:
 
     def __array__(self,dtype=None):
         return np.asarray(self.value,dtype=dtype)
-
-    @property
-    def T(self):
-        """Transpose values while retaining quadrature-value semantics."""
-        return QuadratureValue(self.value.T)
 
     def __getitem__(self,key):
         if self.parameter_name is not None:
@@ -55,13 +48,16 @@ class QuadratureValue:
         return QuadratureValue(getattr(ufunc,method)(*values,**kwargs))
 
     def __mul__(self,other):
-        if isinstance(other,(TestValue,TrialValue)):
-            return other.__mul__(self)
         if getattr(other,"_is_normal_trace",False):
             return other.with_coefficient(self)
+        if isinstance(other,Curl):
+            coefficient=(
+                self.value if other.coefficient is None else
+                self.value*other.coefficient
+            )
+            return Curl(other.role,other.factor,coefficient)
         if isinstance(other,(
-            BilinearTerm,CompositeBilinearTerm,LinearSum,LinearTerm,
-            InterfaceBilinearTerm,
+            BilinearTerm,CompositeBilinearTerm,InterfaceBilinearTerm,
         )):
             return other*np.asarray(self.value)
         if isinstance(other,CompositeField):
@@ -74,8 +70,7 @@ class QuadratureValue:
         if getattr(other,"_is_normal_trace",False):
             return other.with_coefficient(self)
         if isinstance(other,(
-            BilinearTerm,CompositeBilinearTerm,LinearSum,LinearTerm,
-            InterfaceBilinearTerm,
+            BilinearTerm,CompositeBilinearTerm,InterfaceBilinearTerm,
         )):
             return other*np.asarray(self.value)
         return QuadratureValue(np.asarray(other)*self.value)
