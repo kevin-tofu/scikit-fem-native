@@ -31,7 +31,7 @@ workflow parity across the normal scikit-fem lifecycle.
 | Mesh families | Line, Tri, Quad, Tet, Hex, Wedge, Pyramid; linear and selected quadratic/serendipity variants | Line boundary-label and refinement parity remain incomplete; substantially fewer element types and constructors than upstream. |
 | Mesh lifecycle | Tensor initialization, boundary/subdomain labels, geometric regions, topology queries, experimental `MeshTri` / `MeshTet` uniform and adaptive refinement, `MeshQuad` uniform refinement, restriction/removal for all three linear families, and optional meshio `load` / `save` | Adaptive element layout may differ from upstream. Other mesh-family refinement/editing and visualization methods remain unavailable in the general public mesh API; I/O supports selected cell types. |
 | Basis and DOFs | H1 nodal spaces, vector/composite spaces, selected DG, facet bases, component-aware DOF selection, geometry diagnostics, and experimental affine-simplex point evaluation/probes/interpolators/L2 projection | Curved geometry, tensor-product cells, composite-field sampling, `refinterp`, and multi-field interpolation remain unavailable. |
-| Element spaces | H1 families include Line P0/P1/P2, simplex P0/P1/P2, and selected Q1/Q2, Quad8, Hex20, Wedge/Pyramid; selected composite/DG and affine RT0 H(div) `Basis`/`asm` forms | General H(div) and H(curl) parity is absent. H(curl) remains an isolated experimental N1 triangle/tetrahedron API rather than `ElementTriN1`/`ElementTetN1` accepted by `Basis` and `asm`. Many upstream high-order, bubble, plate, RT/BDM, Hermite, and skeleton elements are absent. |
+| Element spaces | H1 families include Line P0/P1/P2, simplex P0/P1/P2, and selected Q1/Q2, Quad8, Hex20, Wedge/Pyramid; selected composite/DG, affine RT0 H(div), affine N1 triangle/tetrahedron and N2/N3 triangle H(curl) `Basis`/`asm` forms | General H(div) and H(curl) families remain limited to low orders on affine simplex meshes. Many upstream high-order, bubble, plate, RT/BDM, Hermite, and skeleton elements are absent. |
 | Solver utilities | Top-level `solve`, `condense`, `enforce`, and `penalize` use SciPy sparse solvers and have parity tests for common sparse systems, nonzero boundary values, DOF views/dictionaries, callbacks, and eigenvalue expansion | Additional uncommon solver callbacks and sparse matrix formats may need parity cases; projection onto curved, composite, or partial bases remains unavailable. |
 | Results and visualization | Quadrature evaluation and dedicated examples; rendering is external | No general plotting, mesh/result export, arbitrary-point sampling, or documented post-processing API. |
 | Compatibility evidence | Gallery comparisons for Poisson 2D/3D and transient heat; many direct form/basis equivalence tests | No single versioned matrix states which upstream constructors, methods, elements, and helpers pass, fail explicitly, or are intentionally external. |
@@ -107,8 +107,8 @@ explicitly unsupported until they are integrated and validated.
 
 ### P2 — Broaden spaces by coherent families
 
-- Integrate the existing N1 H(curl) slices into the general basis/form
-  lifecycle before adding more element orders.
+- Extend H(curl) beyond affine N1/N2/N3 triangles and N1 tetrahedra only after
+  identifying concrete curved-mesh or higher-order workflows.
 - Add H(div) through oriented facet DOFs and contravariant Piola mapping.
 - Expand DG/composite-DG and additional high-order/specialized element
   families based on upstream use cases and test demand.

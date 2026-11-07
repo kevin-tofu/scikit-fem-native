@@ -26,8 +26,9 @@ def test_valid_geometry_exposes_diagnostics(mesh,element):
     assert isinstance(diagnostics,skfemntv.GeometryDiagnostics)
     assert diagnostics.element_count==mesh.nelements
     assert diagnostics.quadrature_points_per_element==basis.X.shape[1]
-    assert abs(diagnostics.minimum_determinant)>0.
-    assert diagnostics.maximum_determinant>=diagnostics.minimum_determinant
+    assert diagnostics.minimum_determinant!=0.
+    assert diagnostics.maximum_determinant!=0.
+    assert diagnostics.minimum_determinant*diagnostics.maximum_determinant>0.
     assert diagnostics.minimum_scaled_determinant>0.
     assert 0<=diagnostics.worst_element<mesh.nelements
     assert 0<=diagnostics.worst_quadrature_point<basis.X.shape[1]
@@ -113,13 +114,8 @@ def test_curved_hex27_internal_inversion_is_checked_at_quadrature_points():
     points[:,8]=-3.
     curved=skfemntv.MeshHex2(points,mesh.t)
 
-    # Node 8 is an edge node; all eight corner nodes retain the valid cube.
-    corner_local=np.asarray([
-        np.argmin(np.linalg.norm(
-            skfemntv.ElementHex2().doflocs-location,axis=1
-        )) for location in skfemntv.ElementHex1().doflocs
-    ])
-    corner_ids=mesh.t[corner_local,0]
+    # Node 1 is an edge node; all eight corner nodes retain the valid cube.
+    corner_ids=mesh.t[:8,0]
     np.testing.assert_array_equal(points[:,corner_ids],mesh.p[:,corner_ids])
     with pytest.raises(ValueError,match="reason=orientation_change"):
         skfemntv.Basis(

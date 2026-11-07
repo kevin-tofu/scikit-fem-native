@@ -4,8 +4,7 @@ import numpy as np
 
 from .forms import ddot, div, dot, grad, mul
 from ._h1_fields import (
-    Curl,Divergence,SymmetricGradient,TestGradient,TestValue,
-    TrialGradient,TrialValue,
+    Curl,SymmetricGradient,TestGradient,TestValue,TrialGradient,TrialValue,
 )
 from .interface import avg, jump, normal_grad
 from ._errors import UnsupportedNativeForm
@@ -132,8 +131,6 @@ def curl(value):
 
 
 def trace(value):
-    if isinstance(value, SymmetricGradient):
-        return Divergence(value.role, value.factor)
     return np.einsum("ii...->...", value)
 
 

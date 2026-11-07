@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1 - 2026-11-08
+
+- Align Hex1/Hex2 element DOFs, `MeshHex.init_tensor` connectivity, and
+  hexahedral face topology with scikit-fem's local ordering.
+- Add higher-order affine triangular and tetrahedral Nedelec H(curl) spaces
+  through N3 to `Basis`/`asm`, including interpolation and orientation handling.
+- Expand H(curl) examples and parity tests; verify Hex local DOFs and oriented
+  face coordinates against scikit-fem.
+
 ## 0.3.8 - 2026-10-22
 
 - Replace the license file with the canonical Apache-2.0 text and align the

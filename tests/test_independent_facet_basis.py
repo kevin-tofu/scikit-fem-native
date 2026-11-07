@@ -26,7 +26,12 @@ def test_independent_surface_traction_matches_skfem(
             skfem.MeshTet(native_mesh.p[:, :4], native_mesh.t[:4])
         )
     elif isinstance(native_mesh, skfemntv.MeshHex2):
-            reference_mesh = skfem.MeshHex2.from_mesh(skfem.MeshHex())
+        reference_mesh = skfem.MeshHex2.from_mesh(
+            skfem.MeshHex(
+                native_mesh.p[:, native_mesh.t[:8, 0]],
+                np.arange(8)[:, None],
+            )
+        )
     elif isinstance(native_mesh, skfemntv.MeshTet):
         reference_mesh = skfem.MeshTet(native_mesh.p, native_mesh.t)
     else:

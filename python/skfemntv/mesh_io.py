@@ -144,11 +144,11 @@ def load_mesh(filename, out=None, **kwargs):
 
 def _encode_tags(mesh):
     encoded = {}
-    for name, elements in (mesh.subdomains or {}).items():
+    for name, elements in (mesh._subdomains or {}).items():
         values = np.zeros(mesh.nelements, dtype=np.int32)
         values[np.asarray(elements, dtype=np.int64)] = 1
         encoded[f"skfem:s:{name}"] = values
-    for name, facets in (mesh.boundaries or {}).items():
+    for name, facets in (mesh._boundaries or {}).items():
         mask = np.zeros(mesh.t2f.shape, dtype=np.int32)
         for local_facet in range(mesh.t2f.shape[0]):
             mask[local_facet] = np.isin(mesh.t2f[local_facet], facets)

@@ -29,11 +29,6 @@ class GeometryDiagnostics:
 class _TopologyMesh:
     """Cached codimension-one topology shared by independent meshes."""
 
-    @property
-    def nvertices(self):
-        """Number of mesh vertices, matching scikit-fem's mesh API."""
-        return self.p.shape[1]
-
     @classmethod
     def load(cls,filename,out=None,**kwargs):
         """Load a mesh using the optional meshio dependency."""
@@ -118,9 +113,7 @@ class _TopologyMesh:
             center_node=int(np.argmin(np.linalg.norm(hex2_locs-center,axis=1)))
             full_faces.append(tuple(corners)+face_edges+(center_node,))
         full_faces=tuple(full_faces)
-        return full_faces if full else tuple(
-            face[:4] for face in full_faces
-        )
+        return full_faces if full else tuple(face[:4] for face in full_faces)
 
     def _build_topology(self):
         if hasattr(self,"_facets"):
@@ -371,96 +364,6 @@ class _TopologyMesh:
         return result
 
 
-class MeshLine(_TopologyMesh):
-    """One-dimensional interval mesh with scikit-fem-compatible topology."""
-
-    def __init__(self, p=None, t=None):
-        self.p = np.asarray(
-            [[0., 1.]] if p is None else np.atleast_2d(p), dtype=np.float64,
-        )
-        self.t = np.asarray(
-            [[0], [1]] if t is None else t, dtype=np.int64,
-        )
-        if self.p.ndim != 2 or self.p.shape[0] != 1:
-            raise ValueError("p must have shape (1, nodes)")
-        if self.t.ndim != 2 or self.t.shape[0] != 2:
-            raise ValueError("t must have shape (2, elements)")
-        self._boundaries = {}
-        self._subdomains = {}
-
-    @classmethod
-    def init_tensor(cls, x):
-        x = np.asarray(x, dtype=float).reshape(-1)
-        if len(x) < 2:
-            raise ValueError("a line mesh needs at least two points")
-        return cls(x[None, :], np.vstack((np.arange(len(x) - 1), np.arange(1, len(x)))))
-
-    @property
-    def nelements(self):
-        return self.t.shape[1]
-
-    def dim(self):
-        return 1
-
-    @property
-    def boundaries(self):
-        return None if self._boundaries is None else dict(self._boundaries)
-
-    def normalize_elements(self, elements):
-        if isinstance(elements, (bool, np.bool_)):
-            return np.arange(self.nelements, dtype=np.int64) if elements else np.empty(0, dtype=np.int64)
-        if callable(elements):
-            return np.asarray(self.elements_satisfying(elements), dtype=np.int64)
-        if isinstance(elements, str):
-            return np.asarray(self._subdomains[elements], dtype=np.int64)
-        values = np.asarray([elements] if isinstance(elements, (int, np.integer)) else elements)
-        if values.dtype == bool:
-            values = np.flatnonzero(values)
-        values = np.asarray(values, dtype=np.int64).reshape(-1)
-        if np.any(values < 0) or np.any(values >= self.nelements):
-            raise IndexError("element ID out of range")
-        return np.unique(values)
-
-    def restrict(self, elements, return_mapping=False, skip_boundaries=False, skip_subdomains=False):
-        selected = self.normalize_elements(elements)
-        used = np.unique(self.t[:, selected])
-        mapping = np.full(self.p.shape[1], -1, dtype=np.int64)
-        mapping[used] = np.arange(len(used))
-        result = MeshLine(self.p[:, used], mapping[self.t[:, selected]])
-        result._boundaries = None if skip_boundaries else {}
-        result._subdomains = None if skip_subdomains else {}
-        if not skip_boundaries and self._boundaries:
-            lookup = {int(old): int(new) for new, old in enumerate(used)}
-            for name, region in self._boundaries.items():
-                result._boundaries[name] = FacetRegion(
-                    np.asarray([lookup[int(node)] for node in self.facets[:, np.asarray(region)] if int(node) in lookup], dtype=np.int64),
-                    result.facets.shape[1],
-                )
-        if return_mapping:
-            return result, used
-        return result
-
-    def remove_elements(self, elements):
-        removed = self.normalize_elements(elements)
-        return self.restrict(np.setdiff1d(np.arange(self.nelements), removed))
-
-    def refined(self, times_or_ix=1):
-        if not isinstance(times_or_ix, (int, np.integer)):
-            raise NotImplementedError("adaptive line refinement is not implemented")
-        result = self
-        for _ in range(int(times_or_ix)):
-            mids = result.p[:, result.t].mean(axis=1)
-            start = result.p.shape[1]
-            result = MeshLine(
-                np.hstack((result.p, mids)),
-                np.vstack((
-                    np.column_stack((result.t[0], start + np.arange(result.nelements))).ravel(),
-                    np.column_stack((start + np.arange(result.nelements), result.t[1])).ravel(),
-                )),
-            )
-        return result
-
-
 def _with_boundaries(mesh,boundaries):
     result=copy(mesh)
     facets=mesh.boundary_facets()
@@ -531,15 +434,19 @@ class MeshLine(_TopologyMesh):
 
     def __init__(self,p=None,t=None):
         self.p=np.asarray(
-            p if p is not None else [[0.,1.]],dtype=np.float64
+            [[0.,1.]] if p is None else p,dtype=np.float64
         )
         self.t=np.asarray(
-            t if t is not None else [[0],[1]],dtype=np.int64
+            [[0],[1]] if t is None else t,dtype=np.int64
         )
         if self.p.ndim!=2 or self.p.shape[0]!=1:
             raise ValueError("p must have shape (1, nodes)")
         if self.t.ndim!=2 or self.t.shape[0]!=2:
             raise ValueError("t must have shape (2, elements)")
+        if self.t.size and (self.t.min()<0 or self.t.max()>=self.p.shape[1]):
+            raise ValueError("t contains a node index outside p")
+        self._boundaries={}
+        self._subdomains={}
 
     @classmethod
     def init_tensor(cls,x):
@@ -554,6 +461,175 @@ class MeshLine(_TopologyMesh):
 
     def dim(self):
         return 1
+
+    @property
+    def boundaries(self):
+        return None if self._boundaries is None else dict(self._boundaries)
+
+    def with_boundaries(self,boundaries):
+        return _with_boundaries(self,boundaries)
+
+    def with_subdomains(self,subdomains):
+        return _with_subdomains(self,subdomains)
+
+    def normalize_elements(self,elements):
+        if isinstance(elements,(bool,np.bool_)):
+            return (
+                np.arange(self.nelements,dtype=np.int64) if elements else
+                np.empty(0,dtype=np.int64)
+            )
+        if callable(elements):
+            return np.asarray(self.elements_satisfying(elements),dtype=np.int64)
+        if isinstance(elements,str):
+            subdomains=self._subdomains or {}
+            if elements not in subdomains:
+                raise ValueError(f"Subdomain '{elements}' not found.")
+            return np.asarray(subdomains[elements],dtype=np.int64)
+        values=np.asarray(
+            [elements] if isinstance(elements,(int,np.integer)) else elements
+        )
+        if values.dtype==bool:
+            if values.shape!=(self.nelements,):
+                raise ValueError("element mask must have one value per element")
+            values=np.flatnonzero(values)
+        if not np.issubdtype(values.dtype,np.integer):
+            raise TypeError("element IDs must be integers")
+        values=np.asarray(values,dtype=np.int64).reshape(-1)
+        if np.any(values<0) or np.any(values>=self.nelements):
+            raise IndexError("element ID out of range")
+        return np.unique(values)
+
+    def restrict(
+        self,elements,return_mapping=False,skip_boundaries=False,
+        skip_subdomains=False,
+    ):
+        selected=self.normalize_elements(elements)
+        used=np.unique(self.t[:,selected])
+        old_to_new=np.full(self.p.shape[1],-1,dtype=np.int64)
+        old_to_new[used]=np.arange(len(used),dtype=np.int64)
+        result=MeshLine(self.p[:,used],old_to_new[self.t[:,selected]])
+        if skip_boundaries:
+            result._boundaries=None
+        elif self._boundaries:
+            facet_lookup={
+                int(node):facet
+                for facet,node in enumerate(result.facets[0])
+            }
+            result._boundaries={}
+            for name,region in self._boundaries.items():
+                remapped=[]
+                for old_facet in np.asarray(region,dtype=np.int64):
+                    old_node=int(self.facets[0,old_facet])
+                    new_node=int(old_to_new[old_node])
+                    if new_node in facet_lookup and new_node in result.boundary_nodes():
+                        remapped.append(facet_lookup[new_node])
+                result._boundaries[name]=FacetRegion(
+                    np.asarray(remapped,dtype=np.int64),result.facets.shape[1],
+                )
+        if skip_subdomains:
+            result._subdomains=None
+        elif self._subdomains:
+            old_to_new_elements=np.full(self.nelements,-1,dtype=np.int64)
+            old_to_new_elements[selected]=np.arange(len(selected),dtype=np.int64)
+            result._subdomains={
+                name:CellRegion(
+                    old_to_new_elements[np.intersect1d(ids,selected)],
+                    result.nelements,
+                )
+                for name,ids in self._subdomains.items()
+            }
+        if return_mapping:
+            return result,used
+        return result
+
+    def remove_elements(self,elements):
+        removed=self.normalize_elements(elements)
+        keep=np.setdiff1d(np.arange(self.nelements,dtype=np.int64),removed)
+        return self.restrict(keep)
+
+    def refined(self,times_or_ix=1):
+        if isinstance(times_or_ix,(int,np.integer)):
+            if times_or_ix<0:
+                raise ValueError("number of refinement steps must be nonnegative")
+            refinement_steps=[None]*int(times_or_ix)
+        else:
+            marked=np.asarray(times_or_ix)
+            if marked.ndim!=1 or not np.issubdtype(marked.dtype,np.integer):
+                raise ValueError(
+                    "adaptive refinement requires 1D integer element IDs"
+                )
+            if np.any(marked<0) or np.any(marked>=self.nelements):
+                raise IndexError("element ID out of range")
+            refinement_steps=[np.unique(marked.astype(np.int64,copy=False))]
+        result=self
+        for marked in refinement_steps:
+            old=result
+            if marked is None:
+                old_count=old.nelements
+                midpoint_ids=old.p.shape[1]+np.arange(old_count)
+                points=np.hstack((old.p,old.p[:,old.t].mean(axis=1)))
+                cells=np.empty((2,2*old_count),dtype=np.int64)
+                cells[0,::2]=old.t[0]
+                cells[0,1::2]=midpoint_ids
+                cells[1,::2]=midpoint_ids
+                cells[1,1::2]=old.t[1]
+                parent_children=[
+                    (cell,cell+old_count) for cell in range(old_count)
+                ]
+            else:
+                selected=marked
+                nonmarked=np.setdiff1d(
+                    np.arange(old.nelements,dtype=np.int64),selected,
+                )
+                midpoint_ids=old.p.shape[1]+np.arange(len(selected))
+                points=np.hstack((
+                    old.p,old.p[:,old.t[:,selected]].mean(axis=1),
+                ))
+                first_children=np.vstack((old.t[0,selected],midpoint_ids))
+                second_children=np.vstack((midpoint_ids,old.t[1,selected]))
+                cells=np.hstack((old.t[:,nonmarked],first_children,second_children))
+                parent_children=[() for _ in range(old.nelements)]
+                for cell in nonmarked:
+                    parent_children[int(cell)]=(int(np.flatnonzero(nonmarked==cell)[0]),)
+                first_offset=len(nonmarked)
+                second_offset=first_offset+len(selected)
+                for local,cell in enumerate(selected):
+                    parent_children[int(cell)]=(first_offset+local,second_offset+local)
+            result=MeshLine(points,cells)
+            if old._boundaries is None:
+                result._boundaries=None
+            elif old._boundaries:
+                result._boundaries={
+                    name:FacetRegion(
+                        np.asarray(region,dtype=np.int64).copy(),
+                        result.facets.shape[1],
+                    )
+                    for name,region in old._boundaries.items()
+                }
+            if old._subdomains is None:
+                result._subdomains=None
+            elif old._subdomains:
+                if marked is not None:
+                    result._subdomains={
+                        name:CellRegion(
+                            np.asarray(region,dtype=np.int64).copy(),
+                            result.nelements,
+                        )
+                        for name,region in old._subdomains.items()
+                    }
+                    continue
+                result._subdomains={
+                    name:CellRegion(
+                        np.asarray(
+                            [child for cell in region
+                             for child in parent_children[int(cell)]],
+                            dtype=np.int64,
+                        ),
+                        result.nelements,
+                    )
+                    for name,region in old._subdomains.items()
+                }
+        return result
 
 
 class MeshTri(_TopologyMesh):
@@ -1800,7 +1876,7 @@ class MeshHex(_TopologyMesh):
         nx,ny,nz=len(x),len(y),len(z)
         X,Y,Z=np.meshgrid(x,y,z)
         points=np.vstack((X.flatten("F"),Y.flatten("F"),Z.flatten("F")))
-        # Scikit-fem numbers tensor-product nodes with y varying fastest.
+        # Match scikit-fem's tensor-product numbering and local vertex order.
         def node(i,j,k):
             return j+ny*(i+nx*k)
         cells=[]
@@ -1985,6 +2061,85 @@ class ElementTriRT0(_ComposableElement):
         self._dim=2
 
 
+class ElementTriN1(_ComposableElement):
+    """Lowest-order first-family Nedelec element on triangles."""
+
+    def __init__(self):
+        self.doflocs=np.array([[.5,0.],[.5,.5],[0.,.5]])
+        self._dim=2
+
+
+class ElementTriN2(_ComposableElement):
+    """Second-order first-family Nedelec element on triangles."""
+
+    def __init__(self):
+        self.doflocs=np.array([
+            [0.,0.],[1.,0.],[1.,0.],[0.,1.],
+            [0.,0.],[0.,1.],[1./3.,1./3.],[1./3.,1./3.],
+        ])
+        self._dim=2
+
+
+class ElementTriN3(_ComposableElement):
+    """Third-order first-family Nedelec element on triangles."""
+
+    def __init__(self):
+        self.doflocs=np.array([
+            [.25,0.],[.5,0.],[.75,0.],
+            [.75,.25],[.5,.5],[.25,.75],
+            [0.,.75],[0.,.5],[0.,.25],
+            [.25,.25],[.25,.25],[.5,.25],[.5,.25],[.25,.5],[.25,.5],
+        ])
+        self._dim=2
+
+
+class ElementTetN1(_ComposableElement):
+    """Lowest-order first-family Nedelec element on tetrahedra."""
+
+    def __init__(self):
+        self.doflocs=np.array([
+            [.5,0.,0.],[.5,.5,0.],[0.,.5,0.],
+            [0.,0.,.5],[.5,0.,.5],[0.,.5,.5],
+        ])
+        self._dim=3
+
+
+class ElementTetN2(_ComposableElement):
+    """Second-order first-family Nedelec element on tetrahedra."""
+
+    def __init__(self):
+        self.doflocs=np.array([
+            [0.,.5,.5],[0.,.5,.5],
+            [.5,0.,.5],[.5,0.,.5],
+            [.5,.5,0.],[.5,.5,0.],
+            [0.,0.,.5],[0.,0.,.5],
+            [0.,.5,0.],[0.,.5,0.],
+            [.5,0.,0.],[.5,0.,0.],
+            [1./3.,1./3.,1./3.],[1./3.,1./3.,1./3.],
+            [0.,1./3.,1./3.],[0.,1./3.,1./3.],
+            [1./3.,0.,1./3.],[1./3.,0.,1./3.],
+            [1./3.,1./3.,0.],[1./3.,1./3.,0.],
+        ])
+        self._dim=3
+
+
+class ElementTetN3(_ComposableElement):
+    """Third-order first-family Nedelec element on tetrahedra."""
+
+    def __init__(self):
+        points=[]
+        for point in (
+            (0.,.5,.5),(.5,0.,.5),(.5,.5,0.),(0.,0.,.5),(0.,.5,0.),(.5,0.,0.),
+        ):
+            points.extend((point,point,point))
+        face_centers=((1/3,1/3,1/3),(0.,1/3,1/3),(1/3,0.,1/3),(1/3,1/3,0.))
+        for point in face_centers:
+            points.extend((point,)*6)
+        points.extend(((.25,.25,.25),)*3)
+        self.doflocs=np.asarray(points,dtype=np.float64)
+        self._dim=3
+
+
 class ElementQuad0(_ComposableElement):
     def __init__(self):
         self.doflocs=np.array([[.5,.5]])
@@ -2056,15 +2211,15 @@ class ElementHex1(_ComposableElement):
 
 class ElementHex2(_ComposableElement):
     def __init__(self):
-        self.doflocs=np.array([
-            [1.,1.,1.],[1.,1.,0.],[1.,0.,1.],[0.,1.,1.],
-            [1.,0.,0.],[0.,1.,0.],[0.,0.,1.],[0.,0.,0.],
-            [1.,1.,.5],[1.,.5,1.],[.5,1.,1.],[1.,.5,0.],
-            [.5,1.,0.],[1.,0.,.5],[.5,0.,1.],[0.,1.,.5],
-            [0.,.5,1.],[.5,0.,0.],[0.,.5,0.],[0.,0.,.5],
-            [1.,.5,.5],[.5,.5,1.],[.5,1.,.5],[.5,0.,.5],
-            [.5,.5,0.],[0.,.5,.5],[.5,.5,.5],
-        ])
+        self.doflocs=np.array(
+            [[1.,1.,1.],[1.,1.,0.],[1.,0.,1.],[0.,1.,1.],
+             [1.,0.,0.],[0.,1.,0.],[0.,0.,1.],[0.,0.,0.],
+             [1.,1.,.5],[1.,.5,1.],[.5,1.,1.],[1.,.5,0.],
+             [.5,1.,0.],[1.,0.,.5],[.5,0.,1.],[0.,1.,.5],
+             [0.,.5,1.],[.5,0.,0.],[0.,.5,0.],[0.,0.,.5],
+             [1.,.5,.5],[.5,.5,1.],[.5,1.,.5],[.5,0.,.5],
+             [.5,.5,0.],[0.,.5,.5],[.5,.5,.5]]
+        )
 
 
 class ElementHex20(_ComposableElement):
@@ -2171,10 +2326,15 @@ class _LazyVectorFields:
 class DiscreteField:
     """Values and physical gradients evaluated at basis quadrature points."""
 
-    def __init__(self,value,grad,div=None):
+    def __init__(self,value,grad,div=None,curl=None):
         self.value=np.asarray(value)
         self.grad=None if grad is None else np.asarray(grad)
         self._div=None if div is None else np.asarray(div)
+        self._curl=None if curl is None else np.asarray(curl)
+
+    @property
+    def curl(self):
+        return self._curl
 
     def __array__(self,dtype=None):
         return np.asarray(self.value,dtype=dtype)
@@ -2236,10 +2396,9 @@ class DiscreteField:
 class DofsView:
     """Selected DOF indices with the scikit-fem-style ``all()`` accessor."""
 
-    def __init__(self,dofs,doflocs,groups=None,N=None):
+    def __init__(self,dofs,doflocs,groups=None):
         self._dofs=np.unique(np.asarray(dofs,dtype=np.int64))
         self.doflocs=doflocs
-        self.N=int(N if N is not None else np.asarray(doflocs).shape[-1])
         self.groups={
             str(name):np.unique(np.asarray(values,dtype=np.int64))
             for name,values in (groups or {}).items()
@@ -2267,7 +2426,7 @@ class DofsView:
             np.unique(np.concatenate(tuple(groups.values())))
             if groups else np.empty(0,dtype=np.int64)
         )
-        return DofsView(dofs,self.doflocs,groups,self.N)
+        return DofsView(dofs,self.doflocs,groups)
 
     def drop(self,names):
         removed=set(self._names(names))
@@ -2421,8 +2580,24 @@ def _interior_facets_3d(mesh):
             for face in corner_faces
         ) if mesh.t.shape[0]==10 else corner_faces
     else:
-        full_faces=mesh._local_facets(full=mesh.t.shape[0] in (20,27))
-        corner_faces=tuple(face[:4] for face in full_faces)
+        if mesh.t.shape[0]==8:
+            corner_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
+                          (2,4,7,6),(1,5,7,4),(3,6,7,5))
+            full_faces=corner_faces
+        else:
+            index=lambda i,j,k:i+3*j+9*k
+            full_faces=(
+                tuple(index(i,j,0) for j in range(3) for i in range(3)),
+                tuple(index(0,j,k) for k in range(3) for j in range(3)),
+                tuple(index(i,0,k) for k in range(3) for i in range(3)),
+                tuple(index(i,2,k) for k in range(3) for i in range(3)),
+                tuple(index(2,j,k) for k in range(3) for j in range(3)),
+                tuple(index(i,j,2) for j in range(3) for i in range(3)),
+            )
+            corner_faces=tuple(
+                (face[0],face[2],face[8],face[6])
+                for face in full_faces
+            )
     found={}
     for nodes in mesh.t.T:
         for corner,full in zip(corner_faces,full_faces):
@@ -2479,11 +2654,7 @@ def _hex_shapes(points,quadratic):
     points=np.asarray(points)
     dimension=points.shape[0]
     if quadratic:
-        locations=(
-            ElementHex2().doflocs if dimension==3 else
-            np.array([[x,y] for y in (0.,.5,1.) for x in (0.,.5,1.)])
-        )
-        count=len(locations)
+        count=3**dimension
         shape=np.empty((points.shape[1],count))
         grad=np.empty((points.shape[1],count,dimension))
         for q,coordinate in enumerate(points.T):
@@ -2495,8 +2666,16 @@ def _hex_shapes(points,quadratic):
                 np.array([4*x-3,4-8*x,4*x-1])
                 for x in coordinate
             ]
-            for node,location in enumerate(locations):
-                index=np.rint(2.*location).astype(int)
+            if dimension==3:
+                indices=tuple(
+                    tuple(np.rint(2.*location).astype(int))
+                    for location in ElementHex2().doflocs
+                )
+            else:
+                indices=tuple(
+                    index[::-1] for index in np.ndindex(*(3,)*dimension)
+                )
+            for node,index in enumerate(indices):
                 shape[q,node]=np.prod([
                     values[d][index[d]] for d in range(dimension)
                 ])
@@ -2751,6 +2930,67 @@ class Basis:
         original_mesh=mesh
         intorder=2 if intorder is None else int(intorder)
         self.intorder=intorder
+        if isinstance(element,(ElementTriN1,ElementTetN1,ElementTetN2,ElementTetN3,ElementTriN2,ElementTriN3)):
+            dimension=3 if isinstance(element,(ElementTetN1,ElementTetN2,ElementTetN3)) else 2
+            required_rows=(3 if isinstance(element,(ElementTriN2,ElementTriN3))
+                           else dimension+1)
+            if mesh.dim()!=dimension or mesh.t.shape[0]!=required_rows:
+                mesh_name="MeshTet" if dimension==3 else "MeshTri"
+                raise NotImplementedError(
+                    f"Nedelec elements require affine {mesh_name} linear meshes"
+                )
+            if elements is not None:
+                raise NotImplementedError("Nedelec element subsets are not supported")
+            from .hcurl_basis import (
+                AffineTetN1Basis,AffineTetN2Basis,AffineTetN3Basis,AffineTriN1Basis,AffineTriN2Basis,
+                AffineTriN3Basis,
+            )
+            selected=(
+                AffineTetN2Basis(mesh,intorder=intorder,quadrature=quadrature)
+                if isinstance(element,ElementTetN2) else
+                AffineTetN3Basis(mesh,intorder=intorder,quadrature=quadrature)
+                if isinstance(element,ElementTetN3) else
+                AffineTriN3Basis(mesh,intorder=intorder,quadrature=quadrature)
+                if isinstance(element,ElementTriN3) else
+                AffineTriN2Basis(mesh,intorder=intorder,quadrature=quadrature)
+                if isinstance(element,ElementTriN2) else
+                (AffineTriN1Basis if dimension==2 else AffineTetN1Basis)(
+                    mesh,intorder=intorder,quadrature=quadrature
+                )
+            )
+            # The dedicated APIs use moments oriented along ascending global
+            # vertex pairs.  Match scikit-fem's public N1 basis convention in
+            # the general Basis/asm interface.
+            self._hcurl_global_sign=(
+                -1. if isinstance(element,ElementTriN1) else 1.
+            )
+            if self._hcurl_global_sign<0.:
+                selected._element_values*=-1.
+                selected._element_curls*=-1.
+            self.mesh=self._mesh=mesh
+            self.elem=element
+            self._hcurl_basis=selected
+            self.N=selected.N
+            self.dof_map=selected.dof_map
+            self.element_dofs=selected.element_dofs
+            if isinstance(element,(ElementTriN2,ElementTriN3,ElementTetN2,ElementTetN3)):
+                self.doflocs=selected.doflocs
+            elif isinstance(element,ElementTetN1):
+                edges=selected.dof_map.topology.edges
+                self.doflocs=.5*(mesh.p[:,edges[0]]+mesh.p[:,edges[1]])
+            else:
+                edges=selected.dof_map.topology.edges
+                self.doflocs=.5*(mesh.p[:,edges[0]]+mesh.p[:,edges[1]])
+            self.dx=selected.dx
+            self._geometry_determinants=np.broadcast_to(
+                np.abs(selected.detJ)[:,None],selected.dx.shape
+            )
+            self.X,self.W=selected.X,selected.W
+            self.quadrature=(self.X.copy(),self.W.copy())
+            self.global_coordinates=selected.global_coordinates.transpose(1,2,0)
+            self.normals=None
+            self.tind=np.arange(mesh.nelements,dtype=np.int64)
+            return
         if isinstance(element,(ElementTriRT0,ElementTetRT0)):
             dimension=2 if isinstance(element,ElementTriRT0) else 3
             if mesh.dim()!=dimension or mesh.t.shape[0]!=dimension+1:
@@ -3081,7 +3321,22 @@ class Basis:
                 hdiv.evaluate(coefficients),None,
                 div=hdiv.evaluate_divergence(coefficients),
             )
+        hcurl=getattr(self,"_hcurl_basis",None)
+        if hcurl is not None:
+            return DiscreteField(
+                hcurl.evaluate(coefficients),None,
+                curl=hcurl.evaluate_curl(coefficients),
+            )
         return self._interpolate(coefficients)
+
+    def interpolate_moments(self,field):
+        """Interpolate a vector field into an affine TetN2 H(curl) space."""
+        hcurl=getattr(self,"_hcurl_basis",None)
+        if hcurl is None or not isinstance(self.elem,(ElementTetN2,ElementTetN3)):
+            raise NotImplementedError(
+                "interpolate_moments is currently implemented for ElementTetN2/N3"
+            )
+        return hcurl.interpolate_moments(field)
 
     def project(self,interp,elements=None,dtype=None):
         """Compute an L2 projection on affine triangular/tetrahedral H1 bases.
@@ -3093,6 +3348,44 @@ class Basis:
         """
         from scipy.sparse import coo_matrix
         from scipy.sparse.linalg import spsolve
+
+        hcurl=getattr(self,"_hcurl_basis",None)
+        if hcurl is not None:
+            selected=(np.arange(hcurl.mesh.nelements,dtype=np.int64)
+                      if elements is None else self._element_ids(elements))
+            coordinates=hcurl.global_coordinates
+            values=interp(coordinates) if callable(interp) else interp
+            values=np.asarray(values,dtype=dtype)
+            expected=(hcurl.mesh.dim(),hcurl.mesh.nelements,len(hcurl.W))
+            values=np.broadcast_to(values,expected)
+            local_dofs=hcurl.element_dofs.T
+            local_mass=np.einsum(
+                "ebiq,eciq,eq->ebc",
+                hcurl._element_values,hcurl._element_values,
+                hcurl.dx,optimize=True,
+            )
+            local_rhs=np.einsum(
+                "ebiq,ieq,eq->eb",
+                hcurl._element_values,values,hcurl.dx,
+                optimize=True,
+            )
+            rows=np.broadcast_to(
+                local_dofs[:,:,None],local_mass.shape
+            ).reshape(-1)
+            cols=np.broadcast_to(
+                local_dofs[:,None,:],local_mass.shape
+            ).reshape(-1)
+            matrix=coo_matrix(
+                (local_mass.reshape(-1),(rows,cols)),
+                shape=(self.N,self.N),
+            ).tocsc()
+            rhs=np.zeros(self.N,dtype=np.result_type(values.dtype,matrix.dtype))
+            np.add.at(rhs,local_dofs.reshape(-1),local_rhs.reshape(-1))
+            dofs=np.unique(hcurl.element_dofs[:,selected])
+            result=np.zeros(self.N,dtype=np.result_type(rhs.dtype,np.float64))
+            if len(dofs):
+                result[dofs]=spsolve(matrix[dofs,:][:,dofs],rhs[dofs])
+            return result
 
         if elements is not None:
             raise NotImplementedError(
@@ -3173,6 +3466,74 @@ class Basis:
             self,points,coefficients,outside=outside
         )
 
+    def refinterp(self,y,nrefs=1,Nrefs=None):
+        """Refine each affine simplex for plotting and interpolate the field."""
+        if Nrefs is not None:
+            nrefs=Nrefs
+        hcurl=getattr(self,"_hcurl_basis",None)
+        if hcurl is None:
+            raise NotImplementedError("refinterp currently supports H(curl) bases")
+        dim=self.mesh.dim()
+        reference_mesh=(
+            MeshTri(np.array([[0.,1.,0.],[0.,0.,1.]]),
+                    np.array([[0],[1],[2]],dtype=np.int64)) if dim==2 else
+            MeshTet(np.array([[0.,1.,0.,0.],[0.,0.,1.,0.],[0.,0.,0.,1.]]),
+                    np.array([[0],[1],[2],[3]],dtype=np.int64))
+        ).refined(nrefs)
+        local_points=reference_mesh.p
+        local_cells=reference_mesh.t
+        physical=[];connectivity=[]
+        vertices=self.mesh.p[:,self.mesh.t[:dim+1]]
+        for cell in range(self.mesh.nelements):
+            jacobian=vertices[:,1:,cell]-vertices[:,:1,cell]
+            physical.append(vertices[:,0,cell,None]+jacobian@local_points)
+            connectivity.append(local_cells+cell*local_points.shape[1])
+        points=np.concatenate(physical,axis=1)
+        cells=np.concatenate(connectivity,axis=1)
+        plot_mesh=(MeshTri(points,cells) if dim==2 else MeshTet(points,cells))
+        y=np.asarray(y,dtype=np.float64)
+        if y.shape!=(self.N,):
+            raise ValueError(f"y must have shape ({self.N},)")
+        from ._hcurl_mapping import covariant_piola
+        from ._nedelec_reference import (
+            tri_n1_basis,tri_n2_basis,tri_n3_basis,tet_n1_basis,tet_n2_basis,
+            tet_n3_basis,
+        )
+        reference_values=(
+            tet_n3_basis(local_points)
+            if isinstance(self.elem,ElementTetN3) else
+            tet_n2_basis(local_points)
+            if isinstance(self.elem,ElementTetN2) else
+            tri_n3_basis(local_points)
+            if isinstance(self.elem,ElementTriN3) else
+            tri_n2_basis(local_points)
+            if isinstance(self.elem,ElementTriN2) else
+            (tri_n1_basis(local_points) if dim==2 else
+             tet_n1_basis(local_points))
+        )
+        values=np.empty((dim,self.mesh.nelements,local_points.shape[1]))
+        global_sign=self._hcurl_global_sign
+        for cell in range(self.mesh.nelements):
+            local_reference_values=(
+                np.einsum(
+                    "ab,biq->aiq",hcurl.transformations[cell],
+                    reference_values,
+                )
+                if isinstance(self.elem,(ElementTetN2,ElementTetN3)) else
+                reference_values[hcurl.basis_permutation[:,cell]]
+                if isinstance(self.elem,ElementTriN3) else reference_values
+            )
+            mapped=covariant_piola(
+                local_reference_values[:,:,None,:],
+                hcurl.jacobians[:,:,cell,None],
+            )[:,:,0,:]
+            signs=hcurl.basis_signs[:,cell]*global_sign
+            local=y[self.element_dofs[:,cell]]
+            values[:,cell,:]=np.einsum(
+                "b,bdq->dq",local,mapped*signs[:,None,None]
+            )
+        return plot_mesh,values.reshape(-1)
+
     def probes(self,x):
         """Return a sparse matrix evaluating coefficients at physical points."""
         from scipy.sparse import coo_matrix
@@ -3186,6 +3547,24 @@ class Basis:
         location=evaluate_basis_at(
             self,points,np.zeros(self.N,dtype=np.float64),outside="error"
         )
+        if getattr(self,"_hcurl_basis",None) is not None:
+            rows=[];columns=[];values=[]
+            local_dofs=self.element_dofs.shape[0]
+            for point_id,global_cell in enumerate(location.cell_ids):
+                local_cell=int(np.flatnonzero(self.tind==global_cell)[0])
+                for component in range(self.mesh.dim()):
+                    for local_dof in range(local_dofs):
+                        value=location.local_basis_values[
+                            point_id,component,local_dof
+                        ]
+                        if value!=0.:
+                            rows.append(component*points.shape[1]+point_id)
+                            columns.append(int(self.element_dofs[local_dof,local_cell]))
+                            values.append(value)
+            return coo_matrix(
+                (values,(rows,columns)),
+                shape=(self.mesh.dim()*points.shape[1],self.N),
+            ).tocsr()
         components=self.elem._dim
         local_nodes=self.element_dofs.shape[0]//components
         rows=[];columns=[];values=[]
@@ -3274,6 +3653,22 @@ class Basis:
         self,facets=None,elements=None,nodes=None,skip=None,
         *,components=None,fields=None,
     ):
+        hcurl=getattr(self,"_hcurl_basis",None)
+        if hcurl is not None:
+            if components is not None or fields is not None or nodes is not None:
+                raise NotImplementedError(
+                    "H(curl) edge/face DOFs do not support nodal or component selection"
+                )
+            if elements is not None and facets is not None:
+                raise ValueError("select only one of facets or elements")
+            if elements is not None:
+                selected_elements=self._element_ids(elements)
+                dofs=np.unique(
+                    hcurl.element_dofs[:,selected_elements].reshape(-1)
+                )
+            else:
+                dofs=hcurl.boundary_dofs(facets)
+            return DofsView(dofs,self.doflocs,{"u^t":dofs})
         hdiv=getattr(self,"_hdiv_basis",None)
         if hdiv is not None:
             if components is not None or fields is not None:
@@ -3335,7 +3730,7 @@ class Basis:
                     ):
                         raise ValueError("facet index is out of range")
                     dofs=np.unique(selected)
-            view=DofsView(dofs,self.doflocs,{"u^n":dofs},self.N)
+            view=DofsView(dofs,self.doflocs,{"u^n":dofs})
             return view.drop(skip) if skip else view
         if sum(value is not None for value in (facets,elements,nodes))>1:
             raise ValueError("select only one of facets, elements, or nodes")
@@ -3480,7 +3875,6 @@ class Basis:
             ]) if selected_names else np.empty(0,dtype=np.int64),
             self.doflocs,
             {name:groups[name] for name in selected_names},
-            self.N,
         )
         return view.drop(skip) if skip else view
 
@@ -3603,12 +3997,7 @@ class Basis:
             return mesh.t[:5]
         if isinstance(scalar,ElementHex1):
             if mesh.t.shape[0]==27:
-                local=np.asarray([
-                    np.argmin(np.linalg.norm(
-                        ElementHex2().doflocs-location,axis=1
-                    )) for location in ElementHex1().doflocs
-                ])
-                return mesh.t[local]
+                return mesh.t[:8]
             return mesh.t[:8]
         if isinstance(scalar,ElementHex2):
             return mesh.t[:27]
@@ -3953,8 +4342,13 @@ class FacetBasis:
                 face_weights=np.full(3,1/6)
             face_points=bary[:,1:]
         else:
-            local_faces=mesh._local_facets(full=mesh.t.shape[0] in (20,27))
-            corners=tuple(face[:4] for face in local_faces)
+            if mesh.t.shape[0]!=27:
+                local_faces=((0,1,4,2),(0,2,6,3),(0,3,5,1),
+                             (2,4,7,6),(1,5,7,4),(3,6,7,5))
+                corners=local_faces
+            else:
+                local_faces=mesh._local_facets(full=True)
+                corners=tuple(face[:4] for face in local_faces)
             order=3 if intorder>=4 else 2
             points,weights=np.polynomial.legendre.leggauss(order)
             points=(points+1.)/2.;weights=weights/2.
@@ -4014,7 +4408,7 @@ class FacetBasis:
         self.normal_signs=facet_signs.copy()
         self.local_faces=[]
         for f, face in enumerate(facets.T):
-            face_corners=face[:3] if is_tet else face[:4]
+            face_corners=(face[:3] if is_tet else face[:4])
             adjacent=lookup[tuple(sorted(map(int,face_corners)))]
             local_side=int(facet_sides[f])
             if selected_ids is not None:
@@ -4042,9 +4436,7 @@ class FacetBasis:
                 np.array([[0.,0.,0.],[1.,0.,0.],
                           [0.,1.,0.],[0.,0.,1.]])
                 if is_tet else
-                np.array([[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],
-                          [0.,0.,1.],[1.,1.,0.],[1.,0.,1.],
-                          [0.,1.,1.],[1.,1.,1.]])
+                ElementHex1().doflocs
             )
             local_corner_ids=np.asarray(corner)
             global_corners=mesh.t[local_corner_ids,e]

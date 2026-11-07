@@ -46,8 +46,11 @@ class BoundarySurface:
             local=tuple(local);element=int(element)
             is_triangle=len(local) in (3,6)
             corner_count=3 if is_triangle else 4
+            # Full quadratic hex faces are stored as four corners, four edge
+            # nodes, then the face center; the corner prefix follows
+            # ElementHex2's local DOF order.
             reference_corners=facet_basis.elem.elem.doflocs[
-                np.asarray(local[:corner_count] if len(local)!=9 else (local[0],local[2],local[8],local[6]))
+                np.asarray(local[:corner_count])
             ]
             reference_tangents.append(np.stack((
                 reference_corners[1]-reference_corners[0],

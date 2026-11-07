@@ -68,3 +68,56 @@ def test_nodes_satisfying_matches_scikit_fem(native, reference):
 def test_nodes_satisfying_validates_predicate_shape():
     with pytest.raises(ValueError,match="one boolean per node"):
         skfemntv.MeshTri().nodes_satisfying(lambda points: np.array([True]))
+
+
+def test_hex_mesh_local_order_and_facets_match_scikit_fem():
+    x=np.asarray((0.,.7,2.1))
+    y=np.asarray((-1.,.4,1.8))
+    z=np.asarray((.2,1.3,3.7))
+    native=skfemntv.MeshHex.init_tensor(x,y,z)
+    reference=skfem.MeshHex.init_tensor(x,y,z)
+    np.testing.assert_allclose(native.p,reference.p,rtol=0.,atol=0.)
+    np.testing.assert_array_equal(native.t,reference.t)
+
+    native_element=skfemntv.ElementHex1()
+    reference_element=skfem.ElementHex1()
+    np.testing.assert_array_equal(native_element.doflocs,reference_element.doflocs)
+    native_basis=skfemntv.Basis(native,native_element)
+    reference_basis=skfem.Basis(reference,reference_element)
+    for element in range(native.nelements):
+        native_local=native_basis.doflocs[:,native_basis.element_dofs[:,element]]
+        reference_local=reference_basis.doflocs[:,reference_basis.element_dofs[:,element]]
+        np.testing.assert_allclose(native_local,reference_local,rtol=0.,atol=0.)
+
+    native_faces=native._local_facets()
+    reference_faces=tuple(tuple(face) for face in reference.elem.refdom.facets)
+    assert native_faces==reference_faces
+    native_face_coordinates=tuple(
+        tuple(map(tuple,native.p[:,native.t[np.asarray(face),0]].T))
+        for face in native_faces
+    )
+    reference_face_coordinates=tuple(
+        tuple(map(tuple,reference.p[:,reference.t[np.asarray(face),0]].T))
+        for face in reference_faces
+    )
+    assert native_face_coordinates==reference_face_coordinates
+
+
+def test_hex2_local_dofs_and_promoted_connectivity_match_scikit_fem():
+    native_linear=skfemntv.MeshHex.init_tensor(
+        (0.,.7,2.1),(-1.,.4,1.8),(.2,1.3,3.7)
+    )
+    reference_linear=skfem.MeshHex.init_tensor(
+        (0.,.7,2.1),(-1.,.4,1.8),(.2,1.3,3.7)
+    )
+    native=skfemntv.MeshHex2.from_mesh(native_linear)
+    reference=skfem.MeshHex2.from_mesh(reference_linear)
+    native_element=skfemntv.ElementHex2()
+    reference_element=skfem.ElementHex2()
+    np.testing.assert_array_equal(native_element.doflocs,reference_element.doflocs)
+    native_basis=skfemntv.Basis(native,native_element)
+    reference_basis=skfem.Basis(reference,reference_element)
+    for element in range(native.nelements):
+        native_local=native_basis.doflocs[:,native_basis.element_dofs[:,element]]
+        reference_local=reference_basis.doflocs[:,reference_basis.element_dofs[:,element]]
+        np.testing.assert_allclose(native_local,reference_local,rtol=0.,atol=1e-15)
