@@ -79,6 +79,7 @@ from .forms import (
     UnsupportedNativeForm,
     asm,
 )
+from .utils import condense, enforce, solve
 from .runtime import (
     BACKEND,
     CAPABILITIES,
@@ -256,6 +257,9 @@ __all__ = [
     "MeshTri",
     "MeshTri2",
     "asm",
+    "condense",
+    "enforce",
+    "solve",
     "UnsupportedNativeForm",
     "TriangleSupermesh",
     "InterfaceSupermesh",

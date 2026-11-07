@@ -82,6 +82,13 @@ class _Functional:
     def assemble(self,*bases,**kwargs):
         return asm(self,*bases,**kwargs)
 
+    def elemental(self, *bases, **kwargs):
+        if len(bases) != 1:
+            raise TypeError("Functional.elemental expects one basis")
+        return _native_functional_assemble(
+            self, bases[0], kwargs, elemental=True
+        )
+
 
 @dataclass(frozen=True)
 class _NormalTrace:
@@ -148,7 +155,7 @@ def BilinearForm(function=None, **kwargs):
     return _BilinearForm(function) if function is not None else _BilinearForm
 
 
-def _native_functional_assemble(form,basis,kwargs):
+def _native_functional_assemble(form,basis,kwargs,*,elemental=False):
     geometry={"x":_QuadratureValue(
         np.moveaxis(basis.global_coordinates,-1,0)
     )}
@@ -163,12 +170,19 @@ def _native_functional_assemble(form,basis,kwargs):
         raise UnsupportedNativeForm(
             f"Functional contains an unsupported operation: {error}"
         ) from error
+    if values.shape != basis.dx.shape:
+        squeezed = np.squeeze(values)
+        if squeezed.shape == basis.dx.shape:
+            values = squeezed
     try:
         values=np.broadcast_to(values,basis.dx.shape)
     except ValueError as error:
         raise UnsupportedNativeForm(
             "Functional must evaluate to one scalar per quadrature point"
         ) from error
+    weighted = values * np.asarray(basis.dx, dtype=np.float64)
+    if elemental:
+        return np.sum(weighted, axis=1)
     return integrate_functional(
         np.ascontiguousarray(values),
         np.ascontiguousarray(basis.dx,dtype=np.float64),
@@ -185,6 +199,8 @@ def _compile_linear(form: _LinearForm,basis,kwargs):
         form.function,(_TestValue(),),geometry,kwargs,
         context="LinearForm",
     )
+    if isinstance(expression, _TestValue):
+        expression = _Term("value", 1.0, expression.factor)
     return _extract_terms(
         expression,_Term,_Sum,
         message=(
@@ -425,11 +441,29 @@ def _native_linear_assemble(form,basis,kwargs,num_threads=0):
         form._native_cache[basis] = native
     value = None
     gradient = None
+    component_value = None
     for term in terms:
         coefficient = _evaluate_coefficient(
             term.coefficient,kwargs,factor=term.factor
         )
         if term.kind == "value":
+            if term.component is not None:
+                component = term.component
+                if component < 0:
+                    component += native._shape[-1]
+                if component < 0 or component >= native._shape[-1]:
+                    raise IndexError(
+                        f"test-field component {term.component} is out of range"
+                    )
+                coefficient = np.broadcast_to(
+                    coefficient, native._shape[:2]
+                )
+                if component_value is None:
+                    component_value = np.zeros(
+                        native._shape, dtype=np.float64
+                    )
+                component_value[..., component] += coefficient
+                continue
             if (
                 native._shape[-1]==1
                 and coefficient.shape==native._shape[:2]
@@ -443,6 +477,12 @@ def _native_linear_assemble(form,basis,kwargs,num_threads=0):
             value = coefficient if value is None else value + coefficient
         elif term.kind == "gradient":
             if (
+                coefficient.ndim == 3
+                and coefficient.shape[0] == basis.mesh.dim()
+                and coefficient.shape[1:] == basis.dx.shape
+            ):
+                coefficient = np.moveaxis(coefficient, 0, -1)[:, :, None, :]
+            elif (
                 coefficient.ndim >= 2
                 and coefficient.shape[:2] == native._gradient_shape[-2:]
             ):
@@ -452,6 +492,8 @@ def _native_linear_assemble(form,basis,kwargs,num_threads=0):
             )
         else:
             raise UnsupportedNativeForm
+    if component_value is not None:
+        value = component_value if value is None else value + component_value
     result,_=native.assemble(
         value=value,gradient=gradient,num_threads=num_threads
     )
@@ -565,6 +607,14 @@ def _native_bilinear_assemble(
         if term.kind=="value":
             value=coefficient if value is None else value+coefficient
         elif term.kind=="gradient":
+            gradient=(
+                coefficient if gradient is None else gradient+coefficient
+            )
+        elif term.kind=="gradient_dot":
+            if basis.elem._dim != 1:
+                raise UnsupportedNativeForm(
+                    "dot(grad(u), grad(v)) currently requires a scalar H1 basis"
+                )
             gradient=(
                 coefficient if gradient is None else gradient+coefficient
             )
@@ -1113,7 +1163,6 @@ def asm(
 
 
 def dot(left, right):
-def dot(left, right):
     if isinstance(left,(_TrialValue,_TestValue)) and isinstance(
         right,_QuadratureValue
     ):
@@ -1187,6 +1236,10 @@ def dot(left, right):
         return _Term("value", left)
     if _is_symbolic_coefficient(right) and isinstance(left, _TestValue):
         return _Term("value", right)
+    if _is_symbolic_coefficient(left) and isinstance(right, _TestGradient):
+        return _Term("gradient", left)
+    if _is_symbolic_coefficient(right) and isinstance(left, _TestGradient):
+        return _Term("gradient", right)
     if isinstance(right,_TestValue) and (
         isinstance(left,(np.ndarray,_QuadratureValue))
         or (hasattr(left,"value") and hasattr(left,"grad"))
@@ -1197,6 +1250,14 @@ def dot(left, right):
         or (hasattr(right,"value") and hasattr(right,"grad"))
     ):
         return _Term("value",np.asarray(right))
+    if isinstance(right,_TestGradient) and isinstance(
+        left,(np.ndarray,_QuadratureValue)
+    ):
+        return _Term("gradient",np.asarray(left))
+    if isinstance(left,_TestGradient) and isinstance(
+        right,(np.ndarray,_QuadratureValue)
+    ):
+        return _Term("gradient",np.asarray(right))
     if isinstance(left,(np.ndarray,_QuadratureValue)) and isinstance(
         right,_InterfaceTrace
     ):
@@ -1229,6 +1290,16 @@ def dot(left, right):
         and isinstance(left, _TestValue)
     ):
         return _BilinearTerm("value",factor=left.factor*right.factor)
+    if (
+        isinstance(left, _TrialGradient)
+        and isinstance(right, _TestGradient)
+    ) or (
+        isinstance(right, _TrialGradient)
+        and isinstance(left, _TestGradient)
+    ):
+        return _BilinearTerm(
+            "gradient_dot", factor=left.factor*right.factor
+        )
     if isinstance(left,_CompositeField) and isinstance(
         right,_CompositeField
     ):

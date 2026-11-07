@@ -29,6 +29,11 @@ class GeometryDiagnostics:
 class _TopologyMesh:
     """Cached codimension-one topology shared by independent meshes."""
 
+    @property
+    def nvertices(self):
+        """Number of mesh vertices, matching scikit-fem's mesh API."""
+        return self.p.shape[1]
+
     @classmethod
     def load(cls,filename,out=None,**kwargs):
         """Load a mesh using the optional meshio dependency."""
@@ -2240,9 +2245,10 @@ class DiscreteField:
 class DofsView:
     """Selected DOF indices with the scikit-fem-style ``all()`` accessor."""
 
-    def __init__(self,dofs,doflocs,groups=None):
+    def __init__(self,dofs,doflocs,groups=None,N=None):
         self._dofs=np.unique(np.asarray(dofs,dtype=np.int64))
         self.doflocs=doflocs
+        self.N=int(N if N is not None else np.asarray(doflocs).shape[-1])
         self.groups={
             str(name):np.unique(np.asarray(values,dtype=np.int64))
             for name,values in (groups or {}).items()
@@ -2270,7 +2276,7 @@ class DofsView:
             np.unique(np.concatenate(tuple(groups.values())))
             if groups else np.empty(0,dtype=np.int64)
         )
-        return DofsView(dofs,self.doflocs,groups)
+        return DofsView(dofs,self.doflocs,groups,self.N)
 
     def drop(self,names):
         removed=set(self._names(names))
@@ -3351,7 +3357,7 @@ class Basis:
                     ):
                         raise ValueError("facet index is out of range")
                     dofs=np.unique(selected)
-            view=DofsView(dofs,self.doflocs,{"u^n":dofs})
+            view=DofsView(dofs,self.doflocs,{"u^n":dofs},self.N)
             return view.drop(skip) if skip else view
         if sum(value is not None for value in (facets,elements,nodes))>1:
             raise ValueError("select only one of facets, elements, or nodes")
@@ -3496,6 +3502,7 @@ class Basis:
             ]) if selected_names else np.empty(0,dtype=np.int64),
             self.doflocs,
             {name:groups[name] for name in selected_names},
+            self.N,
         )
         return view.drop(skip) if skip else view
 
