@@ -2666,8 +2666,16 @@ def _hex_shapes(points,quadratic):
                 np.array([4*x-3,4-8*x,4*x-1])
                 for x in coordinate
             ]
-            for node,index in enumerate(np.ndindex(*(3,)*dimension)):
-                index=index[::-1]
+            if dimension==3:
+                indices=tuple(
+                    tuple(np.rint(2.*location).astype(int))
+                    for location in ElementHex2().doflocs
+                )
+            else:
+                indices=tuple(
+                    index[::-1] for index in np.ndindex(*(3,)*dimension)
+                )
+            for node,index in enumerate(indices):
                 shape[q,node]=np.prod([
                     values[d][index[d]] for d in range(dimension)
                 ])
@@ -2679,8 +2687,7 @@ def _hex_shapes(points,quadratic):
         return shape,grad
     bits=(
         ((0,0),(1,0),(1,1),(0,1)) if dimension==2 else
-        ((0,0,0),(1,0,0),(0,1,0),(0,0,1),
-         (1,1,0),(1,0,1),(0,1,1),(1,1,1))
+        tuple(map(tuple,ElementHex1().doflocs.astype(int)))
     )
     shape=np.empty((points.shape[1],len(bits)))
     grad=np.empty((points.shape[1],len(bits),dimension))
@@ -3990,7 +3997,7 @@ class Basis:
             return mesh.t[:5]
         if isinstance(scalar,ElementHex1):
             if mesh.t.shape[0]==27:
-                return mesh.t[[0,2,6,18,8,20,24,26]]
+                return mesh.t[:8]
             return mesh.t[:8]
         if isinstance(scalar,ElementHex2):
             return mesh.t[:27]
@@ -4077,33 +4084,9 @@ class Basis:
         elif self._serendipity_hex:
             shape,refgrad=_hex20_shapes(self.X)
         elif self._quadratic_hex:
-            grid=(0.,.5,1.)
-            def values(x):
-                return np.array([2.*(x-.5)*(x-1.),4.*x*(1.-x),2.*x*(x-.5)])
-            def derivatives(x):
-                return np.array([4.*x-3.,4.-8.*x,4.*x-1.])
-            nq=self.X.shape[1];shape=np.empty((nq,27));refgrad=np.empty((nq,27,3))
-            for q,(x,y,z) in enumerate(self.X.T):
-                v=(values(x),values(y),values(z));d=(derivatives(x),derivatives(y),derivatives(z))
-                n=0
-                for k in range(3):
-                    for j in range(3):
-                        for i in range(3):
-                            shape[q,n]=v[0][i]*v[1][j]*v[2][k]
-                            refgrad[q,n]=(
-                                d[0][i]*v[1][j]*v[2][k],
-                                v[0][i]*d[1][j]*v[2][k],
-                                v[0][i]*v[1][j]*d[2][k],
-                            );n+=1
+            shape,refgrad=_hex_shapes(self.X,True)
         else:
-            bits=np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1],
-                           [1,1,0],[1,0,1],[0,1,1],[1,1,1]])
-            shape=np.empty((self.X.shape[1],8));refgrad=np.empty((self.X.shape[1],8,3))
-            for q,xi in enumerate(self.X.T):
-                for n,bit in enumerate(bits):
-                    factors=np.where(bit,xi,1.-xi);shape[q,n]=np.prod(factors)
-                    for j in range(3):
-                        refgrad[q,n,j]=(1. if bit[j] else -1.)*np.prod(np.delete(factors,j))
+            shape,refgrad=_hex_shapes(self.X,False)
         geometry_shape=shape
         geometry_refgrad=refgrad
         geometry_nodes=self._mesh.t.shape[0]
@@ -4255,28 +4238,8 @@ class Basis:
             if self._serendipity_hex:
                 return _hex20_shapes(self.X)
             if self._quadratic_hex:
-                values=lambda x:np.array([2*(x-.5)*(x-1),4*x*(1-x),2*x*(x-.5)])
-                deriv=lambda x:np.array([4*x-3,4-8*x,4*x-1])
-                shape=np.empty((self.X.shape[1],27));grad=np.empty((self.X.shape[1],27,3))
-                for q,(x,y,z) in enumerate(self.X.T):
-                    v=(values(x),values(y),values(z));d=(deriv(x),deriv(y),deriv(z));n=0
-                    for k in range(3):
-                        for j in range(3):
-                            for i in range(3):
-                                shape[q,n]=v[0][i]*v[1][j]*v[2][k]
-                                grad[q,n]=(d[0][i]*v[1][j]*v[2][k],
-                                           v[0][i]*d[1][j]*v[2][k],
-                                           v[0][i]*v[1][j]*d[2][k]);n+=1
-                return shape,grad
-            bits=np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1],
-                           [1,1,0],[1,0,1],[0,1,1],[1,1,1]])
-            shape=np.empty((self.X.shape[1],8));grad=np.empty((self.X.shape[1],8,3))
-            for q,xi in enumerate(self.X.T):
-                for n,bit in enumerate(bits):
-                    factors=np.where(bit,xi,1-xi);shape[q,n]=np.prod(factors)
-                    for j in range(3):
-                        grad[q,n,j]=(1 if bit[j] else -1)*np.prod(np.delete(factors,j))
-            return shape,grad
+                return _hex_shapes(self.X,True)
+            return _hex_shapes(self.X,False)
         finally:
             self.X = old_points
 
@@ -4384,15 +4347,8 @@ class FacetBasis:
                              (2,4,7,6),(1,5,7,4),(3,6,7,5))
                 corners=local_faces
             else:
-                index=lambda i,j,k:i+3*j+9*k
-                local_faces=(
-                    tuple(index(i,j,0) for j in range(3) for i in range(3)),
-                    tuple(index(0,j,k) for k in range(3) for j in range(3)),
-                    tuple(index(i,0,k) for k in range(3) for i in range(3)),
-                    tuple(index(i,2,k) for k in range(3) for i in range(3)),
-                    tuple(index(2,j,k) for k in range(3) for j in range(3)),
-                    tuple(index(i,j,2) for j in range(3) for i in range(3)))
-                corners=tuple((face[0],face[2],face[8],face[6]) for face in local_faces)
+                local_faces=mesh._local_facets(full=True)
+                corners=tuple(face[:4] for face in local_faces)
             order=3 if intorder>=4 else 2
             points,weights=np.polynomial.legendre.leggauss(order)
             points=(points+1.)/2.;weights=weights/2.
@@ -4452,8 +4408,7 @@ class FacetBasis:
         self.normal_signs=facet_signs.copy()
         self.local_faces=[]
         for f, face in enumerate(facets.T):
-            face_corners=face[:3] if is_tet else (face[0],face[2] if len(face)==9 else face[1],
-                face[8] if len(face)==9 else face[2],face[6] if len(face)==9 else face[3])
+            face_corners=(face[:3] if is_tet else face[:4])
             adjacent=lookup[tuple(sorted(map(int,face_corners)))]
             local_side=int(facet_sides[f])
             if selected_ids is not None:
@@ -4481,9 +4436,7 @@ class FacetBasis:
                 np.array([[0.,0.,0.],[1.,0.,0.],
                           [0.,1.,0.],[0.,0.,1.]])
                 if is_tet else
-                np.array([[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],
-                          [0.,0.,1.],[1.,1.,0.],[1.,0.,1.],
-                          [0.,1.,1.],[1.,1.,1.]])
+                ElementHex1().doflocs
             )
             local_corner_ids=np.asarray(corner)
             global_corners=mesh.t[local_corner_ids,e]
