@@ -1769,6 +1769,14 @@ class MeshPyramid1(_TopologyMesh):
 
 
 class MeshHex(_TopologyMesh):
+    """Hexahedral mesh using the native local corner order.
+
+    The local vertices follow ``000, 100, 010, 001, 110, 101, 011, 111``.
+    This order is used by the native Hex elements and must stay paired with
+    their basis-function and facet tables. Its connectivity can differ from
+    scikit-fem's while representing the same physical mesh.
+    """
+
     def __init__(self, p: np.ndarray | None = None, t: np.ndarray | None = None):
         self.p = np.asarray(
             p if p is not None else
