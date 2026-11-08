@@ -4,7 +4,8 @@ import numpy as np
 
 from .forms import ddot, div, dot, grad, mul
 from ._h1_fields import (
-    Curl,SymmetricGradient,TestGradient,TestValue,TrialGradient,TrialValue,
+    Curl,Divergence,SymmetricGradient,TestGradient,TestValue,TrialGradient,
+    TrialValue,
 )
 from .interface import avg, jump, normal_grad
 from ._errors import UnsupportedNativeForm
@@ -131,6 +132,15 @@ def curl(value):
 
 
 def trace(value):
+    """Trace a numeric tensor or a symbolic vector-field gradient."""
+    if isinstance(value, (TrialGradient, TestGradient, SymmetricGradient)):
+        if isinstance(value, SymmetricGradient):
+            role = value.role
+        else:
+            role = (
+                "trial" if isinstance(value, TrialGradient) else "test"
+            )
+        return Divergence(role, value.factor)
     return np.einsum("ii...->...", value)
 
 
