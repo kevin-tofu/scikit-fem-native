@@ -866,11 +866,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 or holder_force_per_width <= 0.):
             return float(holder_z), False, 0.
         gaps, constraints, geometry = tool_state(u, holder_z, stroke)
-        support_rows = holder_rows[constraints[holder_rows, -1] > 1e-8]
+        support_sensitivity = constraints[holder_rows, -1]
+        # Ignore nearly tangential normals: they nominally oppose the load,
+        # but need an unbounded rigid-tool translation to close a small gap.
+        support_rows = holder_rows[support_sensitivity > 0.1]
         if not support_rows.size:
             return float(holder_z), False, 0.
         support_gaps = gaps[support_rows - equality_count]
-        nearest_index = int(np.argmin(support_gaps))
+        support_motion = support_gaps / constraints[support_rows, -1]
+        nearest_index = int(np.argmin(support_motion))
         row = int(support_rows[nearest_index])
         gap = float(support_gaps[nearest_index])
         if gap <= forming_contact_gap_tolerance_mm:
