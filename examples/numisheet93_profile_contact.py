@@ -873,6 +873,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         gap = float(support_gaps[nearest_index])
         if gap <= forming_contact_gap_tolerance_mm:
             return float(holder_z), False, gap
+        # Let the normal complementarity projection release a stale reaction
+        # before changing the tool geometry.  Otherwise the old multiplier
+        # would be carried to a different support location during approach.
+        if np.any(multipliers[support_rows] < -1e-2):
+            return float(holder_z), False, gap
         sensitivity = float(constraints[row, -1])
         if not np.isfinite(sensitivity) or sensitivity <= 1e-8:
             return float(holder_z), False, gap
