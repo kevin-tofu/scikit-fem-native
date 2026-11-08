@@ -848,6 +848,58 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 )
         return minimum
 
+    def approach_holder_support(u, holder_z, stroke):
+        """Move a force-controlled holder to its nearest feasible support.
+
+        Before contact exists, the holder force has no contact reaction to
+        balance it.  Do not ask the structural Newton solve to find that
+        missing support through a nearly singular rigid-tool degree of
+        freedom.  Instead, use the exact contact geometry and its local gap
+        derivative to approach the nearest force-opposing row.  This only
+        changes the trial tool position; the blank and its committed material
+        history remain untouched.  A backtracking search checks every tool
+        gap, including mortar quadrature samples, before accepting the move.
+        """
+        if (holder_position_control_mm is not None
+                or holder_force_per_width <= 0.):
+            return float(holder_z), False, 0.
+        gaps, constraints, geometry = tool_state(u, holder_z, stroke)
+        support_rows = holder_rows[constraints[holder_rows, -1] > 1e-8]
+        if not support_rows.size:
+            return float(holder_z), False, 0.
+        support_gaps = gaps[support_rows - equality_count]
+        nearest_index = int(np.argmin(support_gaps))
+        row = int(support_rows[nearest_index])
+        gap = float(support_gaps[nearest_index])
+        if gap <= forming_contact_gap_tolerance_mm:
+            return float(holder_z), False, gap
+        sensitivity = float(constraints[row, -1])
+        if not np.isfinite(sensitivity) or sensitivity <= 1e-8:
+            return float(holder_z), False, gap
+        correction = float(np.clip(
+            -gap / sensitivity,
+            -holder_newton_step_limit_mm,
+            holder_newton_step_limit_mm,
+        ))
+        if abs(correction) <= 1e-14:
+            return float(holder_z), False, gap
+        for backtrack in range(12):
+            candidate_z = float(holder_z + correction * (0.5 ** backtrack))
+            candidate_gaps, _, candidate_geometry = tool_state(
+                u, candidate_z, stroke
+            )
+            candidate_gap = float(
+                candidate_gaps[row - equality_count]
+            )
+            candidate_minimum_gap = minimum_tool_gap(
+                candidate_gaps, candidate_geometry
+            )
+            if (candidate_gap < gap - max(1e-10, 1e-6 * gap)
+                    and candidate_minimum_gap
+                    >= -forming_contact_gap_tolerance_mm):
+                return candidate_z, True, candidate_gap
+        return float(holder_z), False, gap
+
     # A small elastic stick range regularizes Coulomb friction, then the trial
     # tangential multiplier is capped by mu times the compressive normal force.
     # The stored scalar multiplier is resolved along each contact's current
@@ -3099,6 +3151,29 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 )
                 u = variables[:-1]
                 h = float(variables[-1])
+                approached_holder_z, holder_approached, holder_gap_after = (
+                    approach_holder_support(u, h, float(stroke))
+                )
+                if holder_approached:
+                    variables[-1] = approached_holder_z
+                    h = approached_holder_z
+                    if holder_gap_after > forming_contact_gap_tolerance_mm:
+                        # There still is no reaction path.  Continue the
+                        # geometry-only approach without evaluating an
+                        # unbalanced material Newton state; once a support is
+                        # reached, the ordinary unilateral KKT solve takes
+                        # over on the next iteration.
+                        if os.environ.get(
+                                "SCIKIT_FVM_FORMING_TRACE", ""
+                        ) == "contacts":
+                            print(
+                                "[forming-holder-approach] "
+                                f"stroke={stroke:.9f} iteration={iteration} "
+                                f"row_gap={holder_gap_after:.6e} mm "
+                                f"holder_z={h:.9f} mm",
+                                flush=True,
+                            )
+                        continue
                 if os.environ.get("SCIKIT_FVM_FORMING_TRACE", "").lower() in {
                     "1", "true", "yes"
                 }:
@@ -3240,47 +3315,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                                 ])
                             ])
                         else:
-                            # With a force-controlled holder and no closed
-                            # support, leave the row *unrequired* but seed the
-                            # nearest nearby unilateral constraint in the
-                            # active-set solve. This gives Newton a direction
-                            # that can close the support gap instead of relying
-                            # on the holder's tiny diagonal regularization to
-                            # drift toward contact. The row remains optional:
-                            # the contact solver can drop it if its reaction is
-                            # tensile, and nonlinear line search still checks
-                            # every exact gap before accepting an iterate.
+                            # No support is closed.  The geometry-only holder
+                            # approach at the start of this Newton iteration
+                            # handles this state without imposing a distant
+                            # open row as an artificial contact constraint.
                             required_holder_row = None
-                            if (holder_position_control_mm is None
-                                    and holder_force_per_width > 0.):
-                                predictor_holder_rows = holder_rows[
-                                    (constraints[holder_rows, -1] > 1e-8)
-                                    & (gaps[
-                                        holder_rows - equality_count
-                                    ] <= holder_support_search_radius_mm)
-                                ]
-                                if predictor_holder_rows.size:
-                                    predictor_holder_row = int(
-                                        predictor_holder_rows[np.argmin(
-                                            gaps[
-                                                predictor_holder_rows
-                                                - equality_count
-                                            ]
-                                        )]
-                                    )
-                                    initial_active[predictor_holder_row] = True
-                                    if os.environ.get(
-                                            "SCIKIT_FVM_FORMING_TRACE", ""
-                                    ) == "contacts":
-                                        print(
-                                            "[forming-holder-predictor-seed] "
-                                            f"stroke={stroke:.9f} "
-                                            f"row={predictor_holder_row} "
-                                            f"gap={gaps[predictor_holder_row - equality_count]:.6e} mm "
-                                            f"radius={holder_support_search_radius_mm:.6e} mm; "
-                                            "optional unilateral row",
-                                            flush=True,
-                                        )
                     if (not holder_support_released
                             and required_holder_row is not None):
                         initial_active[required_holder_row] = True
