@@ -29,6 +29,10 @@ class GeometryDiagnostics:
 class _TopologyMesh:
     """Cached codimension-one topology shared by independent meshes."""
 
+    @property
+    def nvertices(self):
+        return self.p.shape[1]
+
     @classmethod
     def load(cls,filename,out=None,**kwargs):
         """Load a mesh using the optional meshio dependency."""
@@ -2403,6 +2407,16 @@ class DofsView:
             str(name):np.unique(np.asarray(values,dtype=np.int64))
             for name,values in (groups or {}).items()
         }
+
+    @property
+    def N(self):
+        """Total number of DOFs in the parent basis.
+
+        A ``DofsView`` selects only some DOF indices, but scikit-fem exposes
+        the parent ``Dofs.N`` through the view.  In particular, ``enforce``
+        expects prescribed values as a full-length coefficient vector.
+        """
+        return self.doflocs.shape[1]
 
     @staticmethod
     def _names(names):

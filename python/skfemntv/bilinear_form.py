@@ -25,8 +25,8 @@ class NativeBilinearForm:
             self.memory_estimate,memory_limit_bytes,
             safety_factor=memory_safety_factor,
         )
-        scalar = basis.elem.elem
-        components = basis.elem._dim
+        scalar = getattr(basis.elem, "elem", basis.elem)
+        components = getattr(basis.elem, "_dim", 1)
         nodes = len(scalar.doflocs)
         entities, quadrature = basis.dx.shape
         self._cut=hasattr(basis,"cell_offsets")
