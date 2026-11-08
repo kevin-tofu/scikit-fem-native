@@ -112,7 +112,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         puso_isotropic_hardening: bool = False,
         initial_unload_increment: float = 0.1,
         maximum_unload_increment: float = 0.2,
-        withdraw_punch_after_forming: bool = False) -> dict:
+        withdraw_punch_after_forming: bool = False,
+        use_reference_friction: bool = False) -> dict:
     minimum_nx = 14 if refine_holder_return else (11 if refine_tool_contacts else 8)
     if nx < minimum_nx or nz < 2 or maximum_stroke_mm < 0. or maximum_increment_mm <= 0.:
         raise ValueError(
@@ -172,6 +173,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         raise ValueError("holder_position_control_mm must be finite")
     reference_path = Path(__file__).with_name("numisheet93_draw_bending_reference.json")
     reference, tools = load_profiles(reference_path)
+    if use_reference_friction:
+        # Keep the baseline frictionless path explicit while making it easy to
+        # select the benchmark's documented Coulomb coefficient without
+        # copying a magic number into shell commands or checkpoint metadata.
+        friction_coefficient = float(
+            reference["process"]["friction_coefficient"]
+        )
     punch_contact_curvature_blend_length_mm = float(os.environ.get(
         "SCIKIT_FVM_FORMING_PUNCH_CONTACT_CURVATURE_BLEND_LENGTH_MM",
         str(PUNCH_CONTACT_CURVATURE_BLEND_LENGTH_MM),
@@ -6006,6 +6014,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 if puso_isotropic_hardening else "official Abaqus deck"
             ),
             "friction_coefficient": float(friction_coefficient),
+            "friction_coefficient_source": (
+                "NUMISHEET '93 reference process data"
+                if use_reference_friction else "user argument"
+            ),
             "holder_position_control_mm": holder_position_control_mm,
             "maximum_stroke_mm": maximum_stroke_mm,
             "maximum_increment_mm": maximum_increment_mm,
@@ -6470,6 +6482,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             if puso_isotropic_hardening else "official Abaqus deck"
         ),
         "friction_coefficient": float(friction_coefficient),
+        "friction_coefficient_source": (
+            "NUMISHEET '93 reference process data"
+            if use_reference_friction else "user argument"
+        ),
         "scope": (
             "source blank/tools/material; partial stroke only; frictional contact "
             "uses a regularized Coulomb law; no shell contact thickness"
@@ -6828,6 +6844,12 @@ def main():
                         help="maximum load-release fraction increment for springback")
     parser.add_argument("--friction-coefficient", type=float, default=0.0,
                         help="Coulomb coefficient for punch, die, and holder contact")
+    parser.add_argument(
+        "--use-reference-friction", action="store_true",
+        help=("set friction to the coefficient recorded in the local "
+              "NUMISHEET '93 reference data (0.144); overrides "
+              "--friction-coefficient")
+    )
     parser.add_argument("--forming-equilibrium-tolerance", type=float, default=2.0e-1,
                         help="absolute floor for forming equilibrium residual in N/mm")
     parser.add_argument(
@@ -6862,7 +6884,8 @@ def main():
                          args.puso_isotropic_hardening,
                          args.initial_unload_increment,
                          args.maximum_unload_increment,
-                         args.withdraw_punch_after_forming), indent=2))
+                         args.withdraw_punch_after_forming,
+                         args.use_reference_friction), indent=2))
 
 
 if __name__ == "__main__":
