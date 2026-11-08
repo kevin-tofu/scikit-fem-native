@@ -6458,9 +6458,16 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "points per selected boundary facet"
         ),
         "contact_solver_policy": (
+            (
+                "Fischer-Burmeister semismooth-first (default for finite-strain "
+                "J2; disable with SCIKIT_FVM_FORMING_CONTACT_SEMISMOOTH_FIRST=0), "
+                "then direct nonsymmetric sparse active-set fallback"
+                if contact_semismooth_first else
+                "direct nonsymmetric sparse active-set for finite-strain J2"
+            )
+            if finite_strain_j2 else
             "KKTKit reduced unilateral active set when primal variables <= 256; "
-            "rank-filtered sparse active set for larger systems; optional "
-            "semismooth-first path for finite-strain contact tangents"
+            "rank-filtered sparse active set for larger systems"
         ),
         "contact_rank_tolerance": contact_rank_tolerance,
         "contact_solver_max_iterations": contact_solver_max_iterations,
