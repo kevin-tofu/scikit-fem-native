@@ -858,9 +858,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         missing support through a nearly singular rigid-tool degree of
         freedom.  Instead, use the exact contact geometry and its local gap
         derivative to approach the nearest force-opposing row.  This only
-        changes the trial tool position; the blank and its committed material
-        history remain untouched.  A backtracking search checks every tool
-        gap, including mortar quadrature samples, before accepting the move.
+        changes the trial tool position and, at touchdown, seeds the trial
+        contact multiplier.  The blank displacement, committed reaction, and
+        committed material history remain untouched.  A backtracking search
+        checks every tool gap, including mortar quadrature samples, before
+        accepting the move.
         """
         if (holder_position_control_mm is not None
                 or holder_force_per_width <= 0.):
