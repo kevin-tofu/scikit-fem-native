@@ -66,6 +66,83 @@ def _is_symmetric_matrix(matrix, *, rtol=1e-10, atol=1e-12):
     )
 
 
+def _read_reference_curve(path: str | Path, x_column: str, y_column: str):
+    """Read a finite, strictly ordered two-column CSV reference curve."""
+    source = Path(path)
+    try:
+        values = np.genfromtxt(
+            source, delimiter=",", names=True, dtype=float, encoding="utf-8"
+        )
+    except (OSError, ValueError) as error:
+        raise ValueError(f"could not read reference curve {source}: {error}") from error
+    if values.dtype.names is None or x_column not in values.dtype.names \
+            or y_column not in values.dtype.names:
+        raise ValueError(
+            f"{source} must have CSV columns {x_column!r} and {y_column!r}"
+        )
+    values = np.atleast_1d(values)
+    curve = np.column_stack((values[x_column], values[y_column])).astype(float)
+    if (curve.shape[0] < 2 or not np.all(np.isfinite(curve))
+            or np.any(np.diff(curve[:, 0]) <= 0.)):
+        raise ValueError(
+            f"{source} must contain at least two finite rows with strictly "
+            f"increasing {x_column}"
+        )
+    return curve
+
+
+def _compare_reference_curve(model_curve, reference_curve, *, x_name, y_name):
+    """Compare on reference samples within overlap, without extrapolation."""
+    model = np.asarray(model_curve, dtype=float)
+    reference = np.asarray(reference_curve, dtype=float)
+    if (model.ndim != 2 or model.shape[1] != 2 or model.shape[0] < 2
+            or not np.all(np.isfinite(model))):
+        raise ValueError("model curve must be a finite (n>=2, 2) array")
+    order = np.argsort(model[:, 0], kind="stable")
+    model = model[order]
+    # Checkpoint resumes can leave repeated accepted strokes in exported
+    # records; retain the last value for a repeated x coordinate.
+    keep = np.r_[model[1:, 0] != model[:-1, 0], True]
+    model = model[keep]
+    if model.shape[0] < 2:
+        raise ValueError("model curve must contain two distinct x coordinates")
+    mask = (
+        (reference[:, 0] >= model[0, 0])
+        & (reference[:, 0] <= model[-1, 0])
+    )
+    if np.count_nonzero(mask) < 2:
+        raise ValueError(
+            f"model and reference {x_name} ranges must overlap at two or more "
+            "reference samples"
+        )
+    sampled_reference = reference[mask]
+    prediction = np.interp(sampled_reference[:, 0], model[:, 0], model[:, 1])
+    error = prediction - sampled_reference[:, 1]
+    rmse = float(np.sqrt(np.mean(error**2)))
+    reference_scale = max(float(np.max(np.abs(sampled_reference[:, 1]))), 1e-30)
+    return {
+        "sample_count": int(sampled_reference.shape[0]),
+        "reference_sample_coverage_fraction": float(
+            sampled_reference.shape[0] / reference.shape[0]
+        ),
+        "overlap_range": [
+            float(sampled_reference[0, 0]),
+            float(sampled_reference[-1, 0]),
+        ],
+        "rmse": rmse,
+        "normalized_rmse": float(rmse / reference_scale),
+        "maximum_absolute_error": float(np.max(np.abs(error))),
+        "x_quantity": x_name,
+        "y_quantity": y_name,
+        "direct_comparison_valid": False,
+        "condition_match_note": (
+            "Numerical curve error is reported for the overlapping samples. "
+            "CSV input alone does not establish matching material, load, "
+            "contact, or formulation conditions."
+        ),
+    }
+
+
 def load_profiles(reference_path: Path):
     reference = json.loads(reference_path.read_text())
     data = reference["analytical_tool_profiles_from_reference_input"]
@@ -117,7 +194,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         maximum_unload_increment: float = 0.2,
         withdraw_punch_after_forming: bool = False,
         use_reference_friction: bool = False,
-        finite_strain_hill48: bool = False) -> dict:
+        finite_strain_hill48: bool = False,
+        reference_force_stroke_csv: str | Path | None = None,
+        reference_thickness_csv: str | Path | None = None,
+        reference_thickness_state: str = "springback") -> dict:
     minimum_nx = 14 if refine_holder_return else (11 if refine_tool_contacts else 8)
     if nx < minimum_nx or nz < 2 or maximum_stroke_mm < 0. or maximum_increment_mm <= 0.:
         raise ValueError(
@@ -129,6 +209,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         raise ValueError("Puso isotropic hardening requires --finite-strain-j2")
     if finite_strain_hill48 and puso_isotropic_hardening:
         raise ValueError("Puso isotropic hardening is only configured for J2")
+    if reference_thickness_state not in {"formed", "springback"}:
+        raise ValueError("reference_thickness_state must be formed or springback")
     finite_strain_j2 = finite_strain_j2 or finite_strain_hill48
     if re_equilibrate_checkpoint and not resume:
         raise ValueError("re-equilibrating a checkpoint requires --resume")
@@ -180,6 +262,20 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         raise ValueError("holder_position_control_mm must be finite")
     reference_path = Path(__file__).with_name("numisheet93_draw_bending_reference.json")
     reference, tools = load_profiles(reference_path)
+    reference_force_stroke_curve_input = (
+        _read_reference_curve(
+            reference_force_stroke_csv,
+            "stroke_mm",
+            "force_N_half_model",
+        )
+        if reference_force_stroke_csv is not None else None
+    )
+    reference_thickness_curve_input = (
+        _read_reference_curve(
+            reference_thickness_csv, "x_mm", "thickness_mm"
+        )
+        if reference_thickness_csv is not None else None
+    )
     if use_reference_friction:
         # Keep the baseline frictionless path explicit while making it easy to
         # select the benchmark's documented Coulomb coefficient without
@@ -6030,6 +6126,46 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     def centerline_thickness(profile):
         return min(profile, key=lambda item: abs(item[0]))[1]
 
+    def reference_data_comparisons(thickness_profile, thickness_state):
+        comparisons = {}
+        if reference_force_stroke_curve_input is not None:
+            loading_records = []
+            for record in records:
+                if (loading_records
+                        and record["stroke_mm"]
+                        < loading_records[-1]["stroke_mm"] - 1e-12):
+                    # Punch withdrawal follows forming in the same checkpoint
+                    # history; compare the reference force curve to the
+                    # loading branch only.
+                    break
+                loading_records.append(record)
+            model_force_curve = np.asarray([
+                [record["stroke_mm"], record["punch_force_N_half_model"]]
+                for record in loading_records
+            ], dtype=float)
+            comparisons["punch_force_stroke"] = {
+                "reference_csv": str(Path(reference_force_stroke_csv)),
+                **_compare_reference_curve(
+                    model_force_curve,
+                    reference_force_stroke_curve_input,
+                    x_name="stroke_mm",
+                    y_name="force_N_half_model",
+                ),
+            }
+        if reference_thickness_curve_input is not None:
+            model_thickness_curve = np.asarray(thickness_profile, dtype=float)
+            comparisons["thickness"] = {
+                "reference_csv": str(Path(reference_thickness_csv)),
+                "model_state": thickness_state,
+                **_compare_reference_curve(
+                    model_thickness_curve,
+                    reference_thickness_curve_input,
+                    x_name="x_mm",
+                    y_name="thickness_mm",
+                ),
+            }
+        return comparisons
+
     if forming_only:
         last_record = records[-1]
         formed_thickness_profile = thickness_profile_for(displacement)
@@ -6055,6 +6191,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "friction_coefficient_source": (
                 "NUMISHEET '93 reference process data"
                 if use_reference_friction else "user argument"
+            ),
+            "reference_data_comparisons": reference_data_comparisons(
+                formed_thickness_profile, "formed"
             ),
             "holder_position_control_mm": holder_position_control_mm,
             "maximum_stroke_mm": maximum_stroke_mm,
@@ -6647,11 +6786,17 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             ),
             "punch_force_stroke": {
                 "model_curve_available": True,
-                "reference_curve_available": bool(reference.get(
-                    "reference_run", {}
-                ).get("independent_force_curve_available_locally", False)),
+                "reference_curve_available": bool(
+                    reference_force_stroke_csv is not None
+                    or reference.get("reference_run", {}).get(
+                        "independent_force_curve_available_locally", False
+                    )
+                ),
                 "direct_comparison_valid": False,
                 "reason": (
+                    "CSV input enables a numerical overlap comparison, but does "
+                    "not certify matching model conditions."
+                    if reference_force_stroke_csv is not None else
                     "The reference input requests punch RF/U history, but its "
                     "output database and an independent force-stroke curve are "
                     "not included locally. The model curve is exported in "
@@ -6660,15 +6805,26 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             },
             "thickness": {
                 "model_profile_available": True,
-                "reference_measurements_available": False,
+                "reference_measurements_available": (
+                    reference_thickness_csv is not None
+                ),
                 "direct_comparison_valid": False,
                 "reason": (
+                    "CSV input enables a numerical overlap comparison, but does "
+                    "not certify matching model conditions."
+                    if reference_thickness_csv is not None else
                     "The local benchmark data provide the initial 0.78 mm "
                     "blank thickness but no measured post-forming thickness "
                     "profile. Model profiles are reported separately for the "
                     "formed and springback states."
                 ),
             },
+            "user_supplied_reference_curves": reference_data_comparisons(
+                formed_thickness_profile
+                if reference_thickness_state == "formed"
+                else thickness_profile,
+                reference_thickness_state,
+            ),
             "springback_angle": {
                 "model_angle_magnitude_deg": springback_angle_magnitude,
                 "experimental_mean_deg": reference["springback_reference"][
@@ -6940,6 +7096,21 @@ def main():
               "NUMISHEET '93 reference data (0.144); overrides "
               "--friction-coefficient")
     )
+    parser.add_argument(
+        "--reference-force-stroke-csv", type=Path,
+        help=("optional CSV with stroke_mm,force_N_half_model columns; "
+              "reports overlap RMSE without certifying condition equivalence"),
+    )
+    parser.add_argument(
+        "--reference-thickness-csv", type=Path,
+        help=("optional CSV with x_mm,thickness_mm columns for a measured "
+              "thickness profile"),
+    )
+    parser.add_argument(
+        "--reference-thickness-state", choices=("formed", "springback"),
+        default="springback",
+        help="select which model state to compare to reference thickness data",
+    )
     parser.add_argument("--forming-equilibrium-tolerance", type=float, default=2.0e-1,
                         help="absolute floor for forming equilibrium residual in N/mm")
     parser.add_argument(
@@ -6977,7 +7148,10 @@ def main():
                          args.maximum_unload_increment,
                          args.withdraw_punch_after_forming,
                          args.use_reference_friction,
-                         args.finite_strain_hill48), indent=2))
+                         args.finite_strain_hill48,
+                         args.reference_force_stroke_csv,
+                         args.reference_thickness_csv,
+                         args.reference_thickness_state), indent=2))
 
 
 if __name__ == "__main__":
