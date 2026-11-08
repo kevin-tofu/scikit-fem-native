@@ -2302,6 +2302,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
 
         def switch_die_support(contact_result):
             """Transfer a tensile or open-gap required die reaction."""
+            if contact_semismooth_first:
+                # The semismooth complementarity solve updates all die rows
+                # together.  A required-row transfer would turn its unilateral
+                # equations back into a pinned active-set support path.
+                return None
             required_die_rows = die_rows[required_active[die_rows]]
             if (required_die_rows.size == 0 or support_switch_depth >= 8):
                 return None
@@ -3339,6 +3344,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         # within the local contact neighborhood.
                         required_active[required_holder_row] = (
                             not soft_holder_support_seed
+                            and not contact_semismooth_first
                         )
                         holder_support_visited_rows.add(
                             int(required_holder_row)
@@ -3404,6 +3410,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             not (os.environ.get(
                                 "SCIKIT_FVM_FORMING_SOFT_DIE_SUPPORT_SEED", ""
                             ).lower() in {"1", "true", "yes"})
+                            and not contact_semismooth_first
                         )
                         if os.environ.get(
                             "SCIKIT_FVM_FORMING_TRACE", ""
