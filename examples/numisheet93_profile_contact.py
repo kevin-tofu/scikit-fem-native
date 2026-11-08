@@ -877,6 +877,19 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         if not support_rows.size:
             return float(holder_z), False, 0.
         support_gaps = gaps[support_rows - equality_count]
+        stale_support_reactions = (
+            (trial_multipliers[support_rows] < -1e-2)
+            & (support_gaps > forming_contact_gap_tolerance_mm)
+        )
+        if np.any(stale_support_reactions):
+            # This is the increment-local multiplier copy. Release reactions
+            # whose holder rows are already outside contact so they cannot
+            # block touchdown at a different support point.
+            trial_multipliers[support_rows[stale_support_reactions]] = 0.
+        existing_closed_reaction = np.any(
+            (trial_multipliers[support_rows] < -1e-2)
+            & (support_gaps <= forming_contact_gap_tolerance_mm)
+        )
         support_motion = support_gaps / constraints[support_rows, -1]
         nearest_index = int(np.argmin(support_motion))
         row = int(support_rows[nearest_index])
@@ -898,15 +911,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             # Seed only the trial iterate with the vertical force balance;
             # the contact solve and outer equilibrium checks still determine
             # the accepted reaction, and committed multipliers are untouched.
-            if not np.any(trial_multipliers[support_rows] < -1e-2):
+            if not existing_closed_reaction:
                 trial_multipliers[row] = (
                     -holder_external_force_per_width / sensitivity
                 )
             return float(holder_z), False, gap
-        # Let the normal complementarity projection release a stale reaction
-        # before changing the tool geometry.  Otherwise the old multiplier
-        # would be carried to a different support location during approach.
-        if np.any(trial_multipliers[support_rows] < -1e-2):
+        # Solve a still-closed compressive force path before moving the tool;
+        # stale open reactions were cleared from this increment-local copy
+        # above.
+        if existing_closed_reaction:
             return float(holder_z), False, gap
         if not np.isfinite(sensitivity) or sensitivity <= 1e-8:
             return float(holder_z), False, gap
@@ -931,15 +944,25 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             candidate_sensitivity = float(
                 candidate_constraints[row, -1]
             )
+            candidate_support_rows = holder_rows[
+                np.isfinite(candidate_constraints[holder_rows, -1])
+                & (candidate_constraints[holder_rows, -1] > 0.1)
+            ]
+            candidate_support_gaps = candidate_gaps[
+                candidate_support_rows - equality_count
+            ]
+            candidate_has_closed_reaction = np.any(
+                (trial_multipliers[candidate_support_rows] < -1e-2)
+                & (candidate_support_gaps
+                   <= forming_contact_gap_tolerance_mm)
+            )
             if (candidate_gap < gap - max(1e-10, 1e-6 * gap)
                     and np.isfinite(candidate_sensitivity)
                     and candidate_sensitivity > 0.1
                     and candidate_minimum_gap
                     >= -forming_contact_gap_tolerance_mm):
                 if (candidate_gap <= contact_activation_gap_mm
-                        and not np.any(
-                            trial_multipliers[support_rows] < -1e-2
-                        )):
+                        and not candidate_has_closed_reaction):
                     trial_multipliers[row] = (
                         -holder_external_force_per_width
                         / candidate_sensitivity
