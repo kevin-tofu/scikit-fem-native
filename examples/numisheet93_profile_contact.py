@@ -882,19 +882,19 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         row = int(support_rows[nearest_index])
         gap = float(support_gaps[nearest_index])
         sensitivity = float(constraints[row, -1])
-        # Start just inside the contact branch.  At a positive gap with a zero
-        # multiplier, the Fischer--Burmeister generalized derivative has no
-        # gap-to-reaction coupling, even when that gap is below the outer
-        # physical feasibility tolerance.  A tiny bounded penetration selects
-        # the contact-side derivative and lets the holder force enter the KKT
-        # correction.
+        # Reach numerical closure before the contact solve. At a positive gap
+        # with a zero multiplier, the Fischer--Burmeister generalized
+        # derivative has no gap-to-reaction coupling, even when that gap is
+        # below the outer physical feasibility tolerance. A trial reaction is
+        # seeded at closure below, so artificial geometric penetration is not
+        # needed to select the contact branch.
         contact_activation_gap_mm = min(
             1e-8, forming_contact_gap_tolerance_mm
         )
-        if gap <= -contact_activation_gap_mm:
-            # A tiny penetration is below the FB residual's stopping floor,
-            # so a zero multiplier can otherwise be accepted as an inexact
-            # contact solve while the rigid-holder force remains unbalanced.
+        if gap <= contact_activation_gap_mm:
+            # A near-zero gap is below the FB residual's stopping floor, so a
+            # zero multiplier can otherwise be accepted as an inexact contact
+            # solve while the rigid-holder force remains unbalanced.
             # Seed only the trial iterate with the vertical force balance;
             # the contact solve and outer equilibrium checks still determine
             # the accepted reaction, and committed multipliers are untouched.
@@ -911,7 +911,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         if not np.isfinite(sensitivity) or sensitivity <= 1e-8:
             return float(holder_z), False, gap
         correction = float(np.clip(
-            (-contact_activation_gap_mm - gap) / sensitivity,
+            -gap / sensitivity,
             -holder_newton_step_limit_mm,
             holder_newton_step_limit_mm,
         ))
@@ -936,7 +936,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     and candidate_sensitivity > 0.1
                     and candidate_minimum_gap
                     >= -forming_contact_gap_tolerance_mm):
-                if (candidate_gap <= -contact_activation_gap_mm
+                if (candidate_gap <= contact_activation_gap_mm
                         and not np.any(
                             trial_multipliers[support_rows] < -1e-2
                         )):
@@ -3211,13 +3211,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 if holder_approached:
                     variables[-1] = approached_holder_z
                     h = approached_holder_z
-                    if holder_gap_after > -min(
+                    if holder_gap_after > min(
                         1e-8, forming_contact_gap_tolerance_mm
                     ):
-                        # There still is no reaction path.  Continue the
-                        # geometry-only approach without evaluating an
-                        # unbalanced material Newton state; once a support is
-                        # reached, the ordinary unilateral KKT solve takes
+                        # The reaction path is not numerically closed yet.
+                        # Continue geometry-only approach without evaluating
+                        # an unbalanced material Newton state. Once a support
+                        # is reached, the ordinary unilateral KKT solve takes
                         # over on the next iteration.
                         if os.environ.get(
                                 "SCIKIT_FVM_FORMING_TRACE", ""
