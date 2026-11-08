@@ -3513,7 +3513,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             flush=True,
                         )
                     multipliers[projected_rows] = 0.
-                    committed_friction_multipliers[projected_rows] = 0.
+                    # Do not clear committed tangential history during a
+                    # Newton trial.  With zero trial normal reaction,
+                    # friction_response clips its trial traction to zero;
+                    # the stored history is replaced only after increment
+                    # acceptance.
                 friction_force, friction_tangent, _ = friction_response(
                     u, h, stroke, friction_base_displacement,
                     friction_base_holder_z, friction_base_stroke, multipliers,
