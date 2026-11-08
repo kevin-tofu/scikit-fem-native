@@ -480,9 +480,9 @@ class FiniteStrainHill48Material(FiniteStrainJ2Material):
     This reuses the transactional multiplicative-plasticity state layout of
     :class:`FiniteStrainJ2Material` (nine plastic-gradient entries and one
     accumulated equivalent plastic strain). The local Hill48 return is solved
-    in the elastic corotational Hencky frame. Its first-Piola tangent is
-    currently evaluated by centered differences, so this is an experimental
-    path intended for forming studies rather than a native batched kernel.
+    in the elastic corotational Hencky frame. The first-Piola tangent combines
+    the implicit Hill48 return-map tangent with the spectral Hencky and polar
+    rotation derivatives.
     """
 
     def __init__(
@@ -495,6 +495,7 @@ class FiniteStrainHill48Material(FiniteStrainJ2Material):
         hardening_modulus: float = 0.,
         hardening_curve=None,
         tangent_step: float = 2e-7,
+        tangent_method: str = "analytic",
     ):
         super().__init__(
             young_modulus,
@@ -503,7 +504,7 @@ class FiniteStrainHill48Material(FiniteStrainJ2Material):
             hardening_modulus,
             hardening_curve=hardening_curve,
             tangent_step=tangent_step,
-            tangent_method="finite_difference",
+            tangent_method=tangent_method,
         )
         from .hill48 import Hill48PlasticityMaterial
 
@@ -516,6 +517,101 @@ class FiniteStrainHill48Material(FiniteStrainJ2Material):
             hardening_curve=hardening_curve,
         )
         self.stress_ratios = np.asarray(stress_ratios, dtype=float).copy()
+
+    def _consistent_tangent(
+        self, deformation_gradient: np.ndarray, committed: np.ndarray,
+        tangent_components: tuple[int, ...],
+        tangent_direction: np.ndarray | None = None,
+    ) -> np.ndarray:
+        f = deformation_gradient
+        fp_inverse = np.linalg.inv(committed[:9].reshape(3, 3))
+        fe = f @ fp_inverse
+        ce = fe.T @ fe
+        eigenvalues, eigenvectors = np.linalg.eigh(0.5 * (ce + ce.T))
+        if np.min(eigenvalues) <= 1e-14:
+            raise ValueError(
+                "elastic right Cauchy-Green tensor is not positive definite"
+            )
+        log_strain = 0.5 * (
+            eigenvectors * np.log(eigenvalues)
+        ) @ eigenvectors.T
+        stretch = (eigenvectors * np.sqrt(eigenvalues)) @ eigenvectors.T
+        rotation = fe @ np.linalg.inv(stretch)
+
+        alpha = float(committed[9])
+        local_history = np.zeros(7, dtype=float)
+        local_history[6] = alpha
+        stress_corotational, updated_history, _, plastic = (
+            self._hill48._stress_update(log_strain, local_history)
+        )
+        gamma = float(updated_history[6] - alpha)
+        trial_stress = np.einsum(
+            "ijkl,kl->ij", self._hill48._elastic, log_strain
+        )
+        trial_equivalent, trial_gradient = (
+            self._hill48._equivalent_and_gradient(trial_stress)
+        )
+        yield_value = self._hill48._yield_stress(alpha)
+        yield_tolerance = 1e-10 * max(1., yield_value)
+        plastic_tangent = plastic
+        if abs(trial_equivalent - yield_value) <= yield_tolerance:
+            if tangent_direction is None:
+                plastic_tangent = True
+            else:
+                d_fe = tangent_direction @ fp_inverse
+                d_ce = d_fe.T @ fe + fe.T @ d_fe
+                d_log_strain = 0.5 * self._symmetric_spectral_direction(
+                    eigenvalues, eigenvectors, d_ce, np.log,
+                    lambda value: 1. / value,
+                )
+                d_trial_stress = np.einsum(
+                    "ijkl,kl->ij", self._hill48._elastic, d_log_strain
+                )
+                d_equivalent = float(np.sum(trial_gradient * d_trial_stress))
+                plastic_tangent = d_equivalent > 0.
+
+        if plastic_tangent:
+            corotational_tangent = self._hill48._consistent_tangent(
+                log_strain, np.zeros((3, 3)), alpha,
+                stress_corotational, gamma,
+            )
+        else:
+            corotational_tangent = self._hill48._elastic
+
+        tau = rotation @ stress_corotational @ rotation.T
+        inverse_f_transpose = np.linalg.inv(f).T
+        tangent = np.zeros((3, 3, 3, 3), dtype=float)
+        for k in tangent_components:
+            for ell in tangent_components:
+                d_f = np.zeros((3, 3), dtype=float)
+                d_f[k, ell] = 1.
+                d_fe = d_f @ fp_inverse
+                d_ce = d_fe.T @ fe + fe.T @ d_fe
+                d_log_strain = 0.5 * self._symmetric_spectral_direction(
+                    eigenvalues, eigenvectors, d_ce, np.log,
+                    lambda value: 1. / value,
+                )
+                d_tau_corotational = np.einsum(
+                    "ijkl,kl->ij", corotational_tangent, d_log_strain
+                )
+                d_stretch = self._symmetric_spectral_direction(
+                    eigenvalues, eigenvectors, d_ce, np.sqrt,
+                    lambda value: 0.5 / np.sqrt(value),
+                )
+                inverse_stretch = np.linalg.inv(stretch)
+                d_rotation = d_fe @ inverse_stretch - (
+                    rotation @ d_stretch @ inverse_stretch
+                )
+                d_tau = (
+                    d_rotation @ stress_corotational @ rotation.T
+                    + rotation @ d_tau_corotational @ rotation.T
+                    + rotation @ stress_corotational @ d_rotation.T
+                )
+                tangent[:, :, k, ell] = (
+                    d_tau @ inverse_f_transpose
+                    - tau @ inverse_f_transpose @ d_f.T @ inverse_f_transpose
+                )
+        return tangent
 
     def _update(self, deformation_gradient: np.ndarray, committed: np.ndarray):
         f = deformation_gradient
@@ -591,7 +687,8 @@ class PlaneStrainFiniteStrainJ2Assembler:
     The material tangent is assembled without symmetrization; plastic
     configurations can therefore produce a nonsymmetric global Jacobian.
     ``FiniteStrainHill48Material`` is accepted through the common transactional
-    material interface; its material-point tangent is currently numerical.
+    material interface; its algorithmic tangent differentiates the local
+    Hill48 return map and finite-strain kinematics.
     """
 
     def __init__(self, basis: Basis, material: FiniteStrainJ2Material):

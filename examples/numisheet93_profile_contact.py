@@ -605,8 +605,6 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     material_tangent_method = os.environ.get(
         "SCIKIT_FVM_FORMING_MATERIAL_TANGENT_METHOD", "analytic"
     ).lower()
-    if finite_strain_hill48:
-        material_tangent_method = "finite_difference"
     if finite_strain_j2:
         if finite_strain_hill48:
             material = skfemntv.FiniteStrainHill48Material(
@@ -617,6 +615,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     "hill48_coefficients_R11_R22_R33_R12_R13_R23"
                 ],
                 hardening_curve=hardening,
+                tangent_method=material_tangent_method,
                 tangent_step=float(os.environ.get(
                     "SCIKIT_FVM_FORMING_MATERIAL_TANGENT_STEP", "2e-7"
                 )),
@@ -6865,7 +6864,7 @@ def main():
     material_group.add_argument(
         "--finite-strain-hill48", action="store_true",
         help=("use multiplicative finite-strain Hill48 plasticity; its "
-              "consistent tangent is currently computed by centered differences"),
+              "default tangent differentiates the local return map analytically"),
     )
     parser.add_argument(
         "--puso-isotropic-hardening", action="store_true",
