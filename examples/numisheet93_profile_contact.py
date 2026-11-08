@@ -877,7 +877,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         nearest_index = int(np.argmin(support_motion))
         row = int(support_rows[nearest_index])
         gap = float(support_gaps[nearest_index])
-        if gap <= forming_contact_gap_tolerance_mm:
+        # Match the outer contact active-set seed threshold.  Stopping at the
+        # looser physical feasibility tolerance can leave a small positive
+        # gap that the zero-multiplier Fischer--Burmeister linearization still
+        # classifies as inactive, so the load-controlled tool has no reaction
+        # direction to pick up its force.
+        contact_activation_gap_mm = min(
+            1e-8, forming_contact_gap_tolerance_mm
+        )
+        if gap <= contact_activation_gap_mm:
             return float(holder_z), False, gap
         # Let the normal complementarity projection release a stale reaction
         # before changing the tool geometry.  Otherwise the old multiplier
@@ -3173,7 +3181,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 if holder_approached:
                     variables[-1] = approached_holder_z
                     h = approached_holder_z
-                    if holder_gap_after > forming_contact_gap_tolerance_mm:
+                    if holder_gap_after > min(
+                            1e-8, forming_contact_gap_tolerance_mm
+                    ):
                         # There still is no reaction path.  Continue the
                         # geometry-only approach without evaluating an
                         # unbalanced material Newton state; once a support is
