@@ -6455,6 +6455,21 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         ),
         "requested_benchmark_stroke_mm": reference["process"]["punch_stroke"],
         "benchmark_comparison": {
+            "requested_reference_stroke_mm": float(
+                reference["process"]["punch_stroke"]
+            ),
+            "accepted_model_stroke_mm": float(accepted_stroke),
+            "reference_stroke_coverage_fraction": float(min(
+                1., accepted_stroke
+                / max(float(reference["process"]["punch_stroke"]), 1e-30)
+            )),
+            "full_reference_stroke_reached": bool(
+                accepted_stroke
+                >= float(reference["process"]["punch_stroke"])
+                - max(1e-10, 1e-10 * float(
+                    reference["process"]["punch_stroke"]
+                ))
+            ),
             "punch_force_stroke": {
                 "model_curve_available": True,
                 "reference_curve_available": bool(reference.get(
