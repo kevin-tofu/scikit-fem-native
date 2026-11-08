@@ -321,6 +321,7 @@ class FiniteStrainJ2Material:
         )))
         return cauchy, first_piola, trial_state, plastic, equivalent_stress, gamma
 
+
     def _plastic_multiplier(
         self, trial_equivalent_stress: float, equivalent_plastic_strain: float
     ) -> float:
@@ -473,6 +474,102 @@ class FiniteStrainJ2Material:
         return np.array(evaluation.trial_state, dtype=float, copy=True)
 
 
+class FiniteStrainHill48Material(FiniteStrainJ2Material):
+    """Finite Hencky strain plasticity with an associated Hill48 yield surface.
+
+    This reuses the transactional multiplicative-plasticity state layout of
+    :class:`FiniteStrainJ2Material` (nine plastic-gradient entries and one
+    accumulated equivalent plastic strain). The local Hill48 return is solved
+    in the elastic corotational Hencky frame. Its first-Piola tangent is
+    currently evaluated by centered differences, so this is an experimental
+    path intended for forming studies rather than a native batched kernel.
+    """
+
+    def __init__(
+        self,
+        young_modulus: float,
+        poisson_ratio: float,
+        yield_stress: float,
+        *,
+        stress_ratios=(1., 1., 1., 1., 1., 1.),
+        hardening_modulus: float = 0.,
+        hardening_curve=None,
+        tangent_step: float = 2e-7,
+    ):
+        super().__init__(
+            young_modulus,
+            poisson_ratio,
+            yield_stress,
+            hardening_modulus,
+            hardening_curve=hardening_curve,
+            tangent_step=tangent_step,
+            tangent_method="finite_difference",
+        )
+        from .hill48 import Hill48PlasticityMaterial
+
+        self._hill48 = Hill48PlasticityMaterial(
+            young_modulus,
+            poisson_ratio,
+            yield_stress=yield_stress,
+            hardening_modulus=hardening_modulus,
+            stress_ratios=stress_ratios,
+            hardening_curve=hardening_curve,
+        )
+        self.stress_ratios = np.asarray(stress_ratios, dtype=float).copy()
+
+    def _update(self, deformation_gradient: np.ndarray, committed: np.ndarray):
+        f = deformation_gradient
+        fp = committed[:9].reshape(3, 3)
+        determinant = float(np.linalg.det(f))
+        if determinant <= 1e-12 or np.linalg.det(fp) <= 1e-12:
+            raise ValueError(
+                "deformation and plastic gradients must have positive determinants"
+            )
+
+        fe_trial = f @ np.linalg.inv(fp)
+        ce_trial = fe_trial.T @ fe_trial
+        eigenvalues, eigenvectors = np.linalg.eigh(
+            0.5 * (ce_trial + ce_trial.T)
+        )
+        if np.min(eigenvalues) <= 1e-14:
+            raise ValueError("elastic right Cauchy-Green tensor is not positive definite")
+        log_strain_trial = (
+            eigenvectors * (0.5 * np.log(eigenvalues))
+        ) @ eigenvectors.T
+        stretch_trial = (
+            eigenvectors * np.sqrt(eigenvalues)
+        ) @ eigenvectors.T
+        rotation = fe_trial @ np.linalg.inv(stretch_trial)
+
+        local_history = np.zeros(7, dtype=float)
+        local_history[6] = committed[9]
+        stress_corotational, updated_local_history, equivalent_stress, plastic = (
+            self._hill48._stress_update(log_strain_trial, local_history)
+        )
+        elastic_log_strain = log_strain_trial - self._hill48._plastic_tensor(
+            updated_local_history
+        )
+        elastic_stretch = self._symmetric_spectral(elastic_log_strain, np.exp)
+        fe_elastic = rotation @ elastic_stretch
+        fp_new = np.linalg.solve(fe_elastic, f)
+
+        tau = rotation @ stress_corotational @ rotation.T
+        cauchy = tau / determinant
+        first_piola = tau @ np.linalg.inv(f).T
+        trial_state = committed.copy()
+        trial_state[:9] = fp_new.reshape(-1)
+        trial_state[9] = updated_local_history[6]
+        plastic_multiplier = float(updated_local_history[6] - committed[9])
+        return (
+            cauchy,
+            first_piola,
+            trial_state,
+            bool(plastic),
+            float(equivalent_stress),
+            plastic_multiplier,
+        )
+
+
 @dataclass(frozen=True)
 class PlaneStrainFiniteStrainPlasticEvaluation:
     """Finite-strain element trial with full 3D integration-point stresses."""
@@ -487,12 +584,14 @@ class PlaneStrainFiniteStrainPlasticEvaluation:
 
 
 class PlaneStrainFiniteStrainJ2Assembler:
-    """Total-Lagrangian plane-strain assembler for ``FiniteStrainJ2Material``.
+    """Total-Lagrangian plane-strain assembler for finite-strain plasticity.
 
     The 2D deformation gradient is embedded in 3D with the out-of-plane stretch
     fixed to one. TriP1 and TriP2 vector displacement fields are supported.
     The material tangent is assembled without symmetrization; plastic
     configurations can therefore produce a nonsymmetric global Jacobian.
+    ``FiniteStrainHill48Material`` is accepted through the common transactional
+    material interface; its material-point tangent is currently numerical.
     """
 
     def __init__(self, basis: Basis, material: FiniteStrainJ2Material):
@@ -642,5 +741,6 @@ class PlaneStrainFiniteStrainJ2Assembler:
 
 __all__ = [
     "FiniteStrainJ2Evaluation", "FiniteStrainJ2Material",
+    "FiniteStrainHill48Material",
     "PlaneStrainFiniteStrainJ2Assembler", "PlaneStrainFiniteStrainPlasticEvaluation",
 ]

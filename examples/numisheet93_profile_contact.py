@@ -4,10 +4,13 @@ This integrates the source deck's die, punch, and blank-holder geometry with
 the contact/Newton kernel. The sharp analytical tool corners are preserved by
 default; an explicit holder fillet is available for sensitivity studies. The
 default material model is small-strain Hill48; pass
-``--finite-strain-j2`` for multiplicative finite-strain isotropic J2 with the
-official deck's tabular hardening curve, or add ``--puso-isotropic-hardening``
-to select Puso's separately reported isotropic law. These are partial-stroke
-integration checks, not reproductions of the 70 mm shell benchmark.
+``--finite-strain-j2`` for multiplicative isotropic J2, or
+``--finite-strain-hill48`` for multiplicative associated Hill48 plasticity.
+Both use the official deck's tabular hardening curve by default. These remain
+experimental solid-element paths, not reproductions of the 70 mm shell
+benchmark. ``--finite-strain-hill48 --use-reference-friction`` selects the
+reference Hill48 curve and Coulomb coefficient while preserving the solid
+plane-strain formulation.
 """
 
 from __future__ import annotations
@@ -113,7 +116,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         initial_unload_increment: float = 0.1,
         maximum_unload_increment: float = 0.2,
         withdraw_punch_after_forming: bool = False,
-        use_reference_friction: bool = False) -> dict:
+        use_reference_friction: bool = False,
+        finite_strain_hill48: bool = False) -> dict:
     minimum_nx = 14 if refine_holder_return else (11 if refine_tool_contacts else 8)
     if nx < minimum_nx or nz < 2 or maximum_stroke_mm < 0. or maximum_increment_mm <= 0.:
         raise ValueError(
@@ -123,6 +127,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         raise ValueError("mesh_refinement_level must be nonnegative")
     if puso_isotropic_hardening and not finite_strain_j2:
         raise ValueError("Puso isotropic hardening requires --finite-strain-j2")
+    if finite_strain_hill48 and puso_isotropic_hardening:
+        raise ValueError("Puso isotropic hardening is only configured for J2")
+    finite_strain_j2 = finite_strain_j2 or finite_strain_hill48
     if re_equilibrate_checkpoint and not resume:
         raise ValueError("re-equilibrating a checkpoint requires --resume")
     refinement_modes = sum((refine_punch_arc, refine_holder_corner,
@@ -598,14 +605,30 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     material_tangent_method = os.environ.get(
         "SCIKIT_FVM_FORMING_MATERIAL_TANGENT_METHOD", "analytic"
     ).lower()
+    if finite_strain_hill48:
+        material_tangent_method = "finite_difference"
     if finite_strain_j2:
-        material = skfemntv.FiniteStrainJ2Material(
-            material_data["young_modulus"],
-            material_data["poisson_ratio"],
-            float(hardening[0][1]),
-            hardening_curve=hardening,
-            tangent_method=material_tangent_method,
-        )
+        if finite_strain_hill48:
+            material = skfemntv.FiniteStrainHill48Material(
+                material_data["young_modulus"],
+                material_data["poisson_ratio"],
+                float(hardening[0][1]),
+                stress_ratios=material_data[
+                    "hill48_coefficients_R11_R22_R33_R12_R13_R23"
+                ],
+                hardening_curve=hardening,
+                tangent_step=float(os.environ.get(
+                    "SCIKIT_FVM_FORMING_MATERIAL_TANGENT_STEP", "2e-7"
+                )),
+            )
+        else:
+            material = skfemntv.FiniteStrainJ2Material(
+                material_data["young_modulus"],
+                material_data["poisson_ratio"],
+                float(hardening[0][1]),
+                hardening_curve=hardening,
+                tangent_method=material_tangent_method,
+            )
         assembler = skfemntv.PlaneStrainFiniteStrainJ2Assembler(basis, material)
         equivalent_plastic_strain_index = 9
     else:
@@ -1238,7 +1261,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         "refine_punch_arc": refine_punch_arc,
         "refine_tool_contacts": refine_tool_contacts,
         "refine_holder_return": refine_holder_return,
-        "finite_strain_j2": finite_strain_j2,
+        "finite_strain_j2": finite_strain_j2 and not finite_strain_hill48,
+        "finite_strain_hill48": finite_strain_hill48,
         "puso_isotropic_hardening": puso_isotropic_hardening,
         "material_tangent_method": material_tangent_method,
         "friction_coefficient": float(friction_coefficient),
@@ -1375,6 +1399,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             }
             comparable_saved_metadata.setdefault("friction_coefficient", 0.0)
             comparable_saved_metadata.setdefault("puso_isotropic_hardening", False)
+            comparable_saved_metadata.setdefault("finite_strain_hill48", False)
             comparable_saved_metadata.setdefault("holder_position_control_mm", None)
             comparable_saved_metadata.setdefault(
                 "holder_newton_step_limit_mm", 0.1
@@ -6007,8 +6032,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         )
         return {
             "problem": "NUMISHEET '93 profile contact, forming-only run",
-            "kinematics": "finite Hencky J2" if finite_strain_j2 else "small strain",
-            "material_model": "isotropic J2" if finite_strain_j2 else "Hill48",
+            "finite_strain_hill48": finite_strain_hill48,
+            "kinematics": (
+                "finite Hencky Hill48" if finite_strain_hill48 else
+                "finite Hencky J2" if finite_strain_j2 else "small strain"
+            ),
+            "material_model": (
+                "Hill48" if finite_strain_hill48 else
+                "isotropic J2" if finite_strain_j2 else "Hill48"
+            ),
             "hardening_reference": (
                 "Puso UCRL-MA-140587 isotropic law"
                 if puso_isotropic_hardening else "official Abaqus deck"
@@ -6454,7 +6486,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         rtol=1e-10, atol=1e-12,
     ))
     reference_material_matches = bool(
-        not finite_strain_j2 and not puso_isotropic_hardening
+        (not finite_strain_j2 or finite_strain_hill48)
+        and not puso_isotropic_hardening
     )
     reference_holder_control_matches = holder_position_control_mm is None
     # The local solver uses a plane-strain solid mesh and point/mortar contact;
@@ -6471,12 +6504,22 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     }
     return {
         "problem": (
+            "NUMISHEET '93 profile contact, finite-strain plane-strain Hill48 proof"
+            if finite_strain_hill48 else
             "NUMISHEET '93 profile contact, finite-strain plane-strain isotropic J2 proof"
             if finite_strain_j2 else
             "NUMISHEET '93 profile contact, small-strain plane-strain Hill48 proof"
         ),
-        "kinematics": "finite Hencky J2" if finite_strain_j2 else "small strain",
-        "material_model": "isotropic J2" if finite_strain_j2 else "Hill48",
+        "kinematics": (
+            "finite Hencky Hill48" if finite_strain_hill48 else
+            "finite Hencky J2" if finite_strain_j2 else "small strain"
+        ),
+        "material_model": (
+            "Hill48" if finite_strain_hill48 else
+            "isotropic J2" if finite_strain_j2 else "Hill48"
+        ),
+        "finite_strain_j2": finite_strain_j2 and not finite_strain_hill48,
+        "finite_strain_hill48": finite_strain_hill48,
         "hardening_reference": (
             "Puso UCRL-MA-140587 isotropic law"
             if puso_isotropic_hardening else "official Abaqus deck"
@@ -6532,10 +6575,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         "contact_solver_policy": (
             (
                 "Fischer-Burmeister semismooth-first (default for finite-strain "
-                "J2; disable with SCIKIT_FVM_FORMING_CONTACT_SEMISMOOTH_FIRST=0), "
+                "plasticity; disable with "
+                "SCIKIT_FVM_FORMING_CONTACT_SEMISMOOTH_FIRST=0), "
                 "then direct nonsymmetric sparse active-set fallback"
                 if contact_semismooth_first else
-                "direct nonsymmetric sparse active-set for finite-strain J2"
+                "direct nonsymmetric sparse active-set for finite-strain plasticity"
             )
             if finite_strain_j2 else
             "KKTKit reduced unilateral active set when primal variables <= 256; "
@@ -6637,7 +6681,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 "reason": (
                     "The experimental angle is a useful target, but this run "
                     "uses a plane-strain solid model with "
-                    + ("isotropic finite-strain J2" if finite_strain_j2
+                    + ("finite-strain Hill48" if finite_strain_hill48
+                       else "isotropic finite-strain J2" if finite_strain_j2
                        else "small-strain Hill48")
                     + ", friction coefficient "
                     + f"{friction_coefficient:g}, and no shell-thickness "
@@ -6805,8 +6850,16 @@ def main():
         help=("concentrate cells along the blank-holder return where the "
               "forming path previously rotated a long surface facet"),
     )
-    parser.add_argument("--finite-strain-j2", action="store_true",
-                        help="use multiplicative finite-strain J2 with the official deck hardening curve")
+    material_group = parser.add_mutually_exclusive_group()
+    material_group.add_argument(
+        "--finite-strain-j2", action="store_true",
+        help="use multiplicative finite-strain isotropic J2 plasticity",
+    )
+    material_group.add_argument(
+        "--finite-strain-hill48", action="store_true",
+        help=("use multiplicative finite-strain Hill48 plasticity; its "
+              "consistent tangent is currently computed by centered differences"),
+    )
     parser.add_argument(
         "--puso-isotropic-hardening", action="store_true",
         help=("with --finite-strain-j2, use the isotropic hardening law from "
@@ -6868,7 +6921,8 @@ def main():
                          args.maximum_increment_mm, args.refine_punch_arc,
                          args.refine_holder_corner,
                          args.refine_tool_contacts,
-                         args.finite_strain_j2, args.checkpoint, args.resume,
+                         (args.finite_strain_j2 or args.finite_strain_hill48),
+                         args.checkpoint, args.resume,
                          args.minimum_unload_increment,
                          args.resume_forming_from_springback,
                          args.forming_only,
@@ -6885,7 +6939,8 @@ def main():
                          args.initial_unload_increment,
                          args.maximum_unload_increment,
                          args.withdraw_punch_after_forming,
-                         args.use_reference_friction), indent=2))
+                         args.use_reference_friction,
+                         args.finite_strain_hill48), indent=2))
 
 
 if __name__ == "__main__":

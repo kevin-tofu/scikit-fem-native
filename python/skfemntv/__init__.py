@@ -151,7 +151,7 @@ from .hdiv_basis import (
 )
 from .hdiv_assembler import RT0DG0MixedAssembler,SimplexRT0Assembler
 from .finite_strain import (
-    FiniteStrainJ2Evaluation,FiniteStrainJ2Material,
+    FiniteStrainHill48Material,FiniteStrainJ2Evaluation,FiniteStrainJ2Material,
     PlaneStrainFiniteStrainJ2Assembler,PlaneStrainFiniteStrainPlasticEvaluation,
 )
 from .nonlinear import (
@@ -248,6 +248,7 @@ __all__ = [
     "FiniteStrainJ2Material",
     "PlaneStrainFiniteStrainJ2Assembler",
     "PlaneStrainFiniteStrainPlasticEvaluation",
+    "FiniteStrainHill48Material",
     "J2MaterialEvaluation",
     "J2PlasticityAssembler",
     "J2PlasticityMaterial",
