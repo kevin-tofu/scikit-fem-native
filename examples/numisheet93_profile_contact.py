@@ -629,7 +629,14 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 hardening_curve=hardening,
                 tangent_method=material_tangent_method,
             )
-        assembler = skfemntv.PlaneStrainFiniteStrainJ2Assembler(basis, material)
+        if finite_strain_hill48:
+            assembler = skfemntv.PlaneStrainFiniteStrainHill48Assembler(
+                basis, material
+            )
+        else:
+            assembler = skfemntv.PlaneStrainFiniteStrainJ2Assembler(
+                basis, material
+            )
         equivalent_plastic_strain_index = 9
     else:
         assembler = skfemntv.PlaneStrainHill48Assembler(

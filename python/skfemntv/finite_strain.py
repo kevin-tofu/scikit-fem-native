@@ -739,8 +739,19 @@ class PlaneStrainFiniteStrainJ2Assembler:
         return np.array(evaluation.trial_state, dtype=float, copy=True)
 
 
+class PlaneStrainFiniteStrainHill48Assembler(PlaneStrainFiniteStrainJ2Assembler):
+    """Plane-strain assembler bound to :class:`FiniteStrainHill48Material`."""
+
+    def __init__(self, basis: Basis, material: FiniteStrainHill48Material):
+        if not isinstance(material, FiniteStrainHill48Material):
+            raise TypeError("material must be a FiniteStrainHill48Material")
+        super().__init__(basis, material)
+
+
 __all__ = [
     "FiniteStrainJ2Evaluation", "FiniteStrainJ2Material",
     "FiniteStrainHill48Material",
-    "PlaneStrainFiniteStrainJ2Assembler", "PlaneStrainFiniteStrainPlasticEvaluation",
+    "PlaneStrainFiniteStrainJ2Assembler",
+    "PlaneStrainFiniteStrainHill48Assembler",
+    "PlaneStrainFiniteStrainPlasticEvaluation",
 ]
