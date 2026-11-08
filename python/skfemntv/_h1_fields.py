@@ -48,6 +48,12 @@ class TensorGradient:
 
 
 @dataclass(frozen=True)
+class TensorValue:
+    value: TrialValue | TestValue
+    coefficient: Any
+
+
+@dataclass(frozen=True)
 class SymmetricGradient:
     role: str
     factor: float = 1.0
@@ -93,12 +99,23 @@ class Divergence:
 class Curl:
     role: str
     factor: float = 1.0
+    coefficient: object = None
 
     def __mul__(self,other):
         if np.isscalar(other):
-            return Curl(self.role,self.factor*other)
+            return Curl(self.role,self.factor*other,self.coefficient)
+        if isinstance(other,np.ndarray):
+            coefficient=(other if self.coefficient is None else
+                         self.coefficient*other)
+            return Curl(self.role,self.factor,coefficient)
         if isinstance(other,Curl) and self.role!=other.role:
-            return BilinearTerm("curl",factor=self.factor*other.factor)
+            coefficient=self.coefficient
+            if other.coefficient is not None:
+                coefficient=(other.coefficient if coefficient is None else
+                             coefficient*other.coefficient)
+            return BilinearTerm(
+                "curl",coefficient,self.factor*other.factor
+            )
         return NotImplemented
 
     __rmul__=__mul__

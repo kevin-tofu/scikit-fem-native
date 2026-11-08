@@ -1,0 +1,435 @@
+{
+  "problem": "NUMISHEET '93 profile contact, finite-strain plane-strain isotropic J2 proof",
+  "kinematics": "finite Hencky J2",
+  "material_model": "isotropic J2",
+  "scope": "source blank/tools/material; partial stroke only; no shell contact thickness or friction",
+  "mesh": {
+    "nx": 15,
+    "nz": 2,
+    "triangles": 60,
+    "nodes": 48,
+    "dofs": 96
+  },
+  "x_mesh_regions_mm_and_cells": [
+    [
+      0.0,
+      18.0,
+      3
+    ],
+    [
+      18.0,
+      25.0,
+      3
+    ],
+    [
+      25.0,
+      36.0,
+      2
+    ],
+    [
+      36.0,
+      91.0,
+      3
+    ],
+    [
+      91.0,
+      175.0,
+      4
+    ]
+  ],
+  "tool_profiles": {
+    "die": 3,
+    "punch": 3,
+    "blank_holder": 4
+  },
+  "contact_sampling": "one midpoint collocation point per selected boundary facet",
+  "maximum_stroke_mm": 0.8,
+  "requested_benchmark_stroke_mm": 70.0,
+  "blank_holder_force_N_half_model": 175.0,
+  "steps": [
+    {
+      "step": 0,
+      "stroke_mm": 0.0,
+      "punch_force_N_half_model": 0.0,
+      "holder_position_mm": -2.2102608345666327e-06,
+      "newton_iterations": 2,
+      "active_punch_points": 0,
+      "active_punch_points_xz_mm": [],
+      "active_punch_profile_segments": [],
+      "minimum_punch_gap_mm": 0.6099979798482733,
+      "near_contact_punch_points_xz_mm": [],
+      "active_die_points": 8,
+      "active_holder_points": 3,
+      "equilibrium_residual_inf_N_per_mm": 5.118891976962914e-10,
+      "max_equivalent_plastic_strain": 0.0
+    },
+    {
+      "step": 1,
+      "stroke_mm": 0.2,
+      "punch_force_N_half_model": 0.0,
+      "holder_position_mm": -2.2102608345634246e-06,
+      "newton_iterations": 1,
+      "active_punch_points": 0,
+      "active_punch_points_xz_mm": [],
+      "active_punch_profile_segments": [],
+      "minimum_punch_gap_mm": 0.4099979798482766,
+      "near_contact_punch_points_xz_mm": [],
+      "active_die_points": 8,
+      "active_holder_points": 3,
+      "equilibrium_residual_inf_N_per_mm": 5.500222499676966e-10,
+      "max_equivalent_plastic_strain": 0.0
+    },
+    {
+      "step": 2,
+      "stroke_mm": 0.4,
+      "punch_force_N_half_model": 0.0,
+      "holder_position_mm": -2.210260834546566e-06,
+      "newton_iterations": 1,
+      "active_punch_points": 0,
+      "active_punch_points_xz_mm": [],
+      "active_punch_profile_segments": [],
+      "minimum_punch_gap_mm": 0.20999797984827717,
+      "near_contact_punch_points_xz_mm": [],
+      "active_die_points": 8,
+      "active_holder_points": 3,
+      "equilibrium_residual_inf_N_per_mm": 7.830047721313349e-10,
+      "max_equivalent_plastic_strain": 0.0
+    },
+    {
+      "step": 3,
+      "stroke_mm": 0.6000000000000001,
+      "punch_force_N_half_model": 0.0,
+      "holder_position_mm": -2.210260834610667e-06,
+      "newton_iterations": 1,
+      "active_punch_points": 0,
+      "active_punch_points_xz_mm": [],
+      "active_punch_profile_segments": [],
+      "minimum_punch_gap_mm": 0.009997979848272998,
+      "near_contact_punch_points_xz_mm": [],
+      "active_die_points": 8,
+      "active_holder_points": 3,
+      "equilibrium_residual_inf_N_per_mm": 9.223694413909881e-10,
+      "max_equivalent_plastic_strain": 0.0
+    },
+    {
+      "step": 4,
+      "stroke_mm": 0.6500000000000001,
+      "punch_force_N_half_model": 103.87022303266512,
+      "holder_position_mm": 0.0010788632766902649,
+      "newton_iterations": 3,
+      "active_punch_points": 1,
+      "active_punch_points_xz_mm": [
+        [
+          19.16554442750011,
+          0.34999999999999987
+        ]
+      ],
+      "active_punch_profile_segments": [
+        2
+      ],
+      "minimum_punch_gap_mm": 0.0,
+      "near_contact_punch_points_xz_mm": [
+        [
+          19.16554442750011,
+          0.34999999999999987
+        ]
+      ],
+      "active_die_points": 2,
+      "active_holder_points": 1,
+      "equilibrium_residual_inf_N_per_mm": 6.116586404036894e-10,
+      "max_equivalent_plastic_strain": 0.0
+    },
+    {
+      "step": 5,
+      "stroke_mm": 0.675,
+      "punch_force_N_half_model": 137.7031753739667,
+      "holder_position_mm": 0.0018824803939015977,
+      "newton_iterations": 5,
+      "active_punch_points": 1,
+      "active_punch_points_xz_mm": [
+        [
+          19.164949079659078,
+          0.32499999999999996
+        ]
+      ],
+      "active_punch_profile_segments": [
+        2
+      ],
+      "minimum_punch_gap_mm": 0.0,
+      "near_contact_punch_points_xz_mm": [
+        [
+          19.164949079659078,
+          0.32499999999999996
+        ]
+      ],
+      "active_die_points": 3,
+      "active_holder_points": 1,
+      "equilibrium_residual_inf_N_per_mm": 1.0913375803056624e-07,
+      "max_equivalent_plastic_strain": 0.0006878112812787979
+    },
+    {
+      "step": 6,
+      "stroke_mm": 0.7000000000000001,
+      "punch_force_N_half_model": 143.75534931480894,
+      "holder_position_mm": 0.0019470264417017612,
+      "newton_iterations": 4,
+      "active_punch_points": 1,
+      "active_punch_points_xz_mm": [
+        [
+          19.164379565117496,
+          0.2999999999999998
+        ]
+      ],
+      "active_punch_profile_segments": [
+        2
+      ],
+      "minimum_punch_gap_mm": 1.1102230246251565e-16,
+      "near_contact_punch_points_xz_mm": [
+        [
+          19.164379565117496,
+          0.2999999999999998
+        ]
+      ],
+      "active_die_points": 3,
+      "active_holder_points": 1,
+      "equilibrium_residual_inf_N_per_mm": 8.436799944888662e-06,
+      "max_equivalent_plastic_strain": 0.0014446876986935664
+    },
+    {
+      "step": 7,
+      "stroke_mm": 0.7250000000000001,
+      "punch_force_N_half_model": 149.13647150863233,
+      "holder_position_mm": 0.002314525822532603,
+      "newton_iterations": 5,
+      "active_punch_points": 1,
+      "active_punch_points_xz_mm": [
+        [
+          19.16384860381277,
+          0.2749999999999999
+        ]
+      ],
+      "active_punch_profile_segments": [
+        2
+      ],
+      "minimum_punch_gap_mm": 0.0,
+      "near_contact_punch_points_xz_mm": [
+        [
+          19.16384860381277,
+          0.2749999999999999
+        ]
+      ],
+      "active_die_points": 3,
+      "active_holder_points": 1,
+      "equilibrium_residual_inf_N_per_mm": 7.419597656535201e-10,
+      "max_equivalent_plastic_strain": 0.0021128705137649665
+    },
+    {
+      "step": 8,
+      "stroke_mm": 0.75,
+      "punch_force_N_half_model": 153.4522297829054,
+      "holder_position_mm": 0.0035531663311202154,
+      "newton_iterations": 5,
+      "active_punch_points": 1,
+      "active_punch_points_xz_mm": [
+        [
+          19.16338703963734,
+          0.25000000000000006
+        ]
+      ],
+      "active_punch_profile_segments": [
+        2
+      ],
+      "minimum_punch_gap_mm": -5.551115123125783e-17,
+      "near_contact_punch_points_xz_mm": [
+        [
+          19.16338703963734,
+          0.25000000000000006
+        ]
+      ],
+      "active_die_points": 2,
+      "active_holder_points": 1,
+      "equilibrium_residual_inf_N_per_mm": 2.3690031412115786e-06,
+      "max_equivalent_plastic_strain": 0.0029519233269334295
+    },
+    {
+      "step": 9,
+      "stroke_mm": 0.775,
+      "punch_force_N_half_model": 156.96744843219582,
+      "holder_position_mm": 0.005034906581413489,
+      "newton_iterations": 4,
+      "active_punch_points": 1,
+      "active_punch_points_xz_mm": [
+        [
+          19.163026388506392,
+          0.22499999999999998
+        ]
+      ],
+      "active_punch_profile_segments": [
+        2
+      ],
+      "minimum_punch_gap_mm": 0.0,
+      "near_contact_punch_points_xz_mm": [
+        [
+          19.163026388506392,
+          0.22499999999999998
+        ]
+      ],
+      "active_die_points": 3,
+      "active_holder_points": 1,
+      "equilibrium_residual_inf_N_per_mm": 8.837673703965265e-09,
+      "max_equivalent_plastic_strain": 0.0036976614900833546
+    },
+    {
+      "step": 10,
+      "stroke_mm": 0.8,
+      "punch_force_N_half_model": 160.1478791619445,
+      "holder_position_mm": 0.006430906266189044,
+      "newton_iterations": 4,
+      "active_punch_points": 1,
+      "active_punch_points_xz_mm": [
+        [
+          19.162712773384722,
+          0.19999999999999996
+        ]
+      ],
+      "active_punch_profile_segments": [
+        2
+      ],
+      "minimum_punch_gap_mm": 0.0,
+      "near_contact_punch_points_xz_mm": [
+        [
+          19.162712773384722,
+          0.19999999999999996
+        ]
+      ],
+      "active_die_points": 3,
+      "active_holder_points": 1,
+      "equilibrium_residual_inf_N_per_mm": 1.253482651009108e-09,
+      "max_equivalent_plastic_strain": 0.004358909458677351
+    }
+  ],
+  "punch_force_by_stroke": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.2,
+      0.0
+    ],
+    [
+      0.4,
+      0.0
+    ],
+    [
+      0.6000000000000001,
+      0.0
+    ],
+    [
+      0.6500000000000001,
+      103.87022303266512
+    ],
+    [
+      0.675,
+      137.7031753739667
+    ],
+    [
+      0.7000000000000001,
+      143.75534931480894
+    ],
+    [
+      0.7250000000000001,
+      149.13647150863233
+    ],
+    [
+      0.75,
+      153.4522297829054
+    ],
+    [
+      0.775,
+      156.96744843219582
+    ],
+    [
+      0.8,
+      160.1478791619445
+    ]
+  ],
+  "maximum_punch_force_N_half_model": 160.1478791619445,
+  "maximum_equivalent_plastic_strain": 0.004358909458677351,
+  "formed_flange_angle_deg": 0.0010189017879545775,
+  "springback_flange_angle_deg": -0.21641387666165945,
+  "springback_flange_angle_magnitude_deg": 0.21641387666165945,
+  "springback_centerline_thickness_mm": 0.7800000229745511,
+  "springback_minimum_column_thickness_mm": 0.7798432231638076,
+  "springback_minimum_thickness_x_mm": 20.333333333333332,
+  "springback_thickness_profile_x_mm_and_thickness_mm": [
+    [
+      0.0,
+      0.7800000229745511
+    ],
+    [
+      6.0,
+      0.7800002409189747
+    ],
+    [
+      12.0,
+      0.7800054319266079
+    ],
+    [
+      18.0,
+      0.7801064120175474
+    ],
+    [
+      20.333333333333332,
+      0.7798432231638076
+    ],
+    [
+      22.666666666666668,
+      0.77997747047423
+    ],
+    [
+      25.0,
+      0.7799601240364766
+    ],
+    [
+      30.5,
+      0.779961270702294
+    ],
+    [
+      36.0,
+      0.7800282083846891
+    ],
+    [
+      54.33333333333333,
+      0.7800014299731542
+    ],
+    [
+      72.66666666666666,
+      0.780000071485025
+    ],
+    [
+      91.0,
+      0.7800000033581238
+    ],
+    [
+      112.0,
+      0.7800000001698354
+    ],
+    [
+      133.0,
+      0.7800000000090795
+    ],
+    [
+      154.0,
+      0.7800000000009746
+    ],
+    [
+      175.0,
+      0.7800000000005873
+    ]
+  ],
+  "springback_vertical_anchor_reaction_N_per_mm": -1.7759848338522646e-12,
+  "springback_reference_angle_deg": 17.1,
+  "springback_reference_angle_error_deg": -16.883586123338343,
+  "springback_comparison_valid": false
+}

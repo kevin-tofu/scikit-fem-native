@@ -1,0 +1,111 @@
+{
+  "study": "partial-stroke finite-strain J2 forming and springback",
+  "model": {
+    "kinematics": "finite Hencky strain",
+    "material": "isotropic J2",
+    "formulation": "2D plane strain, TriP1",
+    "mesh_nx": 35,
+    "mesh_nz": 4,
+    "refine_holder_return": true,
+    "friction_coefficient": 0.0,
+    "punch_contact_collocation_points_per_facet": 4,
+    "holder_contact_collocation_points_per_facet": 16
+  },
+  "forming": {
+    "requested_reference_stroke_mm": 70.0,
+    "accepted_stroke_mm": 48.194853961706166,
+    "force_stroke_curve_resolved": false,
+    "unresolved_force_jump_count": 1136,
+    "maximum_punch_force_N_half_model": 351.36325852573384,
+    "formed_flange_angle_deg": 21.608891600313374,
+    "maximum_equivalent_plastic_strain": 0.4408845150594499,
+    "centerline_thickness_mm": 0.7881459271265641,
+    "minimum_column_thickness_mm": 0.7521972679635767,
+    "minimum_thickness_location_x_mm": 30.4
+  },
+  "springback": {
+    "flange_angle_magnitude_deg": 17.618844705367398,
+    "reference_angle_deg": 17.1,
+    "angle_difference_deg": 0.5188447053673961,
+    "equilibrium_residual_inf_N_per_mm": 6.648699270519681e-05,
+    "equilibrium_tolerance_inf_N_per_mm": 0.00029514311271027676,
+    "centerline_thickness_mm": 0.7881760598939351,
+    "minimum_column_thickness_mm": 0.7521964561461192,
+    "comparison_valid": false
+  },
+  "comparison_limitations": [
+    "This run uses frictionless isotropic J2 plane strain and reaches only 48.195 mm of the 70 mm reference stroke.",
+    "The reference uses Hill48 anisotropy, nonzero friction, and shell elements. The angle difference is therefore not a same-condition benchmark comparison."
+  ],
+  "load_control_continuation_diagnostic": {
+    "last_converged_stroke_mm": 48.194853961706166,
+    "attempted_next_stroke_mm": 48.194862399,
+    "holder_support_transfer": {
+      "old_seed_row": 415,
+      "old_seed_current_gap_mm": 0.1224152219872231,
+      "nearest_local_row": 416,
+      "nearest_local_current_gap_mm": 3.202825846286754e-05,
+      "nearest_local_normal": [-0.9766008414066147, -0.21505998364152282],
+      "linearized_multiplier_N_per_mm": 6.39035,
+      "linearized_multiplier_is_tensile": true
+    },
+    "support_branch_end_evidence": {
+      "at_stroke_mm": 48.194887712,
+      "closed_holder_support_rows": [],
+      "nearest_holder_support_row": 416,
+      "nearest_holder_support_gap_mm": 1.230376e-04,
+      "contact_gap_tolerance_mm": 7.8e-05,
+      "interpretation": "The next requested state has no holder support row inside the contact tolerance; at the preceding smaller stroke the nearest row is within tolerance but its KKT multiplier becomes tensile."
+    },
+    "tool_geometry_diagnostic": {
+      "reference_holder_inner_corner": "The source profile has a sharp line-line corner at local (x,z)=(31.0, 0.39) mm.",
+      "run_holder_corner_treatment": "The forming driver replaces that corner with an added 0.6 mm circular fillet.",
+      "last_100_accepted_records": {
+        "active_holder_profile_segment": 3,
+        "contact_x_range_mm": [31.015434129966817, 31.058274827761434]
+      },
+      "interpretation": "The force-controlling holder reaction is carried by the added fillet at the source profile's inner edge, so this partial-stroke branch depends on non-reference geometry.",
+      "sharp_corner_re_equilibration": {
+        "method": "Temporary driver copy with the added fillet disabled; re-equilibrated the saved displacement and J2 history at the same stroke after rebuilding contact multipliers.",
+        "result": "Contact active-set solve failed before accepting the re-equilibrated state.",
+        "nearest_selected_support_gap_mm": 1.817,
+        "largest_contact_regularization_attempted": 1000.0,
+        "interpretation": "Removing the added fillet does not immediately recover a nearby force-support branch; exact-corner contact or a physically justified holder model is still needed."
+      }
+    },
+    "stalled_newton_state": {
+      "equilibrium_residual_inf_N_per_mm": 2.8503,
+      "equilibrium_tolerance_inf_N_per_mm": 2.6,
+      "holder_force_balance_residual_N_per_mm": 0.076719,
+      "line_search_accepted_alpha": 4.657e-10
+    },
+    "parameter_checks": {
+      "holder_newton_step_limit_mm": 0.001,
+      "displacement_newton_step_limit_mm": 0.001,
+      "forming_equilibrium_tolerance_input_N_per_mm": 0.1,
+      "effective_relative_tolerance_floor_N_per_mm": 0.175,
+      "tight_equilibrium_result": "No load-controlled increment was accepted at the 0.175 N/mm effective equilibrium tolerance.",
+      "result": "The same contact support transition remained; reducing the trust limits did not resolve it.",
+      "maximum_increment_mm": 1e-06,
+      "microincrement_result": "The same holder row became tensile and no stroke increment was accepted.",
+      "holder_position_diagonal_regularization": "Temporarily regularizing the holder Newton direction after support release did not produce an accepted increment; this trial-only modification was removed.",
+      "holder_collocation_32_points_per_facet": "Repeated support transfer with a 4.627e3 N/mm multiplier; no increment accepted.",
+      "holder_collocation_64_points_per_facet": "Contact solve did not accept an increment within the observation window.",
+      "punch_die_collocation_8_points_per_facet": "Contact KKT solve became singular; no increment accepted.",
+      "holder_seed_tensile_release_threshold_10_N_per_mm": "The support multiplier rose to about 62 N/mm tensile and the increment remained unaccepted.",
+      "holder_seed_tensile_release_threshold_100_N_per_mm": "The near-contact seed was retained longer, but the solver returned to the open neighboring seed; no increment was accepted.",
+      "tight_position_control_at_holder_z_minus_0p06449776_mm": {
+        "equilibrium_residual_inf_N_per_mm": 0.15920115719749006,
+        "punch_force_N_half_model": 61.82398164441342,
+        "normal_holder_force_N_half_model": 0.0,
+        "active_holder_points": 0
+      },
+      "tight_position_control_at_holder_z_minus_0p0646_mm": {
+        "equilibrium_residual_inf_N_per_mm": 0.1592320706144008,
+        "punch_force_N_half_model": 61.818827754514146,
+        "normal_holder_force_N_half_model": 0.0,
+        "active_holder_points": 0
+      }
+    }
+  }
+}

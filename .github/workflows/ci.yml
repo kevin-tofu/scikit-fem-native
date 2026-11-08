@@ -45,6 +45,8 @@ jobs:
           cache: pip
       - name: Install package and test dependencies
         run: python -m pip install --upgrade pip ".[test]"
+      - name: Check installed native extension API
+        run: python -c "import skfemntv; from skfemntv._skfn import integrate_rt0, tabulate_hex27_shapes; assert hasattr(skfemntv, 'MeshLine'); print('skfemntv:', skfemntv.__file__)"
       - name: Run tests
         run: python -m pytest
 

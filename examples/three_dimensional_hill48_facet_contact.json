@@ -1,0 +1,241 @@
+{
+  "problem": "3D small-strain Tet4 Hill48 sheet with facet-centroid rigid-plane contact",
+  "mesh": {
+    "nx": 8,
+    "ny": 4,
+    "nz": 1,
+    "tetrahedra": 192,
+    "nodes": 90,
+    "displacement_dofs": 270
+  },
+  "maximum_stroke": 0.005,
+  "material_source": "illustrative isotropic Hill48/J2 parameters",
+  "steps": [
+    {
+      "step": 1,
+      "stroke": 0.0005,
+      "punch_force": 0.05536779906614689,
+      "newton_iterations": 3,
+      "active_punch_facets": 3,
+      "active_support_facets": 6,
+      "minimum_gap": -2.7755575615628914e-17,
+      "equilibrium_residual_inf": 9.968781614685257e-08,
+      "max_equivalent_plastic_strain": 0.0016710373308131037
+    },
+    {
+      "step": 2,
+      "stroke": 0.001,
+      "punch_force": 0.07807688244942915,
+      "newton_iterations": 4,
+      "active_punch_facets": 4,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 2.511786846505666e-08,
+      "max_equivalent_plastic_strain": 0.0049468811058269255
+    },
+    {
+      "step": 3,
+      "stroke": 0.0015,
+      "punch_force": 0.0881963909553107,
+      "newton_iterations": 4,
+      "active_punch_facets": 4,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 6.930279814864465e-08,
+      "max_equivalent_plastic_strain": 0.00853043736148886
+    },
+    {
+      "step": 4,
+      "stroke": 0.002,
+      "punch_force": 0.09375185448108764,
+      "newton_iterations": 4,
+      "active_punch_facets": 4,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 6.1673304505883986e-09,
+      "max_equivalent_plastic_strain": 0.012405704620177462
+    },
+    {
+      "step": 5,
+      "stroke": 0.0025,
+      "punch_force": 0.09791839448061129,
+      "newton_iterations": 4,
+      "active_punch_facets": 4,
+      "active_support_facets": 6,
+      "minimum_gap": -2.7755575615628914e-17,
+      "equilibrium_residual_inf": 9.890061773015768e-09,
+      "max_equivalent_plastic_strain": 0.016439261841949097
+    },
+    {
+      "step": 6,
+      "stroke": 0.003,
+      "punch_force": 0.10140933584101294,
+      "newton_iterations": 4,
+      "active_punch_facets": 4,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 1.4575096660401216e-08,
+      "max_equivalent_plastic_strain": 0.020545095413415586
+    },
+    {
+      "step": 7,
+      "stroke": 0.0035,
+      "punch_force": 0.104495881675374,
+      "newton_iterations": 4,
+      "active_punch_facets": 4,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 2.500826494999074e-08,
+      "max_equivalent_plastic_strain": 0.02468861628693631
+    },
+    {
+      "step": 8,
+      "stroke": 0.004,
+      "punch_force": 0.10732887874236965,
+      "newton_iterations": 4,
+      "active_punch_facets": 3,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 3.325724632144422e-08,
+      "max_equivalent_plastic_strain": 0.02882342297540324
+    },
+    {
+      "step": 9,
+      "stroke": 0.0045000000000000005,
+      "punch_force": 0.10999563373991236,
+      "newton_iterations": 4,
+      "active_punch_facets": 3,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 4.170898803028053e-08,
+      "max_equivalent_plastic_strain": 0.032938509292402066
+    },
+    {
+      "step": 10,
+      "stroke": 0.005,
+      "punch_force": 0.11254342114975865,
+      "newton_iterations": 4,
+      "active_punch_facets": 3,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 4.730364227666789e-08,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 11,
+      "stroke": 0.0045,
+      "punch_force": 0.0514170456924585,
+      "newton_iterations": 1,
+      "active_punch_facets": 3,
+      "active_support_facets": 5,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 1.677802861921318e-16,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 12,
+      "stroke": 0.004,
+      "punch_force": 0.009918995743542942,
+      "newton_iterations": 3,
+      "active_punch_facets": 3,
+      "active_support_facets": 2,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 3.3827738787212125e-12,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 13,
+      "stroke": 0.0034999999999999996,
+      "punch_force": -0.0,
+      "newton_iterations": 3,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 2.8204035147547043e-05,
+      "equilibrium_residual_inf": 3.804611917396575e-09,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 14,
+      "stroke": 0.0029999999999999996,
+      "punch_force": -0.0,
+      "newton_iterations": 1,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 1.6196050361223156e-05,
+      "equilibrium_residual_inf": 4.2235692092155996e-10,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 15,
+      "stroke": 0.0024999999999999996,
+      "punch_force": -0.0,
+      "newton_iterations": 1,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 1.9225944044655413e-05,
+      "equilibrium_residual_inf": 1.5238790394486723e-10,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 16,
+      "stroke": 0.0019999999999999996,
+      "punch_force": -0.0,
+      "newton_iterations": 1,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 1.9682838237143863e-05,
+      "equilibrium_residual_inf": 5.240644311739484e-11,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 17,
+      "stroke": 0.0014999999999999996,
+      "punch_force": -0.0,
+      "newton_iterations": 1,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 2.7155580540841443e-05,
+      "equilibrium_residual_inf": 1.7904549154054705e-11,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 18,
+      "stroke": 0.0009999999999999996,
+      "punch_force": -0.0,
+      "newton_iterations": 1,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 3.212461646104936e-05,
+      "equilibrium_residual_inf": 6.111661307248162e-12,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 19,
+      "stroke": 0.0004999999999999996,
+      "punch_force": -0.0,
+      "newton_iterations": 1,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 2.687757976780605e-05,
+      "equilibrium_residual_inf": 2.0859386266891544e-12,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    },
+    {
+      "step": 20,
+      "stroke": 0.0,
+      "punch_force": -0.0,
+      "newton_iterations": 1,
+      "active_punch_facets": 0,
+      "active_support_facets": 0,
+      "minimum_gap": 4.558589680894247e-05,
+      "equilibrium_residual_inf": 7.119218409235017e-13,
+      "max_equivalent_plastic_strain": 0.037036869286831635
+    }
+  ],
+  "maximum_punch_force": 0.11254342114975865,
+  "center_thickness_change": -0.00036383284051834386,
+  "center_springback_z": -0.005118386919281952,
+  "maximum_equivalent_plastic_strain": 0.037036869286831635,
+  "contact_discretization": "facet-centroid collocation with linear face interpolation",
+  "scope": "3D kernel proof; flat-tool contact; not a calibrated forming result"
+}

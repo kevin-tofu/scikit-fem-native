@@ -218,6 +218,96 @@ py::tuple evaluate_j2_plasticity(
     }
     return py::make_tuple(residual,tangent,trial,plastic,stress,equivalent_stress,energy);
 }
+
+py::tuple evaluate_j2_plane_strain(
+    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> dofs,
+    py::array_t<double, py::array::c_style | py::array::forcecast> gradients,
+    py::array_t<double, py::array::c_style | py::array::forcecast> weights,
+    py::array_t<double, py::array::c_style | py::array::forcecast> displacement,
+    py::array_t<double, py::array::c_style | py::array::forcecast> committed,
+    double lambda, double mu, double yield_stress, double hardening) {
+    const auto d=dofs.request(), g=gradients.request(), w=weights.request();
+    const auto u=displacement.request(), s=committed.request();
+    if (d.ndim!=3 || d.shape[2]!=2)
+        throw std::invalid_argument("dofs must have shape (elements, nodes, 2)");
+    const py::ssize_t ne=d.shape[0], nn=d.shape[1], nd=2*nn;
+    if (g.ndim!=4 || g.shape[0]!=ne || g.shape[2]!=nn || g.shape[3]!=2)
+        throw std::invalid_argument("gradients must have shape (elements, quadrature, nodes, 2)");
+    const py::ssize_t nq=g.shape[1];
+    if (w.ndim!=2 || w.shape[0]!=ne || w.shape[1]!=nq)
+        throw std::invalid_argument("weights must have shape (elements, quadrature)");
+    if (u.ndim!=1 || s.ndim!=3 || s.shape[0]!=ne || s.shape[1]!=nq || s.shape[2]!=7)
+        throw std::invalid_argument("committed_state must have shape (elements, quadrature, 7)");
+    if (!(std::isfinite(lambda) && std::isfinite(mu) && mu>0. && lambda+2.*mu/3.>0. &&
+          std::isfinite(yield_stress) && yield_stress>0. &&
+          std::isfinite(hardening) && hardening>=0.))
+        throw std::invalid_argument("material parameters are outside their valid range");
+    const auto* di=static_cast<const std::int64_t*>(d.ptr);
+    const auto* gr=static_cast<const double*>(g.ptr);
+    const auto* wt=static_cast<const double*>(w.ptr);
+    const auto* uv=static_cast<const double*>(u.ptr);
+    const auto* st=static_cast<const double*>(s.ptr);
+    for (py::ssize_t i=0;i<d.size;++i)
+        if (di[i]<0 || di[i]>=u.shape[0])
+            throw std::invalid_argument("dofs contain an out-of-range index");
+
+    py::array_t<double> residual(py::array::ShapeContainer{ne,nd});
+    py::array_t<double> tangent(py::array::ShapeContainer{ne,nd,nd});
+    py::array_t<double> trial(py::array::ShapeContainer{ne,nq,py::ssize_t{7}});
+    py::array_t<double> stress(py::array::ShapeContainer{
+        ne,nq,py::ssize_t{3},py::ssize_t{3}});
+    py::array_t<double> equivalent_stress(py::array::ShapeContainer{ne,nq});
+    py::array_t<double> energy(py::array::ShapeContainer{ne,nq});
+    py::array_t<std::int64_t> plastic(py::array::ShapeContainer{ne,nq});
+    auto* ro=residual.mutable_data(); auto* ko=tangent.mutable_data();
+    auto* so=trial.mutable_data(); auto* po=plastic.mutable_data();
+    auto* sigma_out=stress.mutable_data(); auto* q_out=equivalent_stress.mutable_data();
+    auto* energy_out=energy.mutable_data();
+    std::fill(ro,ro+residual.size(),0.); std::fill(ko,ko+tangent.size(),0.);
+    std::copy(st,st+s.size,so);
+    {
+      py::gil_scoped_release release;
+      native_fem::parallel_for(static_cast<std::size_t>(ne),[&](std::size_t first,std::size_t last) {
+        for (py::ssize_t e=static_cast<py::ssize_t>(first);e<static_cast<py::ssize_t>(last);++e)
+          for (py::ssize_t q=0;q<nq;++q) {
+            Tensor eps{};
+            for (int i=0;i<2;++i) for (int j=0;j<2;++j)
+              for (py::ssize_t a=0;a<nn;++a) {
+                const double ga=gr[((e*nq+q)*nn+a)*2+j];
+                const double gb=gr[((e*nq+q)*nn+a)*2+i];
+                eps[i][j]+=0.5*(uv[di[(e*nn+a)*2+i]]*ga+
+                                uv[di[(e*nn+a)*2+j]]*gb);
+              }
+            // Plane strain: the out-of-plane total strain is fixed to zero.
+            // The material update still evolves epsilon_p,zz and returns sigma_zz.
+            const auto si=(e*nq+q)*7;
+            const auto point=update_j2_point(
+                eps,st+si,lambda,mu,yield_stress,hardening);
+            for (int i=0;i<3;++i) for (int j=0;j<3;++j)
+              sigma_out[((e*nq+q)*3+i)*3+j]=point.stress[i][j];
+            q_out[e*nq+q]=point.equivalent_stress;
+            energy_out[e*nq+q]=point.incremental_energy;
+            po[e*nq+q]=point.plastic?1:0;
+            std::copy(point.state.begin(),point.state.end(),so+si);
+            const double weight=wt[e*nq+q];
+            for (py::ssize_t a=0;a<nn;++a) for (int i=0;i<2;++i) {
+              double rv=0.;
+              for (int j=0;j<2;++j)
+                rv+=point.stress[i][j]*gr[((e*nq+q)*nn+a)*2+j];
+              ro[e*nd+a*2+i]+=weight*rv;
+              for (py::ssize_t b=0;b<nn;++b) for (int k=0;k<2;++k) {
+                double kv=0.;
+                for (int j=0;j<2;++j) for (int l=0;l<2;++l)
+                  kv+=gr[((e*nq+q)*nn+a)*2+j]*point.tangent[i][j][k][l]*
+                      gr[((e*nq+q)*nn+b)*2+l];
+                ko[e*nd*nd+(a*2+i)*nd+b*2+k]+=weight*kv;
+              }
+            }
+          }
+      });
+    }
+    return py::make_tuple(residual,tangent,trial,plastic,stress,equivalent_stress,energy);
+}
 }
 
 void native_fem::bind_j2_plasticity(py::module_& module) {
@@ -225,6 +315,9 @@ void native_fem::bind_j2_plasticity(py::module_& module) {
       py::arg("strains"),py::arg("committed_state"),py::arg("lambda"),
       py::arg("mu"),py::arg("yield_stress"),py::arg("hardening"));
     module.def("evaluate_j2_plasticity",&evaluate_j2_plasticity,
+      py::arg("dofs"),py::arg("gradients"),py::arg("weights"),py::arg("displacement"),
+      py::arg("committed_state"),py::arg("lambda"),py::arg("mu"),py::arg("yield_stress"),py::arg("hardening"));
+    module.def("evaluate_j2_plane_strain",&evaluate_j2_plane_strain,
       py::arg("dofs"),py::arg("gradients"),py::arg("weights"),py::arg("displacement"),
       py::arg("committed_state"),py::arg("lambda"),py::arg("mu"),py::arg("yield_stress"),py::arg("hardening"));
 }

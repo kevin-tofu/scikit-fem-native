@@ -7,7 +7,7 @@ import numpy as np
 from ._coefficients import Coefficient
 from ._composite_fields import CompositeField,CompositeWeightedField
 from ._form_terms import BilinearTerm,CompositeBilinearTerm
-from ._h1_fields import Divergence
+from ._h1_fields import Curl,Divergence
 from ._interface_terms import InterfaceBilinearTerm
 
 
@@ -50,6 +50,12 @@ class QuadratureValue:
     def __mul__(self,other):
         if getattr(other,"_is_normal_trace",False):
             return other.with_coefficient(self)
+        if isinstance(other,Curl):
+            coefficient=(
+                self.value if other.coefficient is None else
+                self.value*other.coefficient
+            )
+            return Curl(other.role,other.factor,coefficient)
         if isinstance(other,(
             BilinearTerm,CompositeBilinearTerm,InterfaceBilinearTerm,
         )):

@@ -1,0 +1,325 @@
+{
+  "name": "NUMISHEET '93 two-dimensional draw bending, mild steel",
+  "status": "future independent benchmark target; not reproduced by the current solver",
+  "source": {
+    "problem_documentation": "https://docs.software.vt.edu/abaqusv2025/English/SIMACAEEXARefMap/simaexa-c-springback.htm",
+    "reference_input": "https://docs.software.vt.edu/abaqusv2025/English/SIMAINPRefResources/springback_std_both_surf.inp",
+    "units_in_this_file": "mm, N, MPa"
+  },
+  "reference_run": {
+    "variant": "mild steel with 2.45 kN blank-holder force",
+    "force_stroke_history": "The official input deck requests RF and U history output at the punch reference node; an output database is not included in this repository.",
+    "independent_force_curve_available_locally": false
+  },
+  "blank": {
+    "length": 350.0,
+    "width": 35.0,
+    "thickness": 0.78,
+    "half_model_length": 175.0,
+    "reference_shell_elements": 175,
+    "reference_thickness_integration_points": 5
+  },
+  "material": {
+    "young_modulus": 206000.0,
+    "poisson_ratio": 0.3,
+    "initial_yield_stress": 167.0,
+    "hill48_coefficients_R11_R22_R33_R12_R13_R23": [
+      1.0,
+      1.0402,
+      1.24897,
+      1.07895,
+      1.0,
+      1.0
+    ],
+    "hardening_data": "Tabulated yield stress versus equivalent plastic strain from the official reference input deck; values are stored below in MPa.",
+    "hardening_curve_equivalent_plastic_strain_yield_stress_MPa": [
+      [
+        0.0,
+        167.0
+      ],
+      [
+        0.01,
+        194.1
+      ],
+      [
+        0.02,
+        219.13
+      ],
+      [
+        0.03,
+        238.03
+      ],
+      [
+        0.04,
+        253.48
+      ],
+      [
+        0.05,
+        266.68
+      ],
+      [
+        0.06,
+        278.26
+      ],
+      [
+        0.07,
+        288.64
+      ],
+      [
+        0.08,
+        298.07
+      ],
+      [
+        0.09,
+        306.74
+      ],
+      [
+        0.1,
+        314.77
+      ],
+      [
+        0.11,
+        322.26
+      ],
+      [
+        0.12,
+        329.3
+      ],
+      [
+        0.13,
+        335.94
+      ],
+      [
+        0.14,
+        342.24
+      ],
+      [
+        0.15,
+        348.22
+      ],
+      [
+        0.16,
+        353.93
+      ],
+      [
+        0.17,
+        359.4
+      ],
+      [
+        0.18,
+        364.64
+      ],
+      [
+        0.19,
+        369.68
+      ],
+      [
+        0.2,
+        374.54
+      ],
+      [
+        0.21,
+        379.22
+      ],
+      [
+        0.22,
+        383.75
+      ],
+      [
+        0.23,
+        388.14
+      ],
+      [
+        0.24,
+        392.39
+      ],
+      [
+        0.25,
+        396.52
+      ],
+      [
+        0.26,
+        400.53
+      ],
+      [
+        0.27,
+        404.43
+      ],
+      [
+        0.28,
+        408.22
+      ],
+      [
+        0.29,
+        411.93
+      ],
+      [
+        0.3,
+        415.54
+      ],
+      [
+        0.31,
+        419.06
+      ],
+      [
+        0.32,
+        422.51
+      ],
+      [
+        0.33,
+        425.88
+      ],
+      [
+        0.34,
+        429.17
+      ],
+      [
+        0.35,
+        432.4
+      ],
+      [
+        0.36,
+        435.56
+      ],
+      [
+        0.37,
+        438.66
+      ],
+      [
+        0.38,
+        441.69
+      ],
+      [
+        0.39,
+        444.68
+      ],
+      [
+        0.4,
+        447.6
+      ],
+      [
+        0.41,
+        450.47
+      ],
+      [
+        0.42,
+        453.3
+      ],
+      [
+        0.43,
+        456.07
+      ],
+      [
+        0.44,
+        458.8
+      ],
+      [
+        0.45,
+        461.48
+      ],
+      [
+        0.46,
+        464.13
+      ],
+      [
+        0.47,
+        466.72
+      ],
+      [
+        0.48,
+        469.28
+      ],
+      [
+        0.49,
+        471.81
+      ],
+      [
+        0.5,
+        474.29
+      ]
+    ]
+  },
+  "process": {
+    "punch_stroke": 70.0,
+    "blank_holder_force_total": 2450.0,
+    "friction_coefficient": 0.144,
+    "tools": "rigid analytical die, punch, and blank holder",
+    "springback": "remove tool contact and solve a static equilibrium step"
+  },
+  "analytical_tool_profiles_from_reference_input": {
+    "source_input_coordinate_unit": "m",
+    "profile_point_convention": "raw START, LINE, and CIRCL data-line coordinates from the input deck; CIRCL stores endpoint then center",
+    "surface_axis_line": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+    "surface_reference_direction": [0.0, 1.0, 0.0],
+    "rigid_bodies": {
+      "die": {
+        "reference_node": [0.026, 0.0025, -0.08],
+        "profile": [
+          ["START", 0.026, -0.08],
+          ["LINE", 0.026, -0.00539],
+          ["CIRCL", 0.031, -0.00039, 0.031, -0.00539],
+          ["LINE", 0.18, -0.00039]
+        ]
+      },
+      "punch": {
+        "reference_node": [0.0, 0.0025, 0.001],
+        "profile": [
+          ["START", 0.025, 0.081],
+          ["LINE", 0.025, 0.006],
+          ["CIRCL", 0.02, 0.001, 0.02, 0.006],
+          ["LINE", 0.0, 0.001]
+        ]
+      },
+      "blank_holder": {
+        "reference_node": [0.0585, 0.0025, 0.01],
+        "profile": [
+          ["START", 0.086, 0.01],
+          ["LINE", 0.086, 0.00539],
+          ["CIRCL", 0.081, 0.00039, 0.081, 0.00539],
+          ["LINE", 0.031, 0.00039],
+          ["LINE", 0.031, 0.01]
+        ]
+      }
+    },
+    "coordinate_transform_note": "These are source-deck analytical surface coordinates and reference-node coordinates. Apply the Abaqus cylindrical-surface local frame and rigid-body transform before comparing them to blank mesh coordinates."
+  },
+  "springback_reference": {
+    "outside_flange_angle_before_unloading": 22.0,
+    "outside_flange_angle_after_unloading": 17.1,
+    "experimental_mean_after_unloading": 17.1,
+    "experimental_range_after_unloading": [
+      9.0,
+      23.0
+    ],
+    "published_comparison": {
+      "source": "M. Puso, A Users Manual for the Nonlinear Kinematic Hardening Model for Cyclic Loading, UCRL-MA-140587, 2000, Table 2",
+      "source_url": "https://digital.library.unt.edu/ark:/67531/metadc1413779/m2/1/high_res_d/15007612.pdf",
+      "blank_holder_force_kN": 2.45,
+      "isotropic_hardening_flange_angle_after_springback_deg": 17.20,
+      "kinematic_hardening_flange_angle_after_springback_deg": 17.57,
+      "experimental_mean_flange_angle_after_springback_deg": 17.1,
+      "comparison_note": "The published isotropic-hardening simulation uses a fitted power-law material curve, not the tabular hardening data in the official Abaqus input deck stored above. Treat 17.1 deg as the experimental target; 17.20 deg is a method-level comparison, not a same-material reference run."
+    }
+  },
+  "implementation_gaps": [
+    "large-deformation elastoplasticity",
+    "full 70 mm forming path with convergence checks and evolving contact",
+    "friction coefficient 0.144 and shell-thickness-aware contact",
+    "shell formulation or an adequately resolved solid thickness",
+    "native batched Hill48 assembly",
+    "independent punch reaction-force versus displacement comparison"
+  ],
+  "puso_isotropic_hardening": {
+    "source": "M. Puso, A Users Manual for the Nonlinear Kinematic Hardening Model for Cyclic Loading, UCRL-MA-140587, 2000, Table 1",
+    "source_url": "https://digital.library.unt.edu/ark:/67531/metadc1413779/m2/1/high_res_d/15007612.pdf",
+    "initial_yield_stress_MPa": 100.462,
+    "saturation_terms": [
+      {"b": 3.3333333, "Q_MPa": 272.936},
+      {"b": 20.0, "Q_MPa": 29.0895},
+      {"b": 50.0, "Q_MPa": 57.2771},
+      {"b": 1000.0, "Q_MPa": 57.0}
+    ],
+    "law": "sigma_y(p) = sigma_y0 + sum_i Q_i * (1 - exp(-b_i * p))",
+    "scope_note": "This published isotropic law is a distinct material comparison path; it does not replace the official Abaqus deck hardening curve above."
+  }
+}

@@ -22,6 +22,17 @@ demos. The skip only keeps CI honest about the current supported surface.
   H(div) paths remain in the blocking suite.
 - RT0 triangle/tetrahedron `Basis` and selected public `asm` mass,
   divergence, vector-load, and RT0-DG0 mixed forms are implemented.
+- Affine N1 triangle/tetrahedron elements now use `ElementTriN1`/
+  `ElementTetN1` in public `Basis` and `asm`.  Edge numbering, tangential
+  boundary DOFs, interpolation, point evaluation, L2 projection, and Maxwell
+  mass/curl/load forms are checked against scikit-fem.
+- Affine triangular `ElementTriN2` is available through public `Basis` and
+  `asm`, with two oriented edge DOFs, two cell DOFs, interpolation, projection,
+  point evaluation, vector loads, and reusable mass/curl assemblers.
+- Affine triangular `ElementTriN3` is available through public `Basis` and
+  `asm`; its three edge DOFs are permuted on orientation reversal, and its six
+  cell DOFs, interpolation, evaluation, projection, vector loads, and reusable
+  mass/curl assembly are checked against scikit-fem.
 - The merged source also retains the standalone copy's line elements,
   topology helpers, and C++ bindings. `MeshLine` FEM parity is still
   incomplete; merely exporting `MeshLine` is not sufficient.
@@ -42,15 +53,12 @@ demos. The skip only keeps CI honest about the current supported surface.
 2. Complete `Basis` APIs: standard parameters, split/composite and DG paths,
    point evaluation, `refinterp`, and projection. Validate scalar/vector,
    element subset, and tensor-product cases separately.
-3. Integrate the dedicated H(curl) basis with public `Basis`/`asm`; preserve
-   edge orientation and Piola mapping. Do not describe dedicated Nedelec
-   functions as general H(curl) support.
-4. Extend nonlinear multi-cell J2/Neo-Hookean assembly and objectivity checks.
+3. Extend nonlinear multi-cell J2/Neo-Hookean assembly and objectivity checks.
    Several failing cases currently hit `split_indices()` on a vector field;
    determine whether that is a missing vector dispatch or a true numerical
    regression before implementing a workaround. The material-point tests that
    already pass remain blocking.
-5. Add native composite DOF, curved-surface, and tensor point-evaluation
+4. Add native composite DOF, curved-surface, and tensor point-evaluation
    frontends with parity checks for both Linux and macOS wheels.
 
 ## Sync and release discipline

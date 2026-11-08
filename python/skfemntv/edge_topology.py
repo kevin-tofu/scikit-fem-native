@@ -50,11 +50,17 @@ def build_oriented_edge_topology(mesh) -> OrientedEdgeTopology:
 
     local_edges=_LOCAL_EDGES[key]
     connectivity=np.ascontiguousarray(mesh.t[:corners],dtype=np.int64)
-    # The native routine preserves the historical cell-major/local-edge-major
-    # first-seen numbering, so IDs and orientation arrays remain API-compatible.
     edges,element_edges,signs=_build_native_edge_topology(
         connectivity,dimension
     )
+    # Use the lexicographically sorted ascending vertex pairs also used by
+    # scikit-fem's simplex facet/edge numbering.  This makes the public N1
+    # Basis DOF arrays directly comparable without a permutation step.
+    order=np.lexsort((edges[1],edges[0]))
+    inverse=np.empty_like(order)
+    inverse[order]=np.arange(len(order),dtype=order.dtype)
+    edges=edges[:,order]
+    element_edges=inverse[element_edges]
     return OrientedEdgeTopology(
         np.ascontiguousarray(edges),
         np.ascontiguousarray(element_edges),

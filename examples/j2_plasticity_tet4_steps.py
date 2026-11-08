@@ -24,7 +24,10 @@ def main():
         basis,young_modulus=1000.,poisson_ratio=.25,
         yield_stress=2.,hardening_modulus=20.)
     committed=material.initial_state()
-    x_dofs=basis.split_indices()[0]
+    # ElementVector uses node-interleaved component DOFs in the nonlinear
+    # assembler.  Gather the x component from the element-local layout rather
+    # than calling split_indices(), which is only defined for composite bases.
+    x_dofs=np.unique(basis.element_dofs.T.reshape(mesh.nelements,4,3)[:,:,0])
 
     print("strain_xx  ||internal force||  increment potential  mean von Mises  mean ep_eq  plastic q-points")
     for strain_xx in (0.001,0.01,0.004,0.012,0.002):

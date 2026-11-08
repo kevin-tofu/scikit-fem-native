@@ -8,11 +8,13 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from ._skfn import (
-    assemble_nonlinear_global,evaluate_j2_material,evaluate_j2_plasticity,evaluate_neo_hookean,
+    assemble_nonlinear_global,evaluate_j2_material,evaluate_j2_plasticity,
+    evaluate_j2_plane_strain,evaluate_neo_hookean,
     evaluate_neo_hookean_material,
 )
 from .basis import (
-    Basis,ElementHex1,ElementHex2,ElementHex20,ElementTetP1,ElementTetP2,
+    Basis,ElementHex1,ElementHex2,ElementHex20,ElementQuad1,ElementQuad2,
+    ElementQuad8,ElementTetP1,ElementTetP2,ElementTriP1,ElementTriP2,
     ElementVector,
 )
 
@@ -234,6 +236,87 @@ class J2PlasticityAssembler:
         expected=(self.basis.nelems,self._weights.shape[1],7)
         if evaluation.trial_state.shape!=expected or not np.all(np.isfinite(evaluation.trial_state)):
             raise ValueError("evaluation has an invalid trial_state")
+        return np.array(evaluation.trial_state,dtype=np.float64,copy=True)
+
+
+class PlaneStrainJ2Assembler:
+    """Small-strain plane-strain J2 plasticity on 2D triangular/quadrilateral H1 meshes.
+
+    The three-dimensional constitutive update is evaluated with
+    ``epsilon_zz = epsilon_yz = epsilon_xz = 0``.  Plastic history retains all
+    six plastic-strain components and accumulated equivalent plastic strain at
+    every quadrature point, including the out-of-plane plastic strain.
+    Supported vector fields are TriP1, TriP2, Quad4, Quad8, and Quad9.
+    Evaluations are transactional; only :meth:`commit` advances history.
+    """
+
+    _supported_elements=(
+        ElementTriP1,ElementTriP2,ElementQuad1,ElementQuad2,ElementQuad8,
+    )
+
+    def __init__(self,basis: Basis,young_modulus: float,poisson_ratio: float,
+                 yield_stress: float,hardening_modulus: float=0.):
+        if not isinstance(basis,Basis) or not isinstance(basis.elem,ElementVector) \
+                or basis.elem._dim!=2 or not isinstance(
+                    basis.elem.elem,self._supported_elements):
+            raise TypeError(
+                "basis must use a two-component vector TriP1, TriP2, Quad4, Quad8, or Quad9 field"
+            )
+        self.basis=basis
+        self.material=J2PlasticityMaterial(
+            young_modulus,poisson_ratio,yield_stress,hardening_modulus)
+        self.young_modulus=self.material.young_modulus
+        self.poisson_ratio=self.material.poisson_ratio
+        self.yield_stress=self.material.yield_stress
+        self.hardening_modulus=self.material.hardening_modulus
+        self.mu=self.material.mu
+        self.lambda_=self.material.lambda_
+        nodes=basis.element_dofs.shape[0]//2
+        gradients=np.asarray(basis.tabulated_gradients)
+        if gradients.shape[2:]!=(nodes,2):
+            raise ValueError("basis gradients do not match a two-dimensional vector DOF layout")
+        self._gradients=np.ascontiguousarray(gradients)
+        self._dofs=np.ascontiguousarray(
+            basis.element_dofs.T.reshape(basis.nelems,nodes,2),dtype=np.int64)
+        self._weights=np.ascontiguousarray(basis.dx)
+        self._tangent_graph=_prepare_tangent_scatter(
+            self._dofs.reshape(basis.nelems,-1),basis.N)
+
+    def initial_state(self) -> np.ndarray:
+        """Return zero plastic history at every element quadrature point."""
+        return self.material.initial_state((self.basis.nelems,self._weights.shape[1]))
+
+    def evaluate(self,displacement,committed_state) -> PlasticEvaluation:
+        """Assemble a trial residual/tangent without modifying committed history."""
+        u=np.ascontiguousarray(displacement,dtype=np.float64)
+        state=np.asarray(committed_state,dtype=np.float64)
+        expected=(self.basis.nelems,self._weights.shape[1],7)
+        if u.shape!=(self.basis.N,) or not np.all(np.isfinite(u)):
+            raise ValueError(f"displacement must be a finite vector of shape ({self.basis.N},)")
+        if state.shape!=expected or not np.all(np.isfinite(state)):
+            raise ValueError(f"committed_state must be finite with shape {expected}")
+        if np.any(state[...,6]<0.):
+            raise ValueError("committed equivalent plastic strain must be nonnegative")
+        local_r,local_k,trial,plastic,stress,equivalent,energy=evaluate_j2_plane_strain(
+            self._dofs,self._gradients,self._weights,u,
+            np.ascontiguousarray(state),self.lambda_,self.mu,
+            self.yield_stress,self.hardening_modulus)
+        dofs=self._dofs.reshape(self.basis.nelems,-1)
+        residual,tangent=_assemble_global_response(
+            local_r,local_k,dofs,(self.basis.N,self.basis.N),self._tangent_graph)
+        return PlasticEvaluation(
+            residual,tangent,trial,plastic.astype(bool),stress,equivalent,
+            float(np.sum(energy*self._weights)))
+
+    def commit(self,evaluation: PlasticEvaluation) -> np.ndarray:
+        """Commit one converged trial response by copying its quadrature history."""
+        if not isinstance(evaluation,PlasticEvaluation):
+            raise TypeError("evaluation must be a PlasticEvaluation")
+        expected=(self.basis.nelems,self._weights.shape[1],7)
+        if evaluation.trial_state.shape!=expected or not np.all(np.isfinite(evaluation.trial_state)):
+            raise ValueError("evaluation has an invalid trial_state")
+        if np.any(evaluation.trial_state[...,6]<0.):
+            raise ValueError("evaluation has a negative equivalent plastic strain")
         return np.array(evaluation.trial_state,dtype=np.float64,copy=True)
 
 

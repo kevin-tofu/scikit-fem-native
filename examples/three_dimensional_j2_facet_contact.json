@@ -1,0 +1,65 @@
+{
+  "problem": "3D small-strain Tet4 J2 sheet with facet-centroid rigid-plane contact",
+  "mesh": {
+    "nx": 8,
+    "ny": 4,
+    "nz": 1,
+    "tetrahedra": 192,
+    "nodes": 90,
+    "displacement_dofs": 270
+  },
+  "maximum_stroke": 0.001,
+  "material_source": "illustrative isotropic Hill48/J2 parameters",
+  "steps": [
+    {
+      "step": 1,
+      "stroke": 0.0005,
+      "punch_force": 0.05494028290903154,
+      "newton_iterations": 4,
+      "active_punch_facets": 3,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 3.626082073493464e-12,
+      "max_equivalent_plastic_strain": 0.0016773225598309585
+    },
+    {
+      "step": 2,
+      "stroke": 0.001,
+      "punch_force": 0.07602331346375131,
+      "newton_iterations": 4,
+      "active_punch_facets": 4,
+      "active_support_facets": 6,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 7.835765144809798e-09,
+      "max_equivalent_plastic_strain": 0.004737542805665401
+    },
+    {
+      "step": 3,
+      "stroke": 0.0005,
+      "punch_force": 0.01488717243173894,
+      "newton_iterations": 1,
+      "active_punch_facets": 3,
+      "active_support_facets": 6,
+      "minimum_gap": -7.770115569479449e-19,
+      "equilibrium_residual_inf": 1.1299419516372367e-16,
+      "max_equivalent_plastic_strain": 0.004737542805665401
+    },
+    {
+      "step": 4,
+      "stroke": 0.0,
+      "punch_force": -2.1348502973241747e-16,
+      "newton_iterations": 1,
+      "active_punch_facets": 1,
+      "active_support_facets": 1,
+      "minimum_gap": -1.3877787807814457e-17,
+      "equilibrium_residual_inf": 8.604499491388085e-17,
+      "max_equivalent_plastic_strain": 0.004737542805665401
+    }
+  ],
+  "maximum_punch_force": 0.07602331346375131,
+  "center_thickness_change": -6.628760315229021e-05,
+  "center_springback_z": -0.0002783242000943821,
+  "maximum_equivalent_plastic_strain": 0.004737542805665401,
+  "contact_discretization": "facet-centroid collocation with linear face interpolation",
+  "scope": "3D kernel proof; flat-tool contact; not a calibrated forming result"
+}

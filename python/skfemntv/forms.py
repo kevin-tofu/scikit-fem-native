@@ -41,6 +41,7 @@ from ._h1_fields import (
     Divergence as _Divergence,
     SymmetricGradient as _SymmetricGradient,
     TensorGradient as _TensorGradient,
+    TensorValue as _TensorValue,
     TestGradient as _TestGradient,
     TestValue as _TestValue,
     TrialGradient as _TrialGradient,
@@ -200,6 +201,106 @@ def _hdiv_basis(basis):
         return wrapped
     from .hdiv_basis import AffineSimplexRT0Basis
     return basis if isinstance(basis,AffineSimplexRT0Basis) else None
+
+
+def _hcurl_basis(basis):
+    wrapped=getattr(basis,"_hcurl_basis",None)
+    if wrapped is not None:
+        return wrapped
+    from .hcurl_basis import (
+        AffineTetN1Basis,AffineTetN2Basis,AffineTetN3Basis,
+        AffineTriN1Basis,AffineTriN2Basis,AffineTriN3Basis,
+    )
+    return basis if isinstance(
+        basis,(AffineTriN1Basis,AffineTetN1Basis,AffineTetN2Basis,
+               AffineTetN3Basis,AffineTriN2Basis,AffineTriN3Basis)
+    ) else None
+
+
+def _native_hcurl_linear_assemble(form,basis,kwargs):
+    from .hcurl_assembler import (
+        TetN1LinearAssembler,TetN2LinearAssembler,TetN3LinearAssembler,
+        TriN1LinearAssembler,TriN2LinearAssembler,
+        TriN3LinearAssembler,
+    )
+    hcurl=_hcurl_basis(basis)
+    expression=_trace_expression(
+        form.function,(_TestValue(),),
+        {"x":_QuadratureValue(hcurl.global_coordinates)},kwargs,
+        context="H(curl) LinearForm",
+    )
+    terms=_extract_terms(
+        expression,_Term,_Sum,
+        message="H(curl) LinearForm must reduce to dot(vector, v)",
+    )
+    native=form._native_cache.get(basis)
+    if native is None:
+        from .hcurl_basis import AffineTriN2Basis,AffineTriN3Basis
+        from .hcurl_basis import AffineTetN2Basis,AffineTetN3Basis
+        assembler=(
+            TetN3LinearAssembler if isinstance(hcurl,AffineTetN3Basis) else
+            TetN2LinearAssembler if isinstance(hcurl,AffineTetN2Basis) else
+            TriN3LinearAssembler if isinstance(hcurl,AffineTriN3Basis) else
+            TriN2LinearAssembler if isinstance(hcurl,AffineTriN2Basis) else
+            (TriN1LinearAssembler if hcurl.mesh.dim()==2 else
+             TetN1LinearAssembler)
+        )
+        native=assembler(hcurl)
+        form._native_cache[basis]=native
+    result=None
+    for term in terms:
+        if term.kind!="value":
+            raise UnsupportedNativeForm("H(curl) LinearForm supports vector loads only")
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor
+        )
+        vector=native.assemble_vector_load(coefficient).copy()
+        result=vector if result is None else result+vector
+    return result
+
+
+def _native_hcurl_bilinear_assemble(form,basis,kwargs):
+    from .hcurl_assembler import (
+        TetN1Assembler,TetN2Assembler,TetN3Assembler,
+        TriN1Assembler,TriN2Assembler,TriN3Assembler,
+    )
+    hcurl=_hcurl_basis(basis)
+    expression=_trace_expression(
+        form.function,(_TrialValue(),_TestValue()),
+        {"x":_QuadratureValue(hcurl.global_coordinates)},kwargs,
+        context="H(curl) BilinearForm",
+    )
+    terms=_extract_terms(
+        expression,_BilinearTerm,_BilinearSum,
+        message="H(curl) BilinearForm supports dot(u, v) and curl products",
+    )
+    native=form._native_cache.get(basis)
+    if native is None:
+        from .hcurl_basis import AffineTriN2Basis,AffineTriN3Basis
+        from .hcurl_basis import AffineTetN2Basis,AffineTetN3Basis
+        assembler=(
+            TetN3Assembler if isinstance(hcurl,AffineTetN3Basis) else
+            TetN2Assembler if isinstance(hcurl,AffineTetN2Basis) else
+            TriN3Assembler if isinstance(hcurl,AffineTriN3Basis) else
+            TriN2Assembler if isinstance(hcurl,AffineTriN2Basis) else
+            (TriN1Assembler if hcurl.mesh.dim()==2 else TetN1Assembler)
+        )
+        native=assembler(hcurl)
+        form._native_cache[basis]=native
+    result=None
+    for term in terms:
+        if term.kind not in ("value","curl"):
+            raise UnsupportedNativeForm(
+                f"H(curl) BilinearForm does not support {term.kind!r}"
+            )
+        coefficient=_evaluate_coefficient(
+            term.coefficient,kwargs,factor=term.factor,squeeze=True
+        )
+        matrix=(native.assemble_mass(coefficient) if term.kind=="value"
+                else native.assemble_curl_curl(coefficient))
+        matrix=matrix.copy()
+        result=matrix if result is None else result+matrix
+    return result
 
 
 def _is_dg0_basis(basis):
@@ -401,22 +502,21 @@ def _native_hdiv_bilinear_assemble(form,basis,kwargs):
         form._native_cache[basis]=native
     result=None
     for term in terms:
-        if term.kind not in ("value","divergence"):
+        if term.kind not in ("value","divergence","value_tensor"):
             raise UnsupportedNativeForm(
                 f"RT0 BilinearForm does not support {term.kind!r}"
             )
         coefficient=_evaluate_coefficient(
             term.coefficient,kwargs,factor=term.factor,squeeze=True
         )
-        matrix=(
-            native.assemble(value=coefficient)
-            if term.kind=="value" else
-            native.assemble(divergence=coefficient)
-        )
+        if term.kind=="value":
+            matrix=native.assemble(value=coefficient)
+        elif term.kind=="divergence":
+            matrix=native.assemble(divergence=coefficient)
+        else:
+            matrix=native.assemble_tensor_mass(coefficient)
         result=matrix if result is None else result+matrix
     return result
-
-
 def _native_linear_assemble(form,basis,kwargs,num_threads=0):
     terms = _compile_linear(form,basis,kwargs)
     native = form._native_cache.get(basis)
@@ -1002,6 +1102,8 @@ def asm(
                 form,integration,kwargs,requested_threads
             )
         if len(bases)==1:
+            if _hcurl_basis(bases[0]) is not None:
+                return _native_hcurl_linear_assemble(form,bases[0],kwargs)
             if getattr(bases[0],"_hdiv_facet_basis",False):
                 if num_threads is not None:
                     raise UnsupportedNativeForm(
@@ -1085,6 +1187,12 @@ def asm(
             return _native_hdiv_facet_bilinear_assemble(
                 form,bases[0],kwargs
             )
+        if _hcurl_basis(bases[0]) is not None:
+            if num_threads is not None:
+                raise UnsupportedNativeForm(
+                    "per-call threads are not yet supported for H(curl) BilinearForm"
+                )
+            return _native_hcurl_bilinear_assemble(form,bases[0],kwargs)
         if _hdiv_basis(bases[0]) is not None:
             if num_threads is not None:
                 raise UnsupportedNativeForm(
@@ -1113,7 +1221,28 @@ def asm(
 
 
 def dot(left, right):
-def dot(left, right):
+    if isinstance(left,_TensorValue) and isinstance(
+        right,(_TrialValue,_TestValue)
+    ):
+        if left.value.__class__ is right.__class__:
+            raise UnsupportedNativeForm(
+                "tensor value contraction requires trial and test fields"
+            )
+        return _BilinearTerm(
+            "value_tensor",left.coefficient,
+            left.value.factor*right.factor,
+        )
+    if isinstance(right,_TensorValue) and isinstance(
+        left,(_TrialValue,_TestValue)
+    ):
+        if right.value.__class__ is left.__class__:
+            raise UnsupportedNativeForm(
+                "tensor value contraction requires trial and test fields"
+            )
+        return _BilinearTerm(
+            "value_tensor",right.coefficient,
+            right.value.factor*left.factor,
+        )
     if isinstance(left,(_TrialValue,_TestValue)) and isinstance(
         right,_QuadratureValue
     ):
@@ -1312,6 +1441,13 @@ def dot(left, right):
 
 def mul(left,right):
     """Matrix-vector product in the typed native form subset."""
+    if isinstance(right,(_TrialValue,_TestValue)) and isinstance(
+        left,(_Coefficient,_CoefficientComponent,np.ndarray,_QuadratureValue)
+    ):
+        coefficient=(
+            left if _is_symbolic_coefficient(left) else np.asarray(left)
+        )
+        return _TensorValue(right,coefficient)
     if isinstance(right,(_TrialGradient,_TestGradient)) and isinstance(
         left,(_Coefficient,_CoefficientComponent,np.ndarray,_QuadratureValue)
     ):

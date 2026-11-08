@@ -1,0 +1,60 @@
+{
+  "model": "finite-strain plane-strain Hencky J2 with multiplicative plasticity",
+  "mesh": {
+    "elements": 32,
+    "nodes": 27,
+    "displacement_dofs": 54
+  },
+  "target_extension": 0.05,
+  "hardening": "NUMISHEET '93 reference tabular curve",
+  "tangent": "analytic consistent first-Piola tangent dP/dF; centered finite differences are available as a material-point reference mode",
+  "steps": [
+    {
+      "load_fraction": 0.2,
+      "prescribed_extension": 0.010000000000000002,
+      "newton_iterations": 9,
+      "right_edge_reaction": 55.67974349360935,
+      "maximum_equivalent_plastic_strain": 0.010297982660156498,
+      "equilibrium_residual_inf": 8.404891835769134e-10,
+      "plastic_points": 96
+    },
+    {
+      "load_fraction": 0.4,
+      "prescribed_extension": 0.020000000000000004,
+      "newton_iterations": 16,
+      "right_edge_reaction": 62.82116706533433,
+      "maximum_equivalent_plastic_strain": 0.021504252738563635,
+      "equilibrium_residual_inf": 8.927480472956664e-12,
+      "plastic_points": 96
+    },
+    {
+      "load_fraction": 0.6000000000000001,
+      "prescribed_extension": 0.030000000000000006,
+      "newton_iterations": 15,
+      "right_edge_reaction": 67.8573440751159,
+      "maximum_equivalent_plastic_strain": 0.032645471401428976,
+      "equilibrium_residual_inf": 2.047653689371918e-11,
+      "plastic_points": 96
+    },
+    {
+      "load_fraction": 0.8,
+      "prescribed_extension": 0.04000000000000001,
+      "newton_iterations": 15,
+      "right_edge_reaction": 71.71533555659146,
+      "maximum_equivalent_plastic_strain": 0.04370208046712169,
+      "equilibrium_residual_inf": 4.666470627394619e-12,
+      "plastic_points": 96
+    },
+    {
+      "load_fraction": 1.0,
+      "prescribed_extension": 0.05,
+      "newton_iterations": 15,
+      "right_edge_reaction": 74.80390091148837,
+      "maximum_equivalent_plastic_strain": 0.05466753504056942,
+      "equilibrium_residual_inf": 4.782984394709729e-07,
+      "plastic_points": 96
+    }
+  ],
+  "maximum_equivalent_plastic_strain": 0.05466753504056942,
+  "scope": "material/assembler Newton-path check; no rigid-tool contact or forming validation"
+}
