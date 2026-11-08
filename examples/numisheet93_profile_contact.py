@@ -6683,6 +6683,31 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         "experimental_mean_after_unloading"
                     ]
                 ),
+                "published_puso_isotropic_result": {
+                    "source": reference["puso_isotropic_hardening"]["source"],
+                    "source_url": reference["puso_isotropic_hardening"][
+                        "source_url"
+                    ],
+                    "reference_angle_deg": reference[
+                        "springback_reference"
+                    ]["published_comparison"][
+                        "isotropic_hardening_flange_angle_after_springback_deg"
+                    ],
+                    "model_error_deg": springback_angle_magnitude
+                    - reference["springback_reference"][
+                        "published_comparison"
+                    ]["isotropic_hardening_flange_angle_after_springback_deg"],
+                    "puso_hardening_law_selected": puso_isotropic_hardening,
+                    "reference_friction_condition_confirmed": False,
+                    "same_shell_formulation": False,
+                    "direct_comparison_valid": False,
+                    "interpretation": (
+                        "The Puso 17.20 degree result is reported as a method-level "
+                        "comparison only. The local Puso law can be selected, but "
+                        "the published friction condition and shell formulation "
+                        "are not established as matching this solid model."
+                    ),
+                },
                 "direct_comparison_valid": False,
                 "reason": (
                     "The experimental angle is a useful target, but this run "
@@ -6694,9 +6719,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     + f"{friction_coefficient:g}, and no shell-thickness "
                     "contact. The benchmark uses a shell formulation, "
                     "friction coefficient 0.144, and tabular Hill48 response. "
-                    "The published 17.20 degree "
-                    "isotropic result uses a fitted power-law hardening curve, "
-                    "not the local deck material curve."
+                    + (
+                        "The local Puso isotropic hardening option is active, "
+                        "but the published Puso simulation's friction and shell "
+                        "conditions are not established as matching."
+                        if puso_isotropic_hardening else
+                        "The published 17.20 degree isotropic result uses a "
+                        "fitted power-law hardening curve, not the local deck "
+                        "material curve."
+                    )
                 ),
             },
         },
