@@ -869,7 +869,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         support_sensitivity = constraints[holder_rows, -1]
         # Ignore nearly tangential normals: they nominally oppose the load,
         # but need an unbounded rigid-tool translation to close a small gap.
-        support_rows = holder_rows[support_sensitivity > 0.1]
+        support_rows = holder_rows[
+            np.isfinite(support_sensitivity) & (support_sensitivity > 0.1)
+        ]
         if not support_rows.size:
             return float(holder_z), False, 0.
         support_gaps = gaps[support_rows - equality_count]
@@ -877,6 +879,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         nearest_index = int(np.argmin(support_motion))
         row = int(support_rows[nearest_index])
         gap = float(support_gaps[nearest_index])
+        sensitivity = float(constraints[row, -1])
         # Start just inside the contact branch.  At a positive gap with a zero
         # multiplier, the Fischer--Burmeister generalized derivative has no
         # gap-to-reaction coupling, even when that gap is below the outer
@@ -887,13 +890,22 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             1e-8, forming_contact_gap_tolerance_mm
         )
         if gap <= -contact_activation_gap_mm:
+            # A tiny penetration is below the FB residual's stopping floor,
+            # so a zero multiplier can otherwise be accepted as an inexact
+            # contact solve while the rigid-holder force remains unbalanced.
+            # Seed only the trial iterate with the vertical force balance;
+            # the contact solve and outer equilibrium checks still determine
+            # the accepted reaction, and committed multipliers are untouched.
+            if not np.any(multipliers[support_rows] < -1e-2):
+                multipliers[row] = (
+                    -holder_external_force_per_width / sensitivity
+                )
             return float(holder_z), False, gap
         # Let the normal complementarity projection release a stale reaction
         # before changing the tool geometry.  Otherwise the old multiplier
         # would be carried to a different support location during approach.
         if np.any(multipliers[support_rows] < -1e-2):
             return float(holder_z), False, gap
-        sensitivity = float(constraints[row, -1])
         if not np.isfinite(sensitivity) or sensitivity <= 1e-8:
             return float(holder_z), False, gap
         correction = float(np.clip(
@@ -905,7 +917,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             return float(holder_z), False, gap
         for backtrack in range(12):
             candidate_z = float(holder_z + correction * (0.5 ** backtrack))
-            candidate_gaps, _, candidate_geometry = tool_state(
+            candidate_gaps, candidate_constraints, candidate_geometry = tool_state(
                 u, candidate_z, stroke
             )
             candidate_gap = float(
@@ -914,9 +926,20 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             candidate_minimum_gap = minimum_tool_gap(
                 candidate_gaps, candidate_geometry
             )
+            candidate_sensitivity = float(
+                candidate_constraints[row, -1]
+            )
             if (candidate_gap < gap - max(1e-10, 1e-6 * gap)
+                    and np.isfinite(candidate_sensitivity)
+                    and candidate_sensitivity > 0.1
                     and candidate_minimum_gap
                     >= -forming_contact_gap_tolerance_mm):
+                if (candidate_gap <= -contact_activation_gap_mm
+                        and not np.any(multipliers[support_rows] < -1e-2)):
+                    multipliers[row] = (
+                        -holder_external_force_per_width
+                        / candidate_sensitivity
+                    )
                 return candidate_z, True, candidate_gap
         return float(holder_z), False, gap
 
