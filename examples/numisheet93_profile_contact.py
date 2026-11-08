@@ -6348,6 +6348,35 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     formed_minimum_thickness_x, formed_minimum_thickness = min(
         formed_thickness_profile, key=lambda item: item[1]
     )
+    reference_stroke = float(reference["process"]["punch_stroke"])
+    reference_stroke_coverage = float(min(
+        1., accepted_stroke / max(reference_stroke, 1e-30)
+    ))
+    reference_stroke_reached = bool(
+        accepted_stroke >= reference_stroke
+        - max(1e-10, 1e-10 * reference_stroke)
+    )
+    reference_friction_matches = bool(np.isclose(
+        friction_coefficient,
+        float(reference["process"]["friction_coefficient"]),
+        rtol=1e-10, atol=1e-12,
+    ))
+    reference_material_matches = bool(
+        not finite_strain_j2 and not puso_isotropic_hardening
+    )
+    reference_holder_control_matches = holder_position_control_mm is None
+    # The local solver uses a plane-strain solid mesh and point/mortar contact;
+    # the cited benchmark uses shell elements with thickness-aware contact.
+    reference_formulation_matches = False
+    reference_condition_checks = {
+        "full_reference_stroke_reached": reference_stroke_reached,
+        "friction_coefficient_matches": reference_friction_matches,
+        "material_law_matches": reference_material_matches,
+        "load_control_matches": reference_holder_control_matches,
+        "shell_formulation_and_thickness_contact_match": (
+            reference_formulation_matches
+        ),
+    }
     return {
         "problem": (
             "NUMISHEET '93 profile contact, finite-strain plane-strain isotropic J2 proof"
@@ -6455,20 +6484,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         ),
         "requested_benchmark_stroke_mm": reference["process"]["punch_stroke"],
         "benchmark_comparison": {
-            "requested_reference_stroke_mm": float(
-                reference["process"]["punch_stroke"]
-            ),
+            "requested_reference_stroke_mm": reference_stroke,
             "accepted_model_stroke_mm": float(accepted_stroke),
-            "reference_stroke_coverage_fraction": float(min(
-                1., accepted_stroke
-                / max(float(reference["process"]["punch_stroke"]), 1e-30)
-            )),
-            "full_reference_stroke_reached": bool(
-                accepted_stroke
-                >= float(reference["process"]["punch_stroke"])
-                - max(1e-10, 1e-10 * float(
-                    reference["process"]["punch_stroke"]
-                ))
+            "reference_stroke_coverage_fraction": reference_stroke_coverage,
+            "full_reference_stroke_reached": reference_stroke_reached,
+            "reference_condition_checks": reference_condition_checks,
+            "same_condition_benchmark_comparison_possible": bool(
+                all(reference_condition_checks.values())
             ),
             "punch_force_stroke": {
                 "model_curve_available": True,
