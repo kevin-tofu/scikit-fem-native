@@ -850,7 +850,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 )
         return minimum
 
-    def approach_holder_support(u, holder_z, stroke):
+    def approach_holder_support(u, holder_z, stroke, trial_multipliers):
         """Move a force-controlled holder to its nearest feasible support.
 
         Before contact exists, the holder force has no contact reaction to
@@ -896,15 +896,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             # Seed only the trial iterate with the vertical force balance;
             # the contact solve and outer equilibrium checks still determine
             # the accepted reaction, and committed multipliers are untouched.
-            if not np.any(multipliers[support_rows] < -1e-2):
-                multipliers[row] = (
+            if not np.any(trial_multipliers[support_rows] < -1e-2):
+                trial_multipliers[row] = (
                     -holder_external_force_per_width / sensitivity
                 )
             return float(holder_z), False, gap
         # Let the normal complementarity projection release a stale reaction
         # before changing the tool geometry.  Otherwise the old multiplier
         # would be carried to a different support location during approach.
-        if np.any(multipliers[support_rows] < -1e-2):
+        if np.any(trial_multipliers[support_rows] < -1e-2):
             return float(holder_z), False, gap
         if not np.isfinite(sensitivity) or sensitivity <= 1e-8:
             return float(holder_z), False, gap
@@ -935,8 +935,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     and candidate_minimum_gap
                     >= -forming_contact_gap_tolerance_mm):
                 if (candidate_gap <= -contact_activation_gap_mm
-                        and not np.any(multipliers[support_rows] < -1e-2)):
-                    multipliers[row] = (
+                        and not np.any(
+                            trial_multipliers[support_rows] < -1e-2
+                        )):
+                    trial_multipliers[row] = (
                         -holder_external_force_per_width
                         / candidate_sensitivity
                     )
@@ -3200,7 +3202,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 u = variables[:-1]
                 h = float(variables[-1])
                 approached_holder_z, holder_approached, holder_gap_after = (
-                    approach_holder_support(u, h, float(stroke))
+                    approach_holder_support(
+                        u, h, float(stroke), multipliers
+                    )
                 )
                 if holder_approached:
                     variables[-1] = approached_holder_z
