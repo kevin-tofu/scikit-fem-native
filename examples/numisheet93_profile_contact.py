@@ -3118,6 +3118,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     u, h, float(stroke)
                 )
                 current_minimum_gap = minimum_tool_gap(gaps, gap_hessians)
+                current_holder_support_rows = holder_rows[
+                    constraints[holder_rows, -1] > 1e-8
+                ]
+                current_holder_support_gap = float(np.min(
+                    gaps[current_holder_support_rows - equality_count],
+                    initial=np.inf,
+                ))
                 equality_residual = u[symmetry_dofs]
                 if holder_position_equality_row is not None:
                     equality_residual = np.r_[
@@ -3233,11 +3240,47 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                                 ])
                             ])
                         else:
-                            # No physical support is closed yet. Leave the
-                            # holder scalar free for this linearization (it is
-                            # regularized in the KKT matrix), then search again
-                            # from the updated geometry on the next Newton step.
+                            # With a force-controlled holder and no closed
+                            # support, leave the row *unrequired* but seed the
+                            # nearest nearby unilateral constraint in the
+                            # active-set solve. This gives Newton a direction
+                            # that can close the support gap instead of relying
+                            # on the holder's tiny diagonal regularization to
+                            # drift toward contact. The row remains optional:
+                            # the contact solver can drop it if its reaction is
+                            # tensile, and nonlinear line search still checks
+                            # every exact gap before accepting an iterate.
                             required_holder_row = None
+                            if (holder_position_control_mm is None
+                                    and holder_force_per_width > 0.):
+                                predictor_holder_rows = holder_rows[
+                                    (constraints[holder_rows, -1] > 1e-8)
+                                    & (gaps[
+                                        holder_rows - equality_count
+                                    ] <= holder_support_search_radius_mm)
+                                ]
+                                if predictor_holder_rows.size:
+                                    predictor_holder_row = int(
+                                        predictor_holder_rows[np.argmin(
+                                            gaps[
+                                                predictor_holder_rows
+                                                - equality_count
+                                            ]
+                                        )]
+                                    )
+                                    initial_active[predictor_holder_row] = True
+                                    if os.environ.get(
+                                            "SCIKIT_FVM_FORMING_TRACE", ""
+                                    ) == "contacts":
+                                        print(
+                                            "[forming-holder-predictor-seed] "
+                                            f"stroke={stroke:.9f} "
+                                            f"row={predictor_holder_row} "
+                                            f"gap={gaps[predictor_holder_row - equality_count]:.6e} mm "
+                                            f"radius={holder_support_search_radius_mm:.6e} mm; "
+                                            "optional unilateral row",
+                                            flush=True,
+                                        )
                     if (not holder_support_released
                             and required_holder_row is not None):
                         initial_active[required_holder_row] = True
@@ -4180,6 +4223,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 candidate_is_converged = current_is_converged
                 equilibrium = current_equilibrium
                 candidate_minimum_gap = current_minimum_gap
+                candidate_holder_support_gap = current_holder_support_gap
                 stationarity = (
                     current_stationarity.copy() if current_is_converged else None
                 )
@@ -4189,6 +4233,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 candidate_contact_violation = current_contact_violation
                 contact_restoration_accept = False
                 contact_gap_restoration_accept = False
+                holder_support_restoration_accept = False
                 best_line_search = None
                 full_step_diagnostics = None
                 newton_step_length = 0. if current_is_converged else 1.
@@ -4216,6 +4261,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     candidate_minimum_gap = minimum_tool_gap(
                         candidate_gaps, candidate_geometry
                     )
+                    candidate_holder_support_rows = holder_rows[
+                        candidate_constraints[holder_rows, -1] > 1e-8
+                    ]
+                    candidate_holder_support_gap = float(np.min(
+                        candidate_gaps[
+                            candidate_holder_support_rows - equality_count
+                        ],
+                        initial=np.inf,
+                    ))
                     candidate_multipliers = multipliers + newton_step_length * (
                         contact_target_multipliers - multipliers
                     )
@@ -4553,6 +4607,49 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             )
                         )
                     )
+                    # A force-controlled rigid holder can have no closed
+                    # contact row while its applied force remains in the
+                    # equilibrium equations. In that state equilibrium cannot
+                    # improve until the holder reaches the sheet. Permit a
+                    # non-committing Newton restoration step that materially
+                    # closes the nearest unilateral support gap, provided all
+                    # tool gaps remain feasible and neither the force residual
+                    # nor contact merit grows appreciably. Plastic history is
+                    # still evaluated from ``committed`` and is not stored
+                    # until a later iterate satisfies the full equilibrium
+                    # and complementarity tests.
+                    holder_support_gap_reduction = (
+                        current_holder_support_gap
+                        - candidate_holder_support_gap
+                    )
+                    holder_support_restoration_accept = (
+                        holder_position_control_mm is None
+                        and holder_force_per_width > 0.
+                        and current_holder_support_gap
+                        > forming_contact_gap_tolerance_mm
+                        and holder_support_gap_reduction
+                        > max(
+                            1e-6,
+                            1e-3 * current_holder_support_gap,
+                        )
+                        and candidate_contact_feasible
+                        and equilibrium
+                        <= max(
+                            current_equilibrium
+                            + 0.1 * current_equilibrium_tolerance,
+                            1.05 * current_equilibrium,
+                        )
+                        and abs(float(stationarity[-1]))
+                        <= abs(float(current_stationarity[-1]))
+                        + max(1e-8, 1e-3 * abs(float(current_stationarity[-1])))
+                        and candidate_merit
+                        <= current_merit
+                        + 5e-3 * max(1., current_merit)
+                    )
+                    holder_residual_guard = (
+                        holder_residual_guard
+                        or holder_support_restoration_accept
+                    )
                     # A coupled contact Newton direction can close a large
                     # geometric gap while the normal reaction is still
                     # building.  The product gap*force may briefly rise even
@@ -4681,6 +4778,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             f"restoration_accept={contact_restoration_accept} "
                             f"gap_restoration_accept="
                             f"{contact_gap_restoration_accept} "
+                            f"holder_support_restoration_accept="
+                            f"{holder_support_restoration_accept} "
                             f"equilibrium_filter_accept={equilibrium_filter_accept} "
                             f"feasible_equilibrium_tradeoff_accept="
                             f"{feasible_equilibrium_tradeoff_accept} "
@@ -4693,6 +4792,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             and (
                                 contact_restoration_accept
                                 or contact_gap_restoration_accept
+                                or holder_support_restoration_accept
                                 or equilibrium_filter_accept
                                 or (equilibrium_guard and (
                                     candidate_merit < current_merit
