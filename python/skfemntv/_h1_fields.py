@@ -117,22 +117,44 @@ class SymmetricGradient:
 
 @dataclass(frozen=True)
 class Divergence:
+    __array_priority__ = 1000
+
     role: str
     factor: float = 1.0
     coefficient: Any = None
+
+    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+        if ufunc is np.multiply and method == "__call__" and len(inputs) == 2:
+            other = inputs[0] if inputs[1] is self else inputs[1]
+            return self * other
+        return NotImplemented
 
     def __mul__(self, other):
         if np.isscalar(other):
             return Divergence(
                 self.role, self.factor * other, self.coefficient
             )
+        if is_symbolic_coefficient(other) or isinstance(other, np.ndarray):
+            coefficient = (
+                other
+                if self.coefficient is None
+                else self.coefficient * other
+            )
+            return Divergence(self.role, self.factor, coefficient)
         if isinstance(other, Divergence) and self.role != other.role:
-            if self.coefficient is not None or other.coefficient is not None:
+            coefficients = [
+                value
+                for value in (self.coefficient, other.coefficient)
+                if value is not None
+            ]
+            if len(coefficients) > 1:
                 raise UnsupportedNativeForm(
-                    "weighted divergence products are not supported"
+                    "multiple divergence coefficients are not supported"
                 )
             return BilinearTerm(
-                "divergence", factor=self.factor * other.factor
+                "divergence",
+                coefficient=coefficients[0] if coefficients else None,
+                factor=self.factor * other.factor,
             )
         if self.role == "trial" and isinstance(other, TestValue):
             return BilinearTerm(
