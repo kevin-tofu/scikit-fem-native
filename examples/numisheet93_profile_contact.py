@@ -385,11 +385,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     soft_punch_support_seed = os.environ.get(
         "SCIKIT_FVM_FORMING_SOFT_PUNCH_SUPPORT_SEED", ""
     ).lower() in {"1", "true", "yes"}
+    semismooth_first_setting = os.environ.get(
+        "SCIKIT_FVM_FORMING_CONTACT_SEMISMOOTH_FIRST",
+        "1" if finite_strain_j2 else "0",
+    ).lower()
     contact_semismooth_first = (
         finite_strain_j2
-        and os.environ.get(
-            "SCIKIT_FVM_FORMING_CONTACT_SEMISMOOTH_FIRST", ""
-        ).lower() in {"1", "true", "yes"}
+        and semismooth_first_setting in {"1", "true", "yes"}
     )
     directional_tangent_refinements = int(os.environ.get(
         # At first yield the constitutive Jacobian is direction dependent.
