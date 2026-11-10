@@ -675,7 +675,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             x_nodes, 0.5 * (left[punch_arc_edges] + right[punch_arc_edges])
         ])
     z_nodes = np.linspace(-0.5 * thickness, 0.5 * thickness, nz + 1)
-    mesh = skfemntv.MeshTri.init_tensor(x_nodes, z_nodes)
+    base_mesh = skfemntv.MeshTri.init_tensor(x_nodes, z_nodes)
+    mesh = base_mesh
     for _ in range(mesh_refinement_level):
         mesh = mesh.refined()
         x_nodes = np.sort(np.r_[x_nodes, 0.5 * (x_nodes[:-1] + x_nodes[1:])])
@@ -1464,6 +1465,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     saved_regularization_floor = 0.0
     springback_checkpoint_active = False
     checkpoint_holder_position_changed = False
+    saved_mesh_refinement_level = mesh_refinement_level
+    nested_mesh_transfer = False
     if resume:
         if not checkpoint.is_file():
             raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
@@ -1473,6 +1476,18 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 "contact_multiplier_mesh_refinement_level",
                 saved_metadata.get("mesh_refinement_level", 0),
             ))
+            saved_mesh_refinement_level = int(saved_metadata.get(
+                "mesh_refinement_level", 0
+            ))
+            if mesh_refinement_level < saved_mesh_refinement_level:
+                raise ValueError(
+                    "checkpoint coarsening is not supported: saved mesh level "
+                    f"is {saved_mesh_refinement_level}, requested level is "
+                    f"{mesh_refinement_level}"
+                )
+            nested_mesh_transfer = (
+                mesh_refinement_level > saved_mesh_refinement_level
+            )
             contact_mesh_level_changed = (
                 contact_multiplier_mesh_level != mesh_refinement_level
             )
@@ -1552,6 +1567,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 key: value for key, value in checkpoint_metadata.items()
                 if key != "quadrature_points_per_element"
             }
+            if nested_mesh_transfer:
+                # Uniform MeshTri refinement is nested. Validate all physical
+                # and base-mesh settings below, while allowing the generated
+                # mesh signature and refinement level to differ.
+                for key in ("mesh_signature", "mesh_refinement_level"):
+                    comparable_saved_metadata.pop(key, None)
+                    comparable_requested_metadata.pop(key, None)
             comparable_saved_metadata.setdefault("friction_coefficient", 0.0)
             comparable_saved_metadata.setdefault("puso_isotropic_hardening", False)
             comparable_saved_metadata.setdefault("finite_strain_hill48", False)
@@ -1584,7 +1606,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     "holder_support_search_radius_mm"
                 ],
             )
-            comparable_saved_metadata.setdefault("mesh_refinement_level", 0)
+            if not nested_mesh_transfer:
+                comparable_saved_metadata.setdefault(
+                    "mesh_refinement_level", 0
+                )
             # Older checkpoints did not record this mesh-generation switch.
             # The mesh signature remains authoritative when the flag is absent.
             comparable_saved_metadata.setdefault(
@@ -1705,6 +1730,55 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     f"saved={comparable_saved_metadata}, "
                     f"requested={comparable_requested_metadata}"
                 )
+            if nested_mesh_transfer:
+                source_mesh = base_mesh.refined(saved_mesh_refinement_level)
+                source_basis = skfemntv.Basis(
+                    source_mesh,
+                    skfemntv.ElementVector(
+                        skfemntv.ElementTriP1(), dim=2
+                    ),
+                    intorder=2,
+                    quadrature=p1_centroid_rule,
+                )
+                source_node_count = source_basis.N // 2
+                source_dof_x = 2 * np.arange(source_node_count)
+                if displacement.shape != (source_basis.N,):
+                    raise ValueError(
+                        "checkpoint displacement shape does not match its "
+                        "recorded nested source mesh: "
+                        f"saved={displacement.shape}, expected={(source_basis.N,)}"
+                    )
+                source_interpolator = source_basis.interpolator(displacement)
+                nodal_values = source_interpolator(
+                    basis.doflocs[:, dof_x]
+                )
+                displacement = np.empty(basis.N, dtype=float)
+                displacement[dof_x] = nodal_values[0]
+                displacement[dof_z] = nodal_values[1]
+
+                source_element_count = source_mesh.nelements
+                if committed.shape[0] != source_element_count:
+                    raise ValueError(
+                        "checkpoint material history does not match its "
+                        "recorded nested source mesh: "
+                        f"saved elements={committed.shape[0]}, "
+                        f"expected={source_element_count}"
+                    )
+                child_parent = np.arange(source_element_count, dtype=np.int64)
+                for _ in range(
+                    mesh_refinement_level - saved_mesh_refinement_level
+                ):
+                    # MeshTri.refined() creates four consecutive child blocks
+                    # in parent-element order. The constitutive state is
+                    # elementwise constant for TriP1 and can be copied exactly
+                    # to each nested child.
+                    child_parent = np.tile(child_parent, 4)
+                if child_parent.size != mesh.nelements:
+                    raise RuntimeError(
+                        "nested mesh parent map does not match the refined "
+                        f"mesh: mapped={child_parent.size}, mesh={mesh.nelements}"
+                    )
+                committed = committed[child_parent].copy()
             holder_z = float(saved["holder_z"])
             checkpoint_holder_position_changed = (
                 holder_position_control_mm is not None
@@ -1842,30 +1916,66 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
 
                         for (tool, old_start, new_start, facet_count,
                              old_count, new_count) in groups:
-                            old_points = contact_sample_coordinates(
-                                saved_contact_method, old_count
-                            )
-                            new_points = contact_sample_coordinates(
-                                contact_method, new_count
-                            )
-                            for facet in range(facet_count):
-                                for old_point, coordinate in enumerate(old_points):
-                                    new_point = int(np.argmin(
-                                        np.abs(new_points - coordinate)
-                                    ))
-                                    old_row = (
-                                        old_start + facet * old_count + old_point
-                                    )
-                                    new_row = (
-                                        new_start + facet * new_count + new_point
-                                    )
-                                    committed_contact_multipliers[new_row] += (
-                                        saved_contact_multipliers[old_row]
+                            if (saved_contact_method == "mortar-p0"
+                                    and contact_method == "mortar-p0"):
+                                # P0 multipliers are subfacet resultants. A
+                                # nearest-centre transfer conserves their sum
+                                # but concentrates a parent resultant on one
+                                # child when refining (and can leave the other
+                                # child with zero support). Project the
+                                # piecewise-constant resultant density by
+                                # interval overlap instead.
+                                old_edges = np.linspace(-1., 1., old_count + 1)
+                                new_edges = np.linspace(-1., 1., new_count + 1)
+                                transfer = np.zeros((new_count, old_count))
+                                for new_point in range(new_count):
+                                    for old_point in range(old_count):
+                                        overlap = max(
+                                            0.,
+                                            min(new_edges[new_point + 1],
+                                                old_edges[old_point + 1])
+                                            - max(new_edges[new_point],
+                                                  old_edges[old_point]),
+                                        )
+                                        transfer[new_point, old_point] = (
+                                            overlap / (old_edges[old_point + 1]
+                                                       - old_edges[old_point])
+                                        )
+                                for facet in range(facet_count):
+                                    old_rows = old_start + facet * old_count + np.arange(old_count)
+                                    new_rows = new_start + facet * new_count + np.arange(new_count)
+                                    committed_contact_multipliers[new_rows] += (
+                                        transfer @ saved_contact_multipliers[old_rows]
                                     )
                                     if old_friction_compatible:
-                                        committed_friction_multipliers[new_row] += (
-                                            saved_friction_multipliers[old_row]
+                                        committed_friction_multipliers[new_rows] += (
+                                            transfer @ saved_friction_multipliers[old_rows]
                                         )
+                            else:
+                                old_points = contact_sample_coordinates(
+                                    saved_contact_method, old_count
+                                )
+                                new_points = contact_sample_coordinates(
+                                    contact_method, new_count
+                                )
+                                for facet in range(facet_count):
+                                    for old_point, coordinate in enumerate(old_points):
+                                        new_point = int(np.argmin(
+                                            np.abs(new_points - coordinate)
+                                        ))
+                                        old_row = (
+                                            old_start + facet * old_count + old_point
+                                        )
+                                        new_row = (
+                                            new_start + facet * new_count + new_point
+                                        )
+                                        committed_contact_multipliers[new_row] += (
+                                            saved_contact_multipliers[old_row]
+                                        )
+                                        if old_friction_compatible:
+                                            committed_friction_multipliers[new_row] += (
+                                                saved_friction_multipliers[old_row]
+                                            )
                         checkpoint_has_contact_multipliers = True
                 else:
                     checkpoint_has_contact_multipliers = False
