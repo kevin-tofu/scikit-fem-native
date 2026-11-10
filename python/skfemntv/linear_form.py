@@ -18,10 +18,8 @@ class NativeLinearForm:
     """Native assembly of ``f·v + G:grad(v)`` on Basis or FacetBasis."""
 
     def __init__(self, basis) -> None:
-        scalar_element = getattr(basis.elem, "elem", None)
-        components = getattr(basis.elem, "_dim", None)
-        if scalar_element is None or components is None:
-            raise ValueError("basis must use ElementVector over a nodal H1 element")
+        scalar_element = getattr(basis.elem, "elem", basis.elem)
+        components = getattr(basis.elem, "_dim", 1)
         nodes = len(scalar_element.doflocs)
         if basis.element_dofs.shape[0] != nodes * components:
             raise ValueError("only nodal vector H1 elements are supported")

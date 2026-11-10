@@ -21,9 +21,17 @@ Both working trees now contain the same Python package sources and tests for:
 The standalone CI workflows also check that an installed package can import
 the native extension and representative public APIs.
 
-Both package `pyproject.toml` files are at version `0.4.0`, set with each
-copy's `scripts/upgrade_version.py`. The optimizer root lockfile was refreshed
-to record its local package dependency at `0.4.0`.
+The standalone `scikit-fem-native` `0.4.3` release is published on PyPI. The
+optimizer copy is also at `0.4.3`, set with its `scripts/upgrade_version.py`;
+the optimizer root lockfile records that local package version, and the kktkit
+optional dependency range accepts `>=0.4.3,<0.5.0`. The merged source includes
+the H1 divergence-form parity fixes from 0.4.3 while retaining local sheet
+forming and contact additions.
+
+Version `0.4.3` adds symbolic `trace(grad(u))` and
+`trace(sym_grad(u))` support, including element-weighted divergence bilinear
+forms used by elasticity. The native parity test compares this case against
+scikit-fem.
 
 ## Differences kept local
 

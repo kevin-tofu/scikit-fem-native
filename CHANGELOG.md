@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.3 - 2026-11-08
+
+- Make `trace(grad(u))` and `trace(sym_grad(u))` reduce to the native
+  divergence form, matching scikit-fem's symbolic H1 helper behavior.
+- Support element or quadrature coefficients on divergence bilinear forms,
+  including the volumetric term in isotropic elasticity.
+- Add a scikit-fem parity test for element-weighted elasticity forms.
+
+## 0.4.1 - 2026-11-08
+
+- Align Hex1/Hex2 element DOFs, `MeshHex.init_tensor` connectivity, and
+  hexahedral face topology with scikit-fem's local ordering.
+- Add higher-order affine triangular and tetrahedral Nedelec H(curl) spaces
+  through N3 to `Basis`/`asm`, including interpolation and orientation handling.
+- Expand H(curl) examples and parity tests; verify Hex local DOFs and oriented
+  face coordinates against scikit-fem.
+
 ## 0.3.8 - 2026-10-22
 
 - Replace the license file with the canonical Apache-2.0 text and align the

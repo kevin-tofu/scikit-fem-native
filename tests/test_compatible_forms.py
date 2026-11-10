@@ -6,9 +6,10 @@ from skfem.helpers import dot as skfem_dot
 from skfem.helpers import div as skfem_div
 from skfem.helpers import grad as skfem_grad
 from skfem.helpers import sym_grad as skfem_sym_grad
+from skfem.helpers import trace as skfem_trace
 
 import skfemntv
-from skfemntv.helpers import ddot, div, dot, grad, sym_grad
+from skfemntv.helpers import ddot, div, dot, grad, sym_grad, trace
 
 
 def test_native_linear_form_preserves_constant_coefficient_shape():
@@ -137,6 +138,35 @@ def test_linear_elasticity_form_matches_skfem():
     np.testing.assert_allclose(
         actual.toarray(),expected.toarray(),rtol=3e-14,atol=3e-14
     )
+
+
+def test_trace_of_symmetric_gradient_matches_element_weighted_elasticity():
+    basis = vector_basis()
+    n_elements = basis.mesh.nelements
+    lame_lambda = np.linspace(1.3, 2.7, n_elements).reshape(-1, 1)
+    lame_mu = np.linspace(0.4, 1.1, n_elements).reshape(-1, 1)
+
+    @skfemntv.BilinearForm
+    def native_form(u, v, w):
+        strain_u = sym_grad(u)
+        strain_v = sym_grad(v)
+        return (
+            lame_lambda * trace(strain_u) * trace(strain_v)
+            + 2.0 * lame_mu * ddot(strain_u, strain_v)
+        )
+
+    @skfem.BilinearForm
+    def reference_form(u, v, w):
+        strain_u = skfem_sym_grad(u)
+        strain_v = skfem_sym_grad(v)
+        return (
+            lame_lambda * skfem_trace(strain_u) * skfem_trace(strain_v)
+            + 2.0 * lame_mu * skfem_ddot(strain_u, strain_v)
+        )
+
+    actual = skfemntv.asm(native_form, basis).toarray()
+    expected = skfem.asm(reference_form, reference_basis(basis)).toarray()
+    np.testing.assert_allclose(actual, expected, rtol=3e-14, atol=3e-14)
 
 
 def test_coordinate_linear_form_uses_quadrature_context():

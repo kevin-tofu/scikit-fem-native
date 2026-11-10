@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "scikit-fem-native"
-version = "0.4.0"
+version = "0.4.3"
 description = "Native finite-element assembly for scikit-fem-style Python workflows"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -66,6 +66,7 @@ sdist.include = [
   "benchmarks/**/*.md",
   "benchmarks/**/*.py",
   "examples/**/*.py",
+  "examples/**/*.png",
   "python/skfemntv/**/*.py",
   "tests/**/*.py",
 ]
