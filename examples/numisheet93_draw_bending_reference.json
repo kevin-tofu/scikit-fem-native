@@ -19,14 +19,34 @@
       "young_modulus_MPa": 206000.0,
       "poisson_ratio": 0.3,
       "yield_model": "Hill48 with isotropic hardening",
+      "initial_yield_stress_MPa": 173.1,
       "r_values_R0_R45_R90": [1.79, 1.51, 2.27],
       "hardening_C_MPa": 565.32,
-      "hardening_exponent_n": 0.235
+      "hardening_exponent_n": 0.235,
+      "hardening_law": "Nadai: sigma = C * (epsilon_0 + epsilon_p)^n, with epsilon_0 = (YS / C)^(1/n)"
     },
     "springback_outputs": ["theta1_deg", "theta2_deg", "wall_radius_mm"],
-    "force_stroke_data": "A same-condition B3 punch-force versus stroke curve has not been identified in the cited accessible sources. Burchitz Fig. 3.7 is a different top-hat mesh study (85 mm stroke, friction coefficient 0.162) and must not be used as B3 data. Flores et al. Fig. 21 is for the following square-sheet deep-drawing example, not the B3 strip test.",
+    "force_stroke_data": "No experimental or digitized B3 punch-force versus stroke samples for the canonical material have been identified. Manach et al. (2002) discuss numerical B3 force-stroke curves for a different FeP06T material, but the accessible source provides no curve samples suitable for error calculation. Burchitz Fig. 3.7 is a different top-hat mesh study (85 mm stroke, friction coefficient 0.162) and Flores et al. Fig. 21 is for a square-sheet deep-drawing example; neither is B3 strip data.",
     "raw_experimental_force_stroke_samples_available_locally": false,
     "same_condition_published_force_stroke_curve_identified": false,
+    "published_thickness_prediction": {
+      "source": "F. Pourboghrat and E. Chu, Prediction of spring-back and side-wall curl in 2-D draw bending, Journal of Materials Processing Technology 50 (1995), Table 3",
+      "source_url": "https://www.researchgate.net/publication/248249559_Prediction_of_spring-back_and_side-wall_curl_in_2-D_draw_bending",
+      "blank_holder_force_total_kN": 19.6,
+      "values_mm": {
+        "punch_region": 0.7722,
+        "die_region": 0.7722,
+        "wall_region": 0.7348
+      },
+      "value_type": "ABAQUS numerical predictions, not measurements",
+      "material_parameters_reported_in_source": {
+        "yield_stress_MPa": 167.0,
+        "hardening_strength_K_MPa": 567.0,
+        "hardening_exponent_n": 0.264,
+        "r_value": 1.77
+      },
+      "comparison_scope": "The article identifies this as the NUMISHEET benchmark channel with 5 mm punch/die radii, 350 mm by 35 mm blank, 70 mm travel, friction coefficient 0.144, and 0.78 mm initial thickness. These ABAQUS thickness predictions are a same-process numerical comparator, but its reported hardening parameters differ from the Burchitz Appendix A.3 values above and must not be labeled an exact same-material validation."
+    },
     "scope_note": "This canonical B3 case is distinct from the Abaqus input-deck variant below, which uses a 2.45 kN holder load. The current plane-strain J2 frictionless run matches neither case fully."
   },
   "reference_run": {
@@ -310,6 +330,7 @@
     "outside_flange_angle_before_unloading": 22.0,
     "outside_flange_angle_after_unloading": 17.1,
     "experimental_mean_after_unloading": 17.1,
+    "experimental_angle_measurement_definition": "Puso Table 2 reports the outside flange angle after springback as the flange deflection from horizontal.",
     "experimental_range_after_unloading": [
       9.0,
       23.0
@@ -321,6 +342,7 @@
       "isotropic_hardening_flange_angle_after_springback_deg": 17.20,
       "kinematic_hardening_flange_angle_after_springback_deg": 17.57,
       "experimental_mean_flange_angle_after_springback_deg": 17.1,
+      "experimental_angle_measurement_definition": "Outside flange angle measured from horizontal after unloading.",
       "comparison_note": "The published isotropic-hardening simulation uses a fitted power-law material curve, not the tabular hardening data in the official Abaqus input deck stored above. Treat 17.1 deg as the experimental target; 17.20 deg is a method-level comparison, not a same-material reference run."
     }
   },
@@ -362,17 +384,101 @@
     },
     "scope_note": "Use as a related experimental/FEA springback validation case, not as the canonical Numisheet B3 dataset or as force-stroke/thickness data. The paper's isotropic material assumption, angle convention, and contact split (frictionless punch, Coulomb friction at die and holder) differ from the Hill48 B3 and 17.1-degree flange-angle targets above."
   },
+  "related_b3_numerical_draw_bending_reference": {
+    "source": "P.-Y. Manach, S. Thuillier, L. F. Menezes, S. Bouvier, Experimental and numerical investigation of springback: Influence of the work hardening model, NUMISHEET 2002",
+    "source_url": "https://www.researchgate.net/publication/275955187_Experimental_and_numerical_investigation_of_springback_Influence_of_the_work_hardening_model",
+    "case": "NUMISHEET'93 B3 2-D draw bending, numerical material-model study",
+    "process_and_mesh_reported": {
+      "blank_dimensions_mm": [350.0, 5.0, 0.78],
+      "blank_holder_force_total_N": 19600.0,
+      "punch_stroke_mm": 70.0,
+      "contact_model": "Coulomb friction; coefficient not stated in the accessible paper text",
+      "element_type": "8-node solid elements",
+      "in_plane_elements_reported": [50, 5],
+      "through_thickness_layers": 2,
+      "integration": "full integration; the authors note a hydrostatic-pressure prediction issue"
+    },
+    "material": {
+      "grade": "FeP06T mild steel",
+      "young_modulus_GPa": 210.0,
+      "poisson_ratio": 0.3,
+      "initial_yield_stress_MPa": 114.9,
+      "yield_criterion": "isotropic",
+      "swift_strength_MPa": 461.0,
+      "swift_exponent": 0.218
+    },
+    "reported_isotropic_hardening_springback_angles_deg": {
+      "theta1_bottom_to_sidewall": 94.2,
+      "theta2_sidewall_to_flange": 88.8
+    },
+    "force_stroke_data": "The paper states that punch force-stroke curves were compared and that hardening-model influence was not significant, but the accessible text provides no digitized samples or numerical table.",
+    "scope_note": "Useful as a related numerical mesh/material-method reference, not as a direct canonical B3 validation target: the FeP06T properties and isotropic yield assumption differ from the canonical mild-steel Hill48/Nadai data, friction coefficient is unspecified in the accessible text, and the reported angle definitions must be mapped before comparison."
+  },
+  "related_low_holder_force_springback_reference": {
+    "source": "Z. Lin, G. Liu, W. Xu, Y. Bao, Study on the Effects of Numerical Parameters on the Precision of Springback Prediction, NUMISHEET 2000, Session 13, pp. 13-25–13-33",
+    "source_url": "https://www.dynalook.com/conferences/international-conf-2000/session13-3.pdf",
+    "case": "NUMISHEET'93 2-D draw bending, low blank-holder force, aluminum-alloy experiment",
+    "process": {
+      "blank_length_mm": 350.0,
+      "blank_width_mm": 35.0,
+      "thickness_mm": 0.81,
+      "punch_travel_mm": 70.0,
+      "blank_holder_force_total_N": 2450.0,
+      "friction_coefficient": 0.162
+    },
+    "material_parameters": {
+      "young_modulus_MPa": 71000.0,
+      "poisson_ratio": 0.33,
+      "r_value": 0.64,
+      "flow_curve": "sigma = 579.79*(0.01658 + epsilon_p)^0.3593 MPa"
+    },
+    "springback_measurement_definitions": {
+      "theta1": "angle between Ox and segment AB",
+      "theta2": "angle between segments AB and EF",
+      "delta_theta": "theta1 - theta2",
+      "rho": "radius of curvature of the side wall"
+    },
+    "experimental_mean": {
+      "theta1_deg": 112.4,
+      "theta2_deg": 72.8,
+      "delta_theta_deg": 39.0,
+      "rho_mm": 106.0
+    },
+    "experimental_extrema_reported": {
+      "theta1_deg": [101.5, 116.0],
+      "theta2_deg": [68.0, 77.5],
+      "delta_theta_deg": [24.0, 47.7],
+      "rho_mm": [81.0, 217.0]
+    },
+    "reported_fea_mesh_comparison": {
+      "blank_element_size_2x2_mm": {
+        "theta1_deg": 107.2,
+        "theta2_deg": 75.0,
+        "delta_theta_deg": 32.2,
+        "rho_mm": 131.4
+      },
+      "blank_element_size_1_5x1_5_mm": {
+        "theta1_deg": 108.6,
+        "theta2_deg": 71.8,
+        "delta_theta_deg": 36.8,
+        "rho_mm": 124.1
+      }
+    },
+    "scope_note": "This provides a related springback shape/angle benchmark at the same nominal total holder force and stroke, but it uses aluminum, 0.81 mm thickness, and friction 0.162. It is not a direct comparison for the current frictionless mild-steel J2 branch or canonical B3. The paper reports no punch force-stroke curve or thickness profile; its springback angle definitions also require matching model measurement points before numerical comparison."
+  },
   "implementation_status": {
     "available_in_source": [
       "2D plane-strain finite-strain J2 and Hill48 material updates with consistent tangents",
       "transactional plastic history updates for Newton trial states",
       "rigid punch, die, and blank-holder contact with frictionless and Coulomb options",
-      "forming, tool removal, springback, and optional reference-curve comparison outputs"
+      "forming, tool removal, springback, and optional reference-curve comparison outputs",
+      "Puso-specific process/material and angle-convention checks before comparing the 17.1-degree experimental springback target"
     ],
     "benchmark_gaps": [
       "a converged and documented full 70 mm path for the exact reference conditions",
       "the reference shell formulation with five through-thickness integration points, or a demonstrated solid-to-shell equivalence",
       "an independent punch reaction-force versus stroke dataset for same-condition error measurement",
+      "a same-material thickness comparison; Pourboghrat and Chu report ABAQUS values for the same B3 process, but their listed yield/hardening parameters differ from Burchitz Appendix A.3",
       "a springback comparison using the exact canonical Hill48 and tabulated material law: Puso's 17.20-degree result uses a fitted power law; a related 2006 mild-steel experiment at 19.6 kN is now recorded separately, but exact constitutive equivalence has not been established"
     ],
     "scope_note": "Source availability does not establish numerical validation. The current finite-strain solid contact driver remains experimental until the full path and reference comparisons are reproduced."
@@ -380,6 +486,15 @@
   "puso_isotropic_hardening": {
     "source": "M. Puso, A Users Manual for the Nonlinear Kinematic Hardening Model for Cyclic Loading, UCRL-MA-140587, 2000, Table 1",
     "source_url": "https://digital.library.unt.edu/ark:/67531/metadc1413779/m2/1/high_res_d/15007612.pdf",
+    "process": {
+      "punch_stroke_mm": 70.0,
+      "blank_holder_force_total_N": 2450.0,
+      "friction_coefficient": 0.144
+    },
+    "elastic_material": {
+      "young_modulus_MPa": 206000.0,
+      "poisson_ratio": 0.3
+    },
     "initial_yield_stress_MPa": 100.462,
     "saturation_terms": [
       {"b": 3.3333333, "Q_MPa": 272.936},

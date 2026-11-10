@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Transfer a forming checkpoint to a nested, uniformly refined mesh.
+"""Transfer a forming checkpoint to a refined or graded contact mesh.
 
-This preserves each parent's piecewise-constant quadrature history in all of
-its children and interpolates the continuous P1 displacement field. It is
-intended for same-model continuation studies, not for comparing independent
-mesh-converged solutions.
+Nested uniform refinement preserves each parent's piecewise-constant
+quadrature history in its children. A change in the graded x partition maps
+history from the source triangle containing each target centroid. Both modes
+interpolate the continuous P1 displacement field and remap contact reactions.
+This is intended for same-model continuation studies, not for comparing
+independent mesh-converged solutions.
 """
 
 from __future__ import annotations
@@ -23,32 +25,61 @@ import skfemntv
 def _base_mesh(
     nx: int, nz: int, half_length: float, mesh_mode: str,
 ) -> skfemntv.MeshTri:
-    if mesh_mode == "refine-holder-return":
-        bounds = np.array([
-            0., 18., 25., 29.5, 30.4, 32.2, 33.5, 36., 40., 48.,
-            60., 69.5, 80., 91., half_length,
-        ])
-        weights = np.array([2, 1, 0, 0, 1, 0, 0, 1, 2, 2, 1, 1, 1, 9], dtype=float)
-        weights /= float(np.sum(weights))
-    elif mesh_mode == "refine-tool-contacts":
-        bounds = np.array([
-            0., 18., 25., 29.5, 30.4, 32.2, 33.5, 36., 40., 48., 91.,
-            half_length,
-        ])
-        weights = np.array([
-            0.12, 0.16, 0.08, 0.07, 0.12, 0.07,
-            0.06, 0.12, 0.09, 0.07, 0.04,
-        ])
+    if mesh_mode == "default":
+        n_punch_die = max(1, int(round(0.45 * nx)))
+        n_holder = max(1, int(round(0.35 * nx)))
+        n_flange = nx - n_punch_die - n_holder
+        if n_flange < 1:
+            n_flange = 1
+            n_punch_die = max(1, int(round(0.4 * (nx - 1))))
+            n_holder = nx - n_punch_die - n_flange
+        x_nodes = np.r_[
+            np.linspace(0., 36., n_punch_die + 1),
+            np.linspace(36., 91., n_holder + 1)[1:],
+            np.linspace(91., half_length, n_flange + 1)[1:],
+        ]
     else:
-        raise ValueError(f"unsupported mesh mode: {mesh_mode}")
-    exact = (nx - len(weights)) * weights
-    counts = 1 + np.floor(exact).astype(int)
-    remainder = nx - int(np.sum(counts))
-    counts[np.argsort(-(exact - np.floor(exact)))[:remainder]] += 1
-    x_nodes = np.concatenate([
-        np.linspace(left, right, int(cells) + 1)[:-1]
-        for left, right, cells in zip(bounds[:-1], bounds[1:], counts)
-    ] + [bounds[-1:]])
+        if mesh_mode in {
+            "refine-holder-return", "refine-holder-return-punch-arc",
+        }:
+            bounds = np.array([
+                0., 18., 25., 29.5, 30.4, 32.2, 33.5, 36., 40., 48.,
+                60., 69.5, 80., 91., half_length,
+            ])
+            weights = np.array([
+                2, 1, 0, 0, 1, 0, 0, 1, 2, 2, 1, 1, 1, 9,
+            ], dtype=float)
+            weights /= float(np.sum(weights))
+        elif mesh_mode == "refine-tool-contacts":
+            bounds = np.array([
+                0., 18., 25., 29.5, 30.4, 32.2, 33.5, 36., 40., 48., 91.,
+                half_length,
+            ])
+            weights = np.array([
+                0.12, 0.16, 0.08, 0.07, 0.12, 0.07,
+                0.06, 0.12, 0.09, 0.07, 0.04,
+            ])
+        else:
+            raise ValueError(f"unsupported mesh mode: {mesh_mode}")
+        exact = (nx - len(weights)) * weights
+        counts = 1 + np.floor(exact).astype(int)
+        remainder = nx - int(np.sum(counts))
+        counts[np.argsort(-(exact - np.floor(exact)))[:remainder]] += 1
+        x_nodes = np.concatenate([
+            np.linspace(left, right, int(cells) + 1)[:-1]
+            for left, right, cells in zip(bounds[:-1], bounds[1:], counts)
+        ] + [bounds[-1:]])
+        if mesh_mode == "refine-holder-return-punch-arc":
+            left = x_nodes[:-1]
+            right = x_nodes[1:]
+            forming_contact_edges = (
+                (left >= 18. - 1e-12) & (right <= 36. + 1e-12)
+            )
+            x_nodes = np.sort(np.r_[
+                x_nodes,
+                0.5 * (left[forming_contact_edges]
+                       + right[forming_contact_edges]),
+            ])
     material_file = Path(__file__).with_name("numisheet93_draw_bending_reference.json")
     reference = json.loads(material_file.read_text(encoding="utf-8"))
     thickness = float(reference["blank"]["thickness"])
@@ -128,20 +159,28 @@ def transfer_checkpoint(
         arrays = {name: np.asarray(archive[name]).copy() for name in archive.files}
     metadata = json.loads(str(arrays["metadata_json"].item()))
     old_level = int(metadata.get("mesh_refinement_level", 0))
-    source_mode = (
-        "refine-holder-return" if metadata.get("refine_holder_return", False)
-        else "refine-tool-contacts" if metadata.get("refine_tool_contacts", False)
-        else None
-    )
-    if source_mode is None:
-        raise ValueError("checkpoint must use a supported graded contact mesh")
+    if (metadata.get("refine_holder_return", False)
+            and metadata.get("refine_punch_arc", False)):
+        source_mode = "refine-holder-return-punch-arc"
+    elif metadata.get("refine_holder_return", False):
+        source_mode = "refine-holder-return"
+    elif metadata.get("refine_tool_contacts", False):
+        source_mode = "refine-tool-contacts"
+    else:
+        source_mode = "default"
     target_mode = target_mesh_mode or source_mode
-    if target_mode not in {"refine-holder-return", "refine-tool-contacts"}:
+    if target_mode not in {
+        "default", "refine-holder-return", "refine-tool-contacts",
+        "refine-holder-return-punch-arc",
+    }:
         raise ValueError(f"unsupported target mesh mode: {target_mode}")
     if level < old_level or (level == old_level and target_mode == source_mode):
         raise ValueError("target mesh must refine or change the source mesh mode")
-    if metadata.get("refine_punch_arc", False):
-        raise ValueError("checkpoint uses an unsupported overlapping mesh mode")
+    if (metadata.get("refine_punch_arc", False)
+            and not metadata.get("refine_holder_return", False)):
+        raise ValueError(
+            "transferring a standalone punch-arc mesh is not supported"
+        )
     if int(metadata.get("nx", 0)) < 14 or int(metadata.get("nz", 0)) < 2:
         raise ValueError("checkpoint mesh metadata is invalid")
     if int(arrays.get("springback_active", np.asarray(0)).item()):
@@ -168,21 +207,27 @@ def transfer_checkpoint(
         "holder_contact_collocation_points_per_facet", old_contact_points
     ))
     mortar_subfacets = int(metadata.get("mortar_subfacets_per_facet", 1))
-    if metadata.get("contact_method") == "mortar-p0":
-        old_contact_points = mortar_subfacets
-        old_holder_points = mortar_subfacets
     new_contact_points = int(
         contact_collocation_points_per_facet or old_contact_points
     )
     new_holder_points = int(
         holder_contact_collocation_points_per_facet or old_holder_points
     )
-    if metadata.get("contact_method") == "mortar-p0":
-        new_contact_points = mortar_subfacets
-        new_holder_points = mortar_subfacets
     if min(old_contact_points, old_holder_points,
            new_contact_points, new_holder_points) < 1:
         raise ValueError("contact collocation counts must be positive")
+    # Mortar multiplier rows are per subfacet, while collocation counts set
+    # the quadrature order used to evaluate each subfacet gap. Keep these
+    # independent: conflating them changes the model on checkpoint transfer.
+    mortar_contact = metadata.get("contact_method") == "mortar-p0"
+    old_contact_rows_per_facet = (
+        mortar_subfacets if mortar_contact else old_contact_points
+    )
+    old_holder_rows_per_facet = (
+        mortar_subfacets if mortar_contact else old_holder_points
+    )
+    new_contact_rows_per_facet = old_contact_rows_per_facet
+    new_holder_rows_per_facet = old_holder_rows_per_facet
     centroid_rule = (np.array([[1. / 3.], [1. / 3.]]), np.array([0.5]))
     element = skfemntv.ElementVector(skfemntv.ElementTriP1(), dim=2)
     old_basis = skfemntv.Basis(
@@ -251,14 +296,14 @@ def transfer_checkpoint(
     arrays.pop("previous_stroke", None)
     old_thickness = float(reference["blank"]["thickness"])
     contact_regions = (
-        (0.5 * old_thickness, 0., 27., old_contact_points),
-        (-0.5 * old_thickness, 25., half_length, old_contact_points),
-        (0.5 * old_thickness, 30., 88., old_holder_points),
+        (0.5 * old_thickness, 0., 27., old_contact_rows_per_facet),
+        (-0.5 * old_thickness, 25., half_length, old_contact_rows_per_facet),
+        (0.5 * old_thickness, 30., 88., old_holder_rows_per_facet),
     )
     target_contact_regions = (
-        (0.5 * old_thickness, 0., 27., new_contact_points),
-        (-0.5 * old_thickness, 25., half_length, new_contact_points),
-        (0.5 * old_thickness, 30., 88., new_holder_points),
+        (0.5 * old_thickness, 0., 27., new_contact_rows_per_facet),
+        (-0.5 * old_thickness, 25., half_length, new_contact_rows_per_facet),
+        (0.5 * old_thickness, 30., 88., new_holder_rows_per_facet),
     )
     old_samples = [
         _boundary_samples(old_mesh, old_displacement, z, x0, x1, count)
@@ -334,7 +379,12 @@ def transfer_checkpoint(
     metadata["contact_row_count"] = new_equality_count + new_contact_count
     metadata["contact_multiplier_mesh_refinement_level"] = level
     metadata["mesh_refinement_level"] = level
-    metadata["refine_holder_return"] = target_mode == "refine-holder-return"
+    metadata["refine_holder_return"] = target_mode in {
+        "refine-holder-return", "refine-holder-return-punch-arc",
+    }
+    metadata["refine_punch_arc"] = (
+        target_mode == "refine-holder-return-punch-arc"
+    )
     metadata["refine_tool_contacts"] = target_mode == "refine-tool-contacts"
     metadata["mesh_signature"] = _signature(new_mesh)
     arrays["metadata_json"] = np.asarray(json.dumps(metadata, sort_keys=True))
@@ -371,7 +421,10 @@ def main() -> None:
     parser.add_argument("--holder-contact-collocation-points-per-facet", type=int)
     parser.add_argument(
         "--target-mesh-mode",
-        choices=("refine-holder-return", "refine-tool-contacts"),
+        choices=(
+            "default", "refine-holder-return", "refine-tool-contacts",
+            "refine-holder-return-punch-arc",
+        ),
         help="change the graded x partition while projecting displacement/history",
     )
     args = parser.parse_args()
