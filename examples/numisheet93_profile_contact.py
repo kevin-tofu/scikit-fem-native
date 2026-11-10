@@ -442,12 +442,18 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         "SCIKIT_FVM_FORMING_MORTAR_SUBFACETS_PER_FACET", "1"
     ))
     mortar_gap_reduction = os.environ.get(
-        "SCIKIT_FVM_FORMING_MORTAR_GAP_REDUCTION", "softmin"
+        # The pointwise feasibility guard checks the least gap sample on each
+        # mortar facet. Use the exact minimum by default; the conservative
+        # softmin option is available when smooth sample transitions are more
+        # valuable than the exact minimum's nonsmooth derivative.
+        "SCIKIT_FVM_FORMING_MORTAR_GAP_REDUCTION", "minimum"
     ).strip().lower()
-    if mortar_gap_reduction not in {"average", "minimum", "softmin"}:
+    if mortar_gap_reduction not in {
+        "average", "minimum", "softmin", "conservative-softmin"
+    }:
         raise ValueError(
             "SCIKIT_FVM_FORMING_MORTAR_GAP_REDUCTION must be average, "
-            "minimum, or softmin"
+            "minimum, softmin, or conservative-softmin"
         )
     mortar_gap_smoothing_temperature_mm = float(os.environ.get(
         "SCIKIT_FVM_FORMING_MORTAR_GAP_TEMPERATURE_MM", "1e-7"
@@ -1259,12 +1265,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     def equilibrium_tolerance_for(multipliers, constraints):
         """Combine an absolute floor with a load-scaled residual tolerance.
 
-        The infinity norm is in N/mm. Scale the relative component with the
-        largest current or last-accepted punch reaction and the applied
-        blank-holder force per modeled width. Holding the accepted reaction
-        scale through one Newton solve avoids an abrupt tolerance collapse
-        when an iterate crosses a punch-detachment branch; the scale updates
-        after that state is committed.
+        The tolerance applies to the free-DOF RMS residual in N/mm; convergence
+        also caps the infinity residual at twice that value. Scale the
+        relative component with the largest current or last-accepted punch
+        reaction and the applied blank-holder force per modeled width. Holding
+        the accepted reaction scale through one Newton solve avoids an abrupt
+        tolerance collapse when an iterate crosses a punch-detachment branch;
+        the scale updates after that state is committed.
         """
         punch_vertical_jacobian = np.asarray(
             constraints[punch_rows][:, dof_z].sum(axis=1)
@@ -1286,6 +1293,24 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             forming_equilibrium_tolerance,
             forming_equilibrium_relative_tolerance * load_scale_per_width,
         )
+
+    def equilibrium_residual_norms(stationarity):
+        """Return free-DOF infinity and RMS force residuals in N/mm."""
+        residual = np.asarray(stationarity, dtype=float).reshape(-1)
+        free_dofs = np.ones(residual.size, dtype=bool)
+        free_dofs[symmetry_dofs] = False
+        free_residual = residual[free_dofs]
+        if free_residual.size == 0:
+            return 0., 0.
+        return (
+            float(np.linalg.norm(free_residual, ord=np.inf)),
+            float(np.linalg.norm(free_residual) / np.sqrt(free_residual.size)),
+        )
+
+    def equilibrium_is_converged(stationarity, tolerance):
+        """Require global RMS force balance and bound the worst free DOF."""
+        residual_inf, residual_rms = equilibrium_residual_norms(stationarity)
+        return residual_rms <= tolerance and residual_inf <= 2. * tolerance
 
     def retained_contact_gap_limits():
         """Return the temporary gap neighborhood for retained reactions.
@@ -1452,21 +1477,49 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 contact_multiplier_mesh_level != mesh_refinement_level
             )
             contact_multipliers_need_rebuild = contact_mesh_level_changed
-            contact_layout_signature_changed = (
-                saved_metadata.get("contact_layout_signature")
-                != checkpoint_metadata["contact_layout_signature"]
-            )
-            contact_multipliers_need_rebuild |= (
-                contact_layout_signature_changed
-            )
             saved_contact_method = saved_metadata.get(
                 "contact_method", "point-collocation"
             )
-            contact_method_changed = saved_contact_method != contact_method
-            contact_multipliers_need_rebuild |= contact_method_changed
             saved_contact_collocation_count = int(saved_metadata.get(
                 "contact_collocation_points_per_facet", 2
             ))
+            saved_contact_layout_signature = saved_metadata.get(
+                "contact_layout_signature"
+            )
+            if saved_contact_layout_signature is None:
+                # Legacy checkpoints predate the contact-layout hash.  When
+                # the mesh, contact method, sampling counts, and KKT row count
+                # all match, their facet-local multipliers still address the
+                # current rows.  Retaining them avoids an unnecessary
+                # zero-reaction re-equilibration at a committed plastic state.
+                legacy_contact_layout_matches = (
+                    saved_metadata.get("mesh_signature")
+                    == checkpoint_metadata["mesh_signature"]
+                    and saved_contact_method == contact_method
+                    and saved_contact_collocation_count
+                    == contact_collocation_points_per_facet
+                    and int(saved_metadata.get(
+                        "holder_contact_collocation_points_per_facet",
+                        saved_metadata.get(
+                            "contact_collocation_points_per_facet", 2
+                        ),
+                    )) == holder_contact_collocation_points_per_facet
+                    and int(saved_metadata.get("contact_row_count", -1))
+                    == row_count
+                )
+                contact_layout_signature_changed = (
+                    not legacy_contact_layout_matches
+                )
+            else:
+                contact_layout_signature_changed = (
+                    saved_contact_layout_signature
+                    != checkpoint_metadata["contact_layout_signature"]
+                )
+            contact_multipliers_need_rebuild |= (
+                contact_layout_signature_changed
+            )
+            contact_method_changed = saved_contact_method != contact_method
+            contact_multipliers_need_rebuild |= contact_method_changed
             saved_mortar_subfacets = int(saved_metadata.get(
                 "mortar_subfacets_per_facet", 1
             ))
@@ -2345,21 +2398,22 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             # tensile or ill-conditioned candidate.
             supportable = holder_sensitivity > 0.1
             current_gaps = -rhs
-            # A support transfer preserves the holder force path, so its new
-            # row must represent physical contact at the current iterate.
-            # The configurable search radius is a ceiling for that local
-            # search, not permission to pin an open point several sheet
-            # thicknesses away: doing so creates an artificial holder force
-            # path and can drive the KKT multipliers to enormous values.
+            # A support transfer preserves the holder force path.  Permit a
+            # small open gap for this temporary Newton seed so the reaction
+            # can move to an adjacent mortar subfacet as the old row opens.
+            # The configurable search radius is still a ceiling, and line
+            # search plus increment acceptance enforce strict physical gap
+            # and complementarity tolerances before any state is committed.
             support_gap_limit = min(
                 holder_support_search_radius_mm,
-                forming_contact_gap_tolerance_mm,
+                max(forming_contact_gap_tolerance_mm, 0.05 * thickness),
             )
             candidates = holder_rows[
                 supportable
                 & (holder_rows != old_row)
                 & ~np.isin(holder_rows, tuple(holder_support_visited_rows))
                 & (current_gaps[holder_rows] <= support_gap_limit)
+                & (current_gaps[holder_rows] >= -support_gap_limit)
             ]
             # Keep distinct collocation points on the same FE edge eligible:
             # along a curved tool they can have materially different normals
@@ -2526,33 +2580,32 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             ).reshape(-1)
             supportable = die_vertical_sensitivity > 0.25
             # A replacement row must already be geometrically close to the
-            # die.  A broad thickness-scaled neighborhood can promote a
-            # compressive multiplier on an open row; the next active-set
-            # iteration then releases that seed and transfers it back again.
-            # Keep support migration inside the same gap scale used by the
-            # unilateral feasibility check.
+            # die.  Limit this temporary Newton seed to five percent of sheet
+            # thickness; final unilateral feasibility uses the stricter gap
+            # tolerance below.
             gap_limit = min(
                 die_support_gap_limit_mm,
-                forming_contact_gap_tolerance_mm,
+                max(forming_contact_gap_tolerance_mm, 0.05 * thickness),
             )
             candidates = die_rows[
                 supportable
                 & (die_rows != old_row)
                 & ~np.isin(die_rows, tuple(die_support_visited_rows))
                 & (current_gaps[die_rows] <= gap_limit)
+                & (current_gaps[die_rows] >= -gap_limit)
             ]
             active_compressive = candidates[
                 contact_result.active_rows[candidates]
                 & (contact_result.multipliers[candidates] < -1e-2)
             ]
             # A die seed only preserves a reaction path while another nearby
-            # row is already carrying a compressive contact force.  Promoting
-            # an open row merely because its geometric gap is the smallest
-            # among many candidates can pin the die to a distant point.  The
-            # resulting multiplier is unbounded for a nonsymmetric tangent
-            # and repeated transfers walk across the entire die profile.
-            # With no active compressive replacement, release this seed and
-            # let the unilateral solve choose contact from the actual gaps.
+            # row is already carrying a compressive contact force.  Candidate
+            # rows may be slightly open because this transfer is a Newton
+            # seed; final line-search and increment checks still enforce the
+            # strict physical contact tolerances.  Bound the temporary search
+            # to five percent of sheet thickness to avoid jumping across the
+            # tool profile.  With no active compressive replacement, release
+            # this seed and let the unilateral solve choose contact.
             replacement = (
                 int(active_compressive[
                     np.argmin(current_gaps[active_compressive])
@@ -3319,7 +3372,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         small_alpha_iterations = 0
         stagnant_iterations = 0
         slow_progress_iterations = 0
-        force_stagnation_iterations = 0
+        force_stagnation_window_start_equilibrium = None
+        force_stagnation_window_start_iteration = 0
+        force_stagnation_window_reduction = None
         regularization_retry_count = 0
         regularization_slow_progress_iterations = 0
         regularization_backoff_hold_iterations = 0
@@ -4274,12 +4329,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     protected_seed_rows.append(int(required_die_support_row))
                 current_stationarity = gradient + constraints.T @ multipliers
                 current_stationarity[symmetry_dofs] = 0.
-                current_equilibrium = float(np.linalg.norm(
-                    current_stationarity, ord=np.inf
-                ))
-                current_equilibrium_rms = float(
-                    np.linalg.norm(current_stationarity)
-                    / np.sqrt(current_stationarity.size)
+                (current_equilibrium, current_equilibrium_rms) = (
+                    equilibrium_residual_norms(current_stationarity)
                 )
                 current_equilibrium_tolerance = equilibrium_tolerance_for(
                     multipliers, constraints
@@ -4452,7 +4503,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 # constitutive trial when it meets the same convergence
                 # criteria as a line-search candidate.
                 current_is_converged = (
-                    current_equilibrium <= current_equilibrium_tolerance
+                    equilibrium_is_converged(
+                        current_stationarity, current_equilibrium_tolerance
+                    )
                     # Do not let the early-convergence path accumulate the
                     # full allowed penetration while the prescribed tool
                     # advances.  That can accept many increments with an
@@ -4632,9 +4685,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             f"largest_constraint_rows={changed_row_info}",
                             flush=True,
                         )
-                    equilibrium = float(np.linalg.norm(stationarity, ord=np.inf))
-                    equilibrium_rms = float(
-                        np.linalg.norm(stationarity) / np.sqrt(stationarity.size)
+                    equilibrium, equilibrium_rms = equilibrium_residual_norms(
+                        stationarity
                     )
                     penetration = max(
                         -candidate_minimum_gap, 0.
@@ -4707,8 +4759,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             )),
                         }
                     candidate_is_converged = (
-                        equilibrium <= equilibrium_tolerance_for(
-                            candidate_multipliers, candidate_constraints
+                        equilibrium_is_converged(
+                            stationarity,
+                            equilibrium_tolerance_for(
+                                candidate_multipliers, candidate_constraints
+                            ),
                         )
                         and candidate_minimum_gap
                         >= -forming_contact_gap_tolerance_mm
@@ -4721,12 +4776,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         ) <= 1e-2
                         and candidate_complementarity <= forming_complementarity_tolerance
                     )
-                    # Once contact feasibility is already within its own
-                    # tolerances, let Newton reduce force equilibrium even
-                    # when the combined merit rises slightly. Near a holder
-                    # support transition, accept a Pareto step when it clearly
-                    # reduces complementarity without exceeding the force
-                    # residual allowance below.
+                    # Once contact feasibility is within its tolerances, let
+                    # Newton reduce force equilibrium. Near a holder support
+                    # transition, a complementarity improvement can justify a
+                    # force-neutral step only when the combined physical merit
+                    # also decreases. Otherwise contact can improve by a tiny
+                    # amount while force equilibrium drifts upward at a fixed
+                    # stroke.
                     candidate_contact_feasible = (
                         candidate_minimum_gap
                         >= -forming_contact_gap_tolerance_mm
@@ -4757,8 +4813,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         equilibrium
                         < current_equilibrium
                         - max(
-                            1e-8,
-                            1e-4 * max(
+                            1e-12,
+                            1e-8 * max(
                                 current_equilibrium,
                                 current_equilibrium_tolerance,
                             ),
@@ -4807,16 +4863,40 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             and candidate_complementarity
                             < current_complementarity
                             - max(1e-10, 1e-3 * forming_complementarity_tolerance)
+                            and candidate_merit
+                            <= current_merit - max(
+                                1e-10, 1e-6 * max(current_merit, 1.)
+                            )
+                        )
+                        # Let the RMS norm reduce the distributed residual
+                        # after the worst DOF reaches a plateau, while keeping
+                        # that worst residual within five percent of the force
+                        # tolerance.  A loose relative guard can ratchet the
+                        # infinity norm upward over many iterations; this
+                        # absolute guard bounds any such exchange.
+                        rms_equilibrium_filter_accept = (
+                            equilibrium_rms_progress
+                            and equilibrium
+                            <= current_equilibrium
+                            + max(
+                                1e-8,
+                                0.05 * min(
+                                    current_equilibrium_tolerance,
+                                    forming_equilibrium_tolerance,
+                                ),
+                            )
                         )
                         equilibrium_filter_accept = (
-                            candidate_contact_near_feasible
-                            and contact_violation_nonworsening
+                            candidate_contact_feasible
                             and (
+                                # The infinity norm is the force-balance
+                                # acceptance metric. If it decreases and the
+                                # candidate remains inside every contact
+                                # tolerance, do not reject that step solely
+                                # because a sub-tolerance complementarity
+                                # product rises by a small amount.
                                 equilibrium_progress
-                                or (
-                                    equilibrium_rms_progress
-                                    and equilibrium_rms_guard
-                                )
+                                or rms_equilibrium_filter_accept
                                 or contact_feasible_merit_accept
                             )
                         )
@@ -4989,17 +5069,23 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     # precision at a support transition.
                     force_descent_required = (
                         current_contact_feasible
-                        and current_equilibrium
-                        > current_equilibrium_tolerance
+                        and not equilibrium_is_converged(
+                            current_stationarity,
+                            current_equilibrium_tolerance,
+                        )
                     )
                     equilibrium_guard = (
                         current_contact_feasible
                         and not force_descent_required
                         and (
-                            equilibrium <= current_equilibrium_tolerance
+                            equilibrium_is_converged(
+                                stationarity, current_equilibrium_tolerance
+                            )
                             if (current_contact_feasible
-                                and current_equilibrium
-                                <= current_equilibrium_tolerance)
+                                and equilibrium_is_converged(
+                                    current_stationarity,
+                                    current_equilibrium_tolerance,
+                                ))
                             else equilibrium <= current_equilibrium
                             + 5. * current_equilibrium_tolerance
                         )
@@ -5161,40 +5247,64 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                             f"{relative_merit_decrease:.3e}; "
                             "cut back the stroke increment"
                         )
-                    # Once the unilateral constraints are feasible, the only
-                    # remaining Newton objective is force equilibrium.  A
-                    # merit line search can otherwise alternate contact rows
-                    # and accept finite but immaterial steps indefinitely
-                    # while the force residual stays flat. Reject this trial
-                    # so continuation retries from the committed state with
-                    # a smaller stroke; history is still transactional here.
-                    if (current_contact_feasible
-                            and current_equilibrium
-                            > current_equilibrium_tolerance):
-                        relative_equilibrium_reduction = (
-                            current_equilibrium - equilibrium
-                        ) / max(
-                            current_equilibrium,
-                            current_equilibrium_tolerance,
-                        )
-                        if relative_equilibrium_reduction < 1e-4:
-                            force_stagnation_iterations += 1
-                        else:
-                            force_stagnation_iterations = 0
-                        if (force_stagnation_iterations
-                                >= force_stagnation_iteration_limit):
-                            raise RuntimeError(
-                                "contact Newton made no meaningful force-balance "
-                                f"progress for {force_stagnation_iterations} "
-                                f"iterations at stroke={stroke:.8g} mm: "
-                                f"equilibrium={equilibrium:.3e}, "
-                                f"previous={current_equilibrium:.3e}; "
-                                "cut back the stroke increment"
-                            )
                 else:
                     stagnant_iterations = 0
                     slow_progress_iterations = 0
-                    force_stagnation_iterations = 0
+                # Check force stagnation for every unsuccessful Newton
+                # iteration, including a line search that found no acceptable
+                # candidate. In that case ``equilibrium`` remains the current
+                # residual, so the window correctly records zero progress.
+                # Keeping this outside the candidate-evaluation branch avoids
+                # resetting the counter on exactly the active-set folds where
+                # no line-search candidate can be retained.
+                if (not candidate_is_converged
+                        and current_contact_violation <= 5.0
+                        and not equilibrium_is_converged(
+                            current_stationarity,
+                            current_equilibrium_tolerance,
+                        )):
+                    if force_stagnation_window_start_equilibrium is None:
+                        force_stagnation_window_start_equilibrium = (
+                            current_equilibrium
+                        )
+                        force_stagnation_window_start_iteration = iteration - 1
+                    if (iteration - force_stagnation_window_start_iteration
+                            >= force_stagnation_iteration_limit):
+                        force_window_equilibrium = (
+                            equilibrium if candidate_eval is not None
+                            else current_equilibrium
+                        )
+                        force_stagnation_window_reduction = (
+                            force_stagnation_window_start_equilibrium
+                            - force_window_equilibrium
+                        ) / max(
+                            force_stagnation_window_start_equilibrium,
+                            current_equilibrium_tolerance,
+                        )
+                        # Measure progress over a complete Newton window.
+                        # Per-iteration reductions near an active-set fold
+                        # fluctuate around the threshold and repeatedly reset
+                        # a consecutive-stagnation counter. If no candidate is
+                        # retained, count that as zero force progress.
+                        if force_stagnation_window_reduction < 1e-3:
+                            raise RuntimeError(
+                                "contact Newton reduced force imbalance by "
+                                f"only {force_stagnation_window_reduction:.3e} "
+                                f"over {force_stagnation_iteration_limit} "
+                                f"iterations at stroke={stroke:.8g} mm: "
+                                f"equilibrium={force_window_equilibrium:.3e}, "
+                                f"window_start="
+                                f"{force_stagnation_window_start_equilibrium:.3e}; "
+                                "cut back the stroke increment"
+                            )
+                        force_stagnation_window_start_equilibrium = (
+                            force_window_equilibrium
+                        )
+                        force_stagnation_window_start_iteration = iteration
+                else:
+                    force_stagnation_window_start_equilibrium = None
+                    force_stagnation_window_start_iteration = iteration
+                    force_stagnation_window_reduction = None
                 if (candidate_eval is not None and not candidate_is_converged
                         and newton_step_length <= 1.25e-1):
                     small_alpha_iterations += 1
@@ -5309,7 +5419,22 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         f"next_floor={regularization_floor[0]:.1e} "
                         f"accepted_alpha={newton_step_length:.3e} "
                         f"equilibrium_reduction_fraction="
-                        f"{equilibrium_reduction_fraction:.3e}",
+                        f"{equilibrium_reduction_fraction:.3e} "
+                        f"equilibrium_inf={current_equilibrium:.3e}"
+                        f"->{equilibrium:.3e} "
+                        f"equilibrium_rms={current_equilibrium_rms:.3e}"
+                        f"->{equilibrium_rms:.3e} "
+                        f"contact_violation={current_contact_violation:.3e}"
+                        f"->{candidate_contact_violation:.3e} "
+                        f"force_stagnation_window_reduction="
+                        f"{force_stagnation_window_reduction} "
+                        f"contact_feasible={current_contact_feasible} "
+                        f"candidate_converged={candidate_is_converged} "
+                        f"equilibrium_tolerance={current_equilibrium_tolerance:.3e} "
+                        f"minimum_gap={current_minimum_gap:.3e}"
+                        f"->{candidate_minimum_gap:.3e} "
+                        f"complementarity={current_complementarity:.3e}"
+                        f"->{candidate_complementarity:.3e}",
                         flush=True,
                     )
                 if finite_strain_j2:
@@ -5328,8 +5453,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 # Once line search has moved the Newton iterate, a later
                 # regularization retry starts a new local convergence phase.
                 regularization_retry_count = 0
-                if (equilibrium <= equilibrium_tolerance_for(
-                        multipliers, candidate_constraints
+                if (equilibrium_is_converged(
+                        stationarity,
+                        equilibrium_tolerance_for(
+                            multipliers, candidate_constraints
+                        ),
                 )
                         and candidate_minimum_gap
                         >= -forming_contact_gap_tolerance_mm
@@ -5372,13 +5500,82 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     "punch" if worst_comp_row in punch_rows else
                     "die" if worst_comp_row in die_rows else "holder"
                 )
+                worst_equilibrium_dof = int(np.argmax(np.abs(stationarity)))
+                if worst_equilibrium_dof == basis.N:
+                    worst_equilibrium_location = "holder"
+                else:
+                    worst_equilibrium_node = worst_equilibrium_dof // 2
+                    worst_equilibrium_component = (
+                        "x" if worst_equilibrium_dof % 2 == 0 else "z"
+                    )
+                    worst_equilibrium_location = (
+                        f"{worst_equilibrium_component}@"
+                        f"({node_x[worst_equilibrium_node]:.6g},"
+                        f"{node_z[worst_equilibrium_node]:.6g})"
+                    )
+                residual_inf, residual_rms = equilibrium_residual_norms(
+                    stationarity
+                )
+                contact_rows_at_worst_dof = np.flatnonzero(
+                    np.abs(candidate_constraints[:, worst_equilibrium_dof])
+                    > 1e-12
+                )
+                worst_dof_contact_terms = []
+                for row in contact_rows_at_worst_dof:
+                    if row < equality_count:
+                        continue
+                    group = (
+                        "punch" if row in punch_rows else
+                        "die" if row in die_rows else "holder"
+                    )
+                    local_row = int(row - equality_count)
+                    coefficient = float(
+                        candidate_constraints[row, worst_equilibrium_dof]
+                    )
+                    multiplier = float(candidate_multipliers[row])
+                    worst_dof_contact_terms.append((
+                        int(row), group,
+                        float(candidate_gaps[local_row]), multiplier,
+                        coefficient, coefficient * multiplier,
+                    ))
+                worst_dof_friction_force = (
+                    float(candidate_friction_force[worst_equilibrium_dof])
+                    if worst_equilibrium_dof < basis.N else 0.
+                )
+                worst_dof_contact_force = float(
+                    candidate_constraints[:, worst_equilibrium_dof]
+                    @ candidate_multipliers
+                )
+                worst_dof_external_force = (
+                    holder_external_force_per_width
+                    if worst_equilibrium_dof == basis.N else 0.
+                )
+                # Recover the material part from the converged stationarity
+                # balance so this remains valid when the final line-search
+                # candidate has no retained constitutive evaluation object.
+                worst_dof_material_residual = float(
+                    stationarity[worst_equilibrium_dof]
+                    - worst_dof_friction_force
+                    - worst_dof_contact_force
+                    - worst_dof_external_force
+                )
                 raise RuntimeError(
                     f"contact Newton failed after {contact_newton_iteration_limit} "
                     f"iterations at stroke={stroke:.6g} mm: "
-                    f"equilibrium={equilibrium:.3e}, "
+                    f"equilibrium_inf={residual_inf:.3e} N/mm, "
+                    f"equilibrium_rms={residual_rms:.3e} N/mm, "
+                    f"rms_tolerance={equilibrium_tolerance_for(candidate_multipliers, candidate_constraints):.3e} N/mm, "
+                    f"infinity_cap={2. * equilibrium_tolerance_for(candidate_multipliers, candidate_constraints):.3e} N/mm, "
+                    f"worst_dof={worst_equilibrium_location}, "
+                    f"dof_balance=(material:{worst_dof_material_residual:.3e}, "
+                    f"friction:{worst_dof_friction_force:.3e}, "
+                    f"contact:{worst_dof_contact_force:.3e}, "
+                    f"contact_rows:{worst_dof_contact_terms}), "
+                    f"holder_residual={stationarity[-1]:.3e} N/mm, "
                     f"minimum_gap={candidate_minimum_gap:.3e}, "
                     f"complementarity={candidate_complementarity:.3e}, "
                     f"max_inactive_tension={candidate_inactive_tension:.3e}, "
+                    f"last_line_search_alpha={newton_step_length:.3e}, "
                     f"worst_complementarity_contact={worst_comp_group}"
                     f"[{worst_comp_row}] gap="
                     f"{candidate_gaps[worst_comp_local]:.3e} mm, multiplier="
@@ -5444,6 +5641,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         force_resolution_unresolved_for_requested_tolerance = False
         holder_jump_unresolved = False
         punch_detachment_event = False
+        secant_prediction_rejected = False
         relative_force_change = 0.0
         relative_force_prediction_error = 0.0
         holder_jump = abs(trial_holder_z - holder_z)
@@ -5455,9 +5653,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             previous_punch_force = float(
                 records[-1]["punch_force_N_half_model"]
             )
+            # Use the requested reference load as the absolute scale near
+            # zero reaction.  A relative error normalized by only 5% of the
+            # reference turns a 20% continuation tolerance into a 1% load
+            # tolerance and can pin the stroke controller to tiny increments
+            # while the punch is detaching or making first contact.  Above the
+            # reference load this naturally becomes the usual relative test.
             relative_force_change = abs(punch_force - previous_punch_force) / max(
                 abs(punch_force), abs(previous_punch_force),
-                0.05 * punch_force_change_reference_N, 1.0,
+                abs(punch_force_change_reference_N), 1.0,
             )
             relative_force_prediction_error = relative_force_change
             if len(records) >= 2:
@@ -5466,7 +5670,25 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     float(records[-1]["stroke_mm"])
                     - float(previous_record["stroke_mm"])
                 )
-                if previous_interval > 1e-14:
+                secant_records = (previous_record, records[-1])
+                secant_force_floor = max(
+                    0.05 * punch_force_change_reference_N, 1.0
+                )
+                secant_history_is_smooth = all(
+                    not record.get("force_resolution_unresolved", False)
+                    and not record.get("holder_jump_unresolved", False)
+                    and not record.get("punch_detachment_event", False)
+                    and abs(float(record["punch_force_N_half_model"]))
+                    > secant_force_floor
+                    for record in secant_records
+                )
+                # Do not extrapolate a force slope across an unresolved
+                # contact jump, detachment, or near-zero reaction.  Such a
+                # secant can predict a large force change even when the
+                # current accepted branch has nearly constant reaction,
+                # repeatedly cutting a smooth re-contact branch down to the
+                # force-resolution floor.
+                if previous_interval > 1e-14 and secant_history_is_smooth:
                     previous_force_slope = (
                         previous_punch_force
                         - float(previous_record["punch_force_N_half_model"])
@@ -5475,12 +5697,20 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         previous_punch_force + previous_force_slope
                         * (stroke - float(records[-1]["stroke_mm"]))
                     )
-                    relative_force_prediction_error = abs(
-                        punch_force - predicted_punch_force
-                    ) / max(
-                        abs(punch_force), abs(predicted_punch_force),
-                        0.05 * punch_force_change_reference_N, 1.0,
-                    )
+                    if predicted_punch_force < -secant_force_floor:
+                        # A frictionless unilateral punch cannot sustain a
+                        # tensile normal reaction.  A secant that predicts a
+                        # materially negative force has crossed a contact
+                        # branch and is not a useful continuation predictor;
+                        # retain the measured force-change criterion instead.
+                        secant_prediction_rejected = True
+                    else:
+                        relative_force_prediction_error = abs(
+                            punch_force - predicted_punch_force
+                        ) / max(
+                            abs(punch_force), abs(predicted_punch_force),
+                            0.05 * punch_force_change_reference_N, 1.0,
+                        )
             if (relative_force_prediction_error
                     > forming_force_change_tolerance
                     or holder_jump_exceeds_tolerance):
@@ -5629,6 +5859,12 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         ).reshape(-1)
         punch_gaps = candidate_gaps[:punch_rows.size]
         near_punch = punch_gaps <= 1e-6
+        record_equilibrium_inf, record_equilibrium_rms = (
+            equilibrium_residual_norms(stationarity)
+        )
+        record_equilibrium_rms_tolerance = equilibrium_tolerance_for(
+            multipliers, final_constraints
+        )
         records.append({
             "step": len(records), "stroke_mm": float(stroke), "punch_force_N_half_model": punch_force,
             "normal_punch_force_N_half_model": normal_punch_force,
@@ -5731,9 +5967,16 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "maximum_coulomb_utilization": float(
                 np.max(friction_utilization, initial=0.)
             ),
-            "equilibrium_residual_inf_N_per_mm": equilibrium,
-            "equilibrium_tolerance_inf_N_per_mm": equilibrium_tolerance_for(
-                multipliers, final_constraints
+            "equilibrium_residual_inf_N_per_mm": record_equilibrium_inf,
+            "equilibrium_residual_rms_N_per_mm": record_equilibrium_rms,
+            "equilibrium_tolerance_rms_N_per_mm": (
+                record_equilibrium_rms_tolerance
+            ),
+            "equilibrium_infinity_cap_N_per_mm": (
+                2. * record_equilibrium_rms_tolerance
+            ),
+            "equilibrium_tolerance_inf_N_per_mm": (
+                2. * record_equilibrium_rms_tolerance
             ),
             "contact_gap_tolerance_mm": forming_contact_gap_tolerance_mm,
             "contact_complementarity_tolerance_N_mm": (
@@ -5743,7 +5986,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 forming_force_change_tolerance
             ),
             "punch_force_increment_scale_floor_N": (
-                0.05 * punch_force_change_reference_N
+                punch_force_change_reference_N
             ),
             "force_resolution_unresolved": force_resolution_unresolved,
             "force_resolution_unresolved_for_requested_tolerance": (
@@ -5754,6 +5997,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "punch_force_relative_change": relative_force_change,
             "punch_force_prediction_error_relative": (
                 relative_force_prediction_error
+            ),
+            "punch_force_secant_prediction_rejected": (
+                secant_prediction_rejected
             ),
             "holder_jump_mm": holder_jump,
             "holder_jump_tolerance_mm": holder_jump_tolerance_mm,
@@ -5896,7 +6142,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 last_accepted_increment = accepted_stroke - previous_record_stroke
                 suggested_increment_mm = min(
                     0.5 * suggested_increment_mm,
-                    1.5 * last_accepted_increment,
+                    forming_increment_recovery_factor
+                    * last_accepted_increment,
                 )
             else:
                 suggested_increment_mm *= 0.5
@@ -5914,7 +6161,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             last_accepted_increment = accepted_stroke - previous_record_stroke
             suggested_increment_mm = min(
                 maximum_increment_mm,
-                max(minimum_increment_mm, 1.5 * last_accepted_increment),
+                max(
+                    minimum_increment_mm,
+                    forming_increment_recovery_factor * last_accepted_increment,
+                ),
             )
         elif len(newly_accepted) > 1:
             last_accepted_increment = (
@@ -5923,7 +6173,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             )
             suggested_increment_mm = min(
                 maximum_increment_mm,
-                max(minimum_increment_mm, 1.5 * last_accepted_increment),
+                max(
+                    minimum_increment_mm,
+                    forming_increment_recovery_factor * last_accepted_increment,
+                ),
             )
         elif newly_accepted:
             previous_record_stroke = (
@@ -6302,6 +6555,12 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             ),
             "forming_equilibrium_residual_inf_N_per_mm": float(
                 last_record["equilibrium_residual_inf_N_per_mm"]
+            ),
+            "forming_equilibrium_residual_rms_N_per_mm": float(
+                last_record["equilibrium_residual_rms_N_per_mm"]
+            ),
+            "forming_equilibrium_tolerance_rms_N_per_mm": float(
+                last_record["equilibrium_tolerance_rms_N_per_mm"]
             ),
             "forming_equilibrium_tolerance_inf_N_per_mm": float(
                 last_record["equilibrium_tolerance_inf_N_per_mm"]
@@ -6712,7 +6971,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             f"facet with {contact_collocation_points_per_facet} Gauss points "
             f"per subfacet; {mortar_gap_reduction} gap reduction"
             + (f" ({mortar_gap_smoothing_temperature_mm:g} mm temperature)"
-               if mortar_gap_reduction == "softmin" else "")
+               if "softmin" in mortar_gap_reduction else "")
             if contact_method == "mortar-p0" else
             f"{contact_collocation_points_per_facet} Gauss-point collocation "
             "points per selected boundary facet"
@@ -6887,7 +7146,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 ),
             },
         },
-        "forming_equilibrium_tolerance_inf_N_per_mm": forming_equilibrium_tolerance,
+        "forming_equilibrium_residual_norm": (
+            "free_dof_rms_with_2x_infinity_cap"
+        ),
+        "forming_equilibrium_tolerance_rms_N_per_mm": (
+            forming_equilibrium_tolerance
+        ),
+        "forming_equilibrium_tolerance_inf_N_per_mm": (
+            2. * forming_equilibrium_tolerance
+        ),
         "forming_equilibrium_relative_tolerance": (
             forming_equilibrium_relative_tolerance
         ),

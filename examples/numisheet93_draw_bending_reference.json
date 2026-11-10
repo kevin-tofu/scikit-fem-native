@@ -6,6 +6,28 @@
     "reference_input": "https://docs.software.vt.edu/abaqusv2025/English/SIMAINPRefResources/springback_std_both_surf.inp",
     "units_in_this_file": "mm, N, MPa"
   },
+  "canonical_numisheet93_b3": {
+    "source": "Makinouchi et al., NUMISHEET '93 benchmark B3; reproduced in Burchitz, Improvement of Springback Prediction in Sheet Forming Simulation, Appendix A.3",
+    "source_url": "https://ris.utwente.nl/ws/portalfiles/portal/6069581/thesis_Burchitz.pdf",
+    "process": {
+      "punch_stroke_mm": 70.0,
+      "blank_holder_force_total_N": 19600.0,
+      "friction_coefficient": 0.144,
+      "blank_length_mm": 350.0,
+      "blank_width_mm": 35.0,
+      "thickness_mm": 0.78,
+      "young_modulus_MPa": 206000.0,
+      "poisson_ratio": 0.3,
+      "yield_model": "Hill48 with isotropic hardening",
+      "r_values_R0_R45_R90": [1.79, 1.51, 2.27],
+      "hardening_C_MPa": 565.32,
+      "hardening_exponent_n": 0.235
+    },
+    "springback_outputs": ["theta1_deg", "theta2_deg", "wall_radius_mm"],
+    "force_stroke_data": "Published FE force-displacement plots are available, but raw experimental force-stroke samples were not found in the cited sources; do not treat an FE force curve as experimental data.",
+    "raw_experimental_force_stroke_samples_available_locally": false,
+    "scope_note": "This canonical B3 case is distinct from the Abaqus input-deck variant below, which uses a 2.45 kN holder load. The current plane-strain J2 frictionless run matches neither case fully."
+  },
   "reference_run": {
     "variant": "mild steel with 2.45 kN blank-holder force",
     "force_stroke_history": "The official input deck requests RF and U history output at the punch reference node; an output database is not included in this repository.",
@@ -301,14 +323,21 @@
       "comparison_note": "The published isotropic-hardening simulation uses a fitted power-law material curve, not the tabular hardening data in the official Abaqus input deck stored above. Treat 17.1 deg as the experimental target; 17.20 deg is a method-level comparison, not a same-material reference run."
     }
   },
-  "implementation_gaps": [
-    "large-deformation elastoplasticity",
-    "full 70 mm forming path with convergence checks and evolving contact",
-    "friction coefficient 0.144 and shell-thickness-aware contact",
-    "shell formulation or an adequately resolved solid thickness",
-    "native batched Hill48 assembly",
-    "independent punch reaction-force versus displacement comparison"
-  ],
+  "implementation_status": {
+    "available_in_source": [
+      "2D plane-strain finite-strain J2 and Hill48 material updates with consistent tangents",
+      "transactional plastic history updates for Newton trial states",
+      "rigid punch, die, and blank-holder contact with frictionless and Coulomb options",
+      "forming, tool removal, springback, and optional reference-curve comparison outputs"
+    ],
+    "benchmark_gaps": [
+      "a converged and documented full 70 mm path for the exact reference conditions",
+      "the reference shell formulation with five through-thickness integration points, or a demonstrated solid-to-shell equivalence",
+      "an independent punch reaction-force versus stroke dataset for same-condition error measurement",
+      "a same-material springback comparison: the published 17.20 degree isotropic result uses a fitted power-law curve, while the official input deck provides a different tabular law"
+    ],
+    "scope_note": "Source availability does not establish numerical validation. The current finite-strain solid contact driver remains experimental until the full path and reference comparisons are reproduced."
+  },
   "puso_isotropic_hardening": {
     "source": "M. Puso, A Users Manual for the Nonlinear Kinematic Hardening Model for Cyclic Loading, UCRL-MA-140587, 2000, Table 1",
     "source_url": "https://digital.library.unt.edu/ark:/67531/metadc1413779/m2/1/high_res_d/15007612.pdf",

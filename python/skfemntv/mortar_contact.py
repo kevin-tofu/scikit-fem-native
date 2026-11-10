@@ -1,10 +1,10 @@
 """Two-dimensional piecewise-constant mortar contact against rigid profiles.
 
 The multiplier is constant on each P0 slave subfacet. The gap equation may
-use either the quadrature-average signed distance or the minimum quadrature
-distance. In either case the contact force and geometric tangent differentiate
-the same selected gap. Sample gaps are retained separately so callers can
-check pointwise nonpenetration.
+use the quadrature-average signed distance, the minimum quadrature distance,
+or a differentiable conservative soft minimum. In each case the contact force
+and geometric tangent differentiate the same selected gap. Sample gaps are
+retained separately so callers can check pointwise nonpenetration.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from .rigid_profile import AnalyticalRigidProfile2D
 
 @dataclass(frozen=True)
 class MortarContactEvaluation2D:
-    """Facet-average mortar gaps and their consistent geometric derivatives."""
+    """Reduced mortar gaps and their consistent geometric derivatives."""
 
     gaps: NDArray[np.float64]
     jacobian: sparse.csr_matrix
@@ -62,10 +62,14 @@ class RigidProfileMortarContact2D:
         ``"average"`` enforces the quadrature-average gap. ``"minimum"``
         enforces the smallest quadrature gap on each subfacet and uses that
         sample's consistent normal and curvature. ``"softmin"`` uses a
-        differentiable weighted minimum while retaining exact sample gaps for
-        pointwise penetration checks.
+        differentiable, quadrature-weighted reduction while retaining exact
+        sample gaps for pointwise penetration checks. Because its normalized
+        quadrature weights can make the reduced gap larger than the smallest
+        sample gap, it is not a conservative nonpenetration constraint.
+        ``"conservative-softmin"`` adds a lower-bound correction, so its gap
+        never exceeds the smallest sample gap.
     gap_smoothing_temperature:
-        Positive length scale for the ``"softmin"`` reduction.
+        Positive length scale for either soft-minimum reduction.
     """
 
     def __init__(
@@ -104,9 +108,12 @@ class RigidProfileMortarContact2D:
             raise ValueError("quadrature_order must be positive")
         if subfacets_per_facet < 1:
             raise ValueError("subfacets_per_facet must be positive")
-        if gap_reduction not in {"average", "minimum", "softmin"}:
+        if gap_reduction not in {
+            "average", "minimum", "softmin", "conservative-softmin"
+        }:
             raise ValueError(
-                "gap_reduction must be 'average', 'minimum', or 'softmin'"
+                "gap_reduction must be 'average', 'minimum', 'softmin', "
+                "or 'conservative-softmin'"
             )
         if (not np.isfinite(gap_smoothing_temperature)
                 or gap_smoothing_temperature <= 0.):
@@ -276,6 +283,14 @@ class RigidProfileMortarContact2D:
                 gaps = minimum_gaps - self.gap_smoothing_temperature * np.log(
                     weight_sums
                 )
+                if self.gap_reduction == "conservative-softmin":
+                    # The normalized weighted soft minimum above is shifted
+                    # above the true minimum. Dividing by the smallest positive
+                    # quadrature weight makes this a lower bound and leaves
+                    # its first and second derivatives unchanged.
+                    gaps += self.gap_smoothing_temperature * np.log(
+                        float(np.min(self.quadrature_weights))
+                    )
             facet_points = np.einsum(
                 "rq,rqd->rd", reduction_weights,
                 sample_points.reshape(self.facet_count, self.quadrature_order, 2),
@@ -323,7 +338,7 @@ class RigidProfileMortarContact2D:
                 local_hessian += weight * (
                     mapping.T @ sample_hessians[sample] @ mapping
                 )
-            if self.gap_reduction == "softmin":
+            if self.gap_reduction in {"softmin", "conservative-softmin"}:
                 for q in range(self.quadrature_order):
                     difference = sample_jacobians[q] - local_jacobian
                     local_hessian -= (
