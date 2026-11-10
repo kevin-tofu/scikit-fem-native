@@ -338,7 +338,14 @@
       "friction_punch_blank": 0.0,
       "friction_blank_die_and_holder": 0.144
     },
-    "material_model": "The paper's FEA assumes material isotropy with nonlinear strain hardening. The exact stress-strain curve transcription should be checked against the source table before quantitative replication; the isotropic assumption differs from canonical Hill48 B3.",
+    "material_model": "The paper's FEA assumes material isotropy with nonlinear strain hardening. Table 1 reports yield strength 170 MPa and strain-hardening exponent n=0.235, while its constitutive-equation column reads sigma = 565.32*(0.007117 + epsilon_p)^0.2585 MPa. These exponent values are not identical in the printed table and should both be retained pending clarification; the isotropic assumption differs from canonical Hill48 B3.",
+    "material_parameters_reported": {
+      "yield_strength_MPa": 170.0,
+      "strain_until_fracture": 0.45,
+      "strain_hardening_exponent_n_table": 0.235,
+      "reported_flow_curve": "sigma = 565.32*(0.007117 + epsilon_p)^0.2585 MPa",
+      "source_table_note": "Table 1 separately reports n=0.235 and an equation exponent 0.2585. Do not silently reconcile these values."
+    },
     "springback_measurement_definitions": {
       "theta1": "angle between Ox and segment AB",
       "theta2": "angle between segments AB and EF"
