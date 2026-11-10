@@ -144,7 +144,7 @@ def load_mesh(filename, out=None, **kwargs):
 
 def _encode_tags(mesh):
     encoded = {}
-    for name, elements in (mesh._subdomains or {}).items():
+    for name, elements in (mesh.subdomains or {}).items():
         values = np.zeros(mesh.nelements, dtype=np.int32)
         values[np.asarray(elements, dtype=np.int64)] = 1
         encoded[f"skfem:s:{name}"] = values
@@ -181,7 +181,7 @@ def save_mesh(mesh, filename, point_data=None, cell_data=None, *,
         data.update(_encode_tags(mesh))
     if encode_point_data:
         point_data = {} if point_data is None else dict(point_data)
-        for name, region in (mesh._subdomains or {}).items():
+        for name, region in (mesh.subdomains or {}).items():
             values = np.zeros(mesh.p.shape[1], dtype=np.int32)
             values[np.unique(mesh.t[:, np.asarray(region, dtype=np.int64)])] = 1
             point_data[f"skfem:s:{name}"] = values

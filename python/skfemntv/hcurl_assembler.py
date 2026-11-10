@@ -6,7 +6,10 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from ._skfn import build_edge_csr_pattern,integrate_tet_n1
-from .hcurl_basis import AffineTetN1Basis,AffineTriN1Basis
+from .hcurl_basis import (
+    AffineTetN1Basis,AffineTetN2Basis,AffineTetN3Basis,
+    AffineTriN1Basis,AffineTriN2Basis,AffineTriN3Basis,
+)
 from .preflight import AssemblyMemoryEstimate,enforce_memory_budget
 
 
@@ -49,6 +52,20 @@ def estimate_tri_n1_assembly_memory(basis):
     return _estimate_edge_assembly_memory(basis,local=3,kind="hcurl_tri_n1")
 
 
+def estimate_tri_n2_assembly_memory(basis):
+    """Conservatively estimate affine TriN2 assembler storage."""
+    if not isinstance(basis,AffineTriN2Basis):
+        raise TypeError("basis must be AffineTriN2Basis")
+    return _estimate_edge_assembly_memory(basis,local=8,kind="hcurl_tri_n2")
+
+
+def estimate_tri_n3_assembly_memory(basis):
+    """Conservatively estimate affine TriN3 assembler storage."""
+    if not isinstance(basis,AffineTriN3Basis):
+        raise TypeError("basis must be AffineTriN3Basis")
+    return _estimate_edge_assembly_memory(basis,local=15,kind="hcurl_tri_n3")
+
+
 def estimate_tet_n1_assembly_memory(basis):
     """Conservatively estimate dedicated TetN1 assembler storage."""
     if not isinstance(basis,AffineTetN1Basis):
@@ -57,6 +74,18 @@ def estimate_tet_n1_assembly_memory(basis):
         basis,local=6,kind="hcurl_tet_n1",
         element_buffer_bytes=8*basis.mesh.nelements*6*6,
     )
+
+
+def estimate_tet_n2_assembly_memory(basis):
+    if not isinstance(basis,AffineTetN2Basis):
+        raise TypeError("basis must be AffineTetN2Basis")
+    return _estimate_edge_assembly_memory(basis,local=20,kind="hcurl_tet_n2")
+
+
+def estimate_tet_n3_assembly_memory(basis):
+    if not isinstance(basis,AffineTetN3Basis):
+        raise TypeError("basis must be AffineTetN3Basis")
+    return _estimate_edge_assembly_memory(basis,local=45,kind="hcurl_tet_n3")
 
 
 class _EdgeN1Assembler:
@@ -157,6 +186,42 @@ class TriN1Assembler(_EdgeN1Assembler):
         return self._scalar_curl_elements(weighted_coefficient)
 
 
+class TriN2Assembler(_EdgeN1Assembler):
+    """Reusable CSR mass/curl-curl assembler for affine TriN2."""
+
+    def __init__(
+        self,basis,*,memory_limit_bytes=None,memory_safety_factor=1.25,
+    ):
+        if not isinstance(basis,AffineTriN2Basis):
+            raise TypeError("basis must be AffineTriN2Basis")
+        self._initialize(
+            basis,estimate_tri_n2_assembly_memory(basis),
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
+        )
+
+    def _curl_elements(self,weighted_coefficient):
+        return self._scalar_curl_elements(weighted_coefficient)
+
+
+class TriN3Assembler(_EdgeN1Assembler):
+    """Reusable CSR mass/curl-curl assembler for affine TriN3."""
+
+    def __init__(
+        self,basis,*,memory_limit_bytes=None,memory_safety_factor=1.25,
+    ):
+        if not isinstance(basis,AffineTriN3Basis):
+            raise TypeError("basis must be AffineTriN3Basis")
+        self._initialize(
+            basis,estimate_tri_n3_assembly_memory(basis),
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
+        )
+
+    def _curl_elements(self,weighted_coefficient):
+        return self._scalar_curl_elements(weighted_coefficient)
+
+
 class TetN1Assembler(_EdgeN1Assembler):
     """Dedicated reusable mass/curl-curl assembler for affine tetrahedra.
 
@@ -215,6 +280,38 @@ class TetN1Assembler(_EdgeN1Assembler):
         return self._vector_curl_elements(weighted_coefficient)
 
 
+class TetN2Assembler(_EdgeN1Assembler):
+    """CSR mass and vector-curl assembly for affine TetN2."""
+
+    def __init__(self,basis,*,memory_limit_bytes=None,memory_safety_factor=1.25):
+        if not isinstance(basis,AffineTetN2Basis):
+            raise TypeError("basis must be AffineTetN2Basis")
+        self._initialize(
+            basis,estimate_tet_n2_assembly_memory(basis),
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
+        )
+
+    def _curl_elements(self,weighted_coefficient):
+        return self._vector_curl_elements(weighted_coefficient)
+
+
+class TetN3Assembler(_EdgeN1Assembler):
+    """CSR mass and vector-curl assembly for affine TetN3."""
+
+    def __init__(self,basis,*,memory_limit_bytes=None,memory_safety_factor=1.25):
+        if not isinstance(basis,AffineTetN3Basis):
+            raise TypeError("basis must be AffineTetN3Basis")
+        self._initialize(
+            basis,estimate_tet_n3_assembly_memory(basis),
+            memory_limit_bytes=memory_limit_bytes,
+            memory_safety_factor=memory_safety_factor,
+        )
+
+    def _curl_elements(self,weighted_coefficient):
+        return self._vector_curl_elements(weighted_coefficient)
+
+
 class _EdgeN1LinearAssembler:
     def _initialize(self,basis,dimension):
         self.basis=basis
@@ -255,6 +352,24 @@ class TriN1LinearAssembler(_EdgeN1LinearAssembler):
         self._initialize(basis,2)
 
 
+class TriN2LinearAssembler(_EdgeN1LinearAssembler):
+    """Reusable vector-load assembler for ``AffineTriN2Basis``."""
+
+    def __init__(self,basis):
+        if not isinstance(basis,AffineTriN2Basis):
+            raise TypeError("basis must be AffineTriN2Basis")
+        self._initialize(basis,2)
+
+
+class TriN3LinearAssembler(_EdgeN1LinearAssembler):
+    """Reusable vector-load assembler for ``AffineTriN3Basis``."""
+
+    def __init__(self,basis):
+        if not isinstance(basis,AffineTriN3Basis):
+            raise TypeError("basis must be AffineTriN3Basis")
+        self._initialize(basis,2)
+
+
 class TetN1LinearAssembler(_EdgeN1LinearAssembler):
     """Reusable vector-load assembler for ``AffineTetN1Basis``."""
 
@@ -264,11 +379,41 @@ class TetN1LinearAssembler(_EdgeN1LinearAssembler):
         self._initialize(basis,3)
 
 
+class TetN2LinearAssembler(_EdgeN1LinearAssembler):
+    """Reusable vector-load assembler for ``AffineTetN2Basis``."""
+
+    def __init__(self,basis):
+        if not isinstance(basis,AffineTetN2Basis):
+            raise TypeError("basis must be AffineTetN2Basis")
+        self._initialize(basis,3)
+
+
+class TetN3LinearAssembler(_EdgeN1LinearAssembler):
+    """Reusable vector-load assembler for ``AffineTetN3Basis``."""
+
+    def __init__(self,basis):
+        if not isinstance(basis,AffineTetN3Basis):
+            raise TypeError("basis must be AffineTetN3Basis")
+        self._initialize(basis,3)
+
+
 __all__=[
     "TetN1Assembler",
+    "TetN2Assembler",
+    "TetN3Assembler",
     "TetN1LinearAssembler",
+    "TetN2LinearAssembler",
+    "TetN3LinearAssembler",
     "TriN1Assembler",
     "TriN1LinearAssembler",
+    "TriN2Assembler",
+    "TriN2LinearAssembler",
+    "TriN3Assembler",
+    "TriN3LinearAssembler",
+    "estimate_tri_n3_assembly_memory",
+    "estimate_tri_n2_assembly_memory",
     "estimate_tet_n1_assembly_memory",
+    "estimate_tet_n2_assembly_memory",
+    "estimate_tet_n3_assembly_memory",
     "estimate_tri_n1_assembly_memory",
 ]

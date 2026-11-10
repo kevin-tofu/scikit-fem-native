@@ -13,16 +13,35 @@ from ._errors import UnsupportedNativeForm
 
 @dataclass(frozen=True)
 class LinearTerm:
+    __array_priority__ = 1000
     kind: str
     coefficient: Any
     factor: float = 1.0
+    component: int | None = None
+
+    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+        if ufunc is np.multiply and method == "__call__" and len(inputs) == 2:
+            other = inputs[0] if inputs[1] is self else inputs[1]
+            return self * other
+        return NotImplemented
 
     def __neg__(self):
-        return LinearTerm(self.kind, self.coefficient, -self.factor)
+        return LinearTerm(
+            self.kind, self.coefficient, -self.factor, self.component
+        )
 
     def __mul__(self, value):
         if np.isscalar(value):
-            return LinearTerm(self.kind, self.coefficient, self.factor * value)
+            return LinearTerm(
+                self.kind, self.coefficient, self.factor * value,
+                self.component,
+            )
+        if isinstance(value, np.ndarray) or hasattr(value, "__array__"):
+            return LinearTerm(
+                self.kind,
+                np.asarray(self.coefficient) * np.asarray(value),
+                self.factor, self.component,
+            )
         return NotImplemented
 
     __rmul__ = __mul__
@@ -37,6 +56,13 @@ class LinearTerm:
 @dataclass(frozen=True)
 class LinearSum:
     terms: tuple[LinearTerm, ...]
+
+    def __mul__(self, value):
+        if np.isscalar(value) or isinstance(value, np.ndarray):
+            return LinearSum(tuple(term * value for term in self.terms))
+        return NotImplemented
+
+    __rmul__ = __mul__
 
     def __add__(self, other):
         if isinstance(other, LinearTerm):
@@ -56,9 +82,16 @@ class LinearSum:
 
 @dataclass(frozen=True)
 class BilinearTerm:
+    __array_priority__ = 1000
     kind: str
     coefficient: Any = None
     factor: float = 1.0
+
+    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+        if ufunc is np.multiply and method == "__call__" and len(inputs) == 2:
+            other = inputs[0] if inputs[1] is self else inputs[1]
+            return self * other
+        return NotImplemented
 
     def __mul__(self, other):
         if np.isscalar(other):

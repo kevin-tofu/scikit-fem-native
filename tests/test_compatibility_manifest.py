@@ -53,7 +53,7 @@ def test_manifest_names_exist_in_reference_scikit_fem_api():
         ("skfem.Basis", skfemntv.CapabilityStatus.SUPPORTED),
         ("skfem.ElementTriP2", skfemntv.CapabilityStatus.SUPPORTED),
         ("skfem.ElementTriN1", skfemntv.CapabilityStatus.EXPERIMENTAL),
-        ("skfem.MeshLine", skfemntv.CapabilityStatus.PLANNED),
+        ("skfem.MeshLine", skfemntv.CapabilityStatus.EXPERIMENTAL),
         ("skfem.Basis.probes", skfemntv.CapabilityStatus.EXPERIMENTAL),
         ("skfem.Basis.interpolator", skfemntv.CapabilityStatus.EXPERIMENTAL),
         ("skfem.Basis.project", skfemntv.CapabilityStatus.EXPERIMENTAL),

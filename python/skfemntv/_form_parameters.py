@@ -6,8 +6,12 @@ import numpy as np
 
 from ._coefficients import Coefficient
 from ._composite_fields import CompositeField,CompositeWeightedField
-from ._form_terms import BilinearTerm,CompositeBilinearTerm
-from ._h1_fields import Divergence
+from ._form_terms import (
+    BilinearTerm,CompositeBilinearTerm,LinearSum,LinearTerm,
+)
+from ._h1_fields import (
+    Curl,Divergence,TensorValue,TestValue,TrialValue,
+)
 from ._interface_terms import InterfaceBilinearTerm
 
 
@@ -23,8 +27,14 @@ class QuadratureValue:
     def __array__(self,dtype=None):
         return np.asarray(self.value,dtype=dtype)
 
+    @property
+    def T(self):
+        return QuadratureValue(
+            self.value.T,parameter_name=self.parameter_name
+        )
+
     def __getitem__(self,key):
-        if self.parameter_name is not None:
+        if self.parameter_name is not None and not isinstance(key,tuple):
             if isinstance(key,bool) or not isinstance(key,(int,np.integer)):
                 raise ValueError(
                     f"form parameter {self.parameter_name!r} component index "
@@ -41,6 +51,16 @@ class QuadratureValue:
         return QuadratureValue(self.value[key])
 
     def __array_ufunc__(self,ufunc,method,*inputs,**kwargs):
+        if ufunc is np.multiply and method=="__call__" and len(inputs)==2:
+            term=next(
+                (item for item in inputs if isinstance(item,LinearTerm)),
+                None,
+            )
+            if term is not None:
+                coefficient=next(item for item in inputs if item is not term)
+                if isinstance(coefficient,QuadratureValue):
+                    coefficient=coefficient.value
+                return term*np.asarray(coefficient)
         values=[
             item.value if isinstance(item,QuadratureValue) else item
             for item in inputs
@@ -50,6 +70,20 @@ class QuadratureValue:
     def __mul__(self,other):
         if getattr(other,"_is_normal_trace",False):
             return other.with_coefficient(self)
+        if isinstance(other,Curl):
+            coefficient=(
+                self.value if other.coefficient is None else
+                self.value*other.coefficient
+            )
+            return Curl(other.role,other.factor,coefficient)
+        if isinstance(other,TestValue):
+            return LinearTerm("value",self.value,other.factor)
+        if isinstance(other,(LinearTerm,LinearSum)):
+            return other*self.value
+        if isinstance(other,TrialValue):
+            return TensorValue(other,self.value)
+        if isinstance(other,TensorValue):
+            return other*self
         if isinstance(other,(
             BilinearTerm,CompositeBilinearTerm,InterfaceBilinearTerm,
         )):
@@ -67,6 +101,10 @@ class QuadratureValue:
             BilinearTerm,CompositeBilinearTerm,InterfaceBilinearTerm,
         )):
             return other*np.asarray(self.value)
+        if isinstance(other,TestValue):
+            return LinearTerm("value",self.value,other.factor)
+        if isinstance(other,(LinearTerm,LinearSum)):
+            return other*self.value
         return QuadratureValue(np.asarray(other)*self.value)
 
     def __add__(self,other):

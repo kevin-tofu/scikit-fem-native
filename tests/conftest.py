@@ -12,7 +12,6 @@ _UNSUPPORTED_MODULES = {
     "test_curved_surface_native",
     "test_dg_projection_compatibility",
     "test_element_finder_compatibility",
-    "test_hcurl_general_basis",
     "test_line_mesh_compatibility",
     "test_mesh_edge_topology_compatibility",
     "test_mesh_hex_refined_compatibility",

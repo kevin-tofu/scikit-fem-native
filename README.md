@@ -169,6 +169,11 @@ shared edges or facets next, and element interiors last.  This makes assembled
 vectors and matrices directly interchangeable without a coordinate
 permutation.
 
+`MeshLine` supports topology queries, named boundary and subdomain tags,
+uniform and element-marked refinement, restriction, and element removal.
+One-dimensional `Basis` and assembly parity remains incomplete, so this mesh
+slice is experimental.
+
 Solver conveniences such as `solve`, `enforce`, and `penalize` are outside the
 native assembly backend.  Applications may continue to use scikit-fem or SciPy
 for these operations.
@@ -315,12 +320,40 @@ use `(component, cell, quadrature)`.  The complete runnable example is
 
 These slices include oriented global edge numbering, affine covariant Piola
 mapping, mass/curl-curl/Maxwell CSR assembly, coefficient fields, memory
-preflight, and boundary-edge selection.  They support only affine triangles and
-tetrahedra with one lowest-order tangential moment per edge.  Neither basis is
-accepted by the general `Basis` or `asm`; curved mappings, higher order, and
-solver policy are not provided.  Both bases support edge-moment interpolation
-and quadrature-point evaluation.  The triangle example is
-`examples/hcurl_tri_n1_maxwell.py`.
+preflight, and boundary-edge selection.  N1 supports affine triangles and
+tetrahedra with one tangential moment per edge. The triangle path also supports
+`ElementTriN2` and `ElementTriN3` through `Basis`/`asm`, interpolation, point
+evaluation, projection, and reusable CSR assembly. N2 has two tangential edge
+DOFs and two cell DOFs; N3 has three edge DOFs and six cell DOFs, with edge
+functions permuted when a shared edge orientation reverses. TetN2 adds two
+DOFs per edge and two transformed DOFs per face; `Basis.interpolate_moments(field)`
+computes those edge/face functionals, with edge reversal and face
+rotation/reflection matrices are applied per cell. Use
+`ElementTriN1`, `ElementTriN2`, `ElementTriN3`, `ElementTetN1`,
+`ElementTetN2`, or `ElementTetN3` with the
+general `Basis` and `asm` APIs for mass, curl-curl, and vector-load forms.
+Boundary tangential conditions can be
+selected with `basis.get_dofs()`, including named boundary regions.  TetN3
+adds three DOFs per edge, six orientation-transformed DOFs per face, and three
+cell-interior DOFs. `Basis.interpolate_moments(field)` supports edge/face
+moments for TetN2 and edge/face/cell moments for TetN3. Curved maps and
+tetrahedral orders above N3 are not provided. All six spaces support point
+evaluation and L2 projection; N1 spaces support edge moment interpolation.
+The triangle example is
+`examples/hcurl_tri_n1_maxwell.py`; the public `Basis`/`asm` N3 solve is shown
+in `examples/hcurl_tri_n3_maxwell.py`. The manufactured-solution comparison in
+`examples/hcurl_tri_nedelec_convergence.py` prints L2 and curl errors and their
+observed rates for N1, N2, and N3. On the included refinements, the rates tend
+toward 1, 2, and 3, respectively.
+The tetrahedral comparison is in `examples/hcurl_tet_nedelec_convergence.py`;
+its manufactured PEC solution compares N1, N2, and N3 convergence for both
+L2 and curl errors. On the included refinements, the observed rates approach
+1, 2, and 3, respectively.
+
+The public `Basis` convention follows scikit-fem's N1 global signs. The legacy
+`AffineTriN1Basis` API retains its ascending-edge moment convention, so its
+coefficient vector has the opposite sign when directly compared with a
+`Basis`/scikit-fem coefficient vector on triangles.
 
 `TriN1Assembler` uses NumPy/SciPy integration.  `TetN1Assembler` uses a fused
 cell-parallel C++ integration kernel and the same fixed-CSR ownership model.
@@ -338,8 +371,8 @@ determinants, minimum cell area/volume, an edge-based aspect indicator, and the
 number of negatively oriented cells.  An optional `max_aspect_ratio` constructor
 argument rejects meshes beyond an application-selected quality limit.  Tests
 cover distorted meshes and mixed cell orientations, including manufactured
-PDE convergence.  With this sharply limited scope, `space.hcurl` is declared
-experimental; this does not imply support for general meshes or form syntax.
+PDE convergence.  `space.hcurl` remains experimental and supports affine linear
+simplex meshes, with triangular and tetrahedral elements through third order.
 
 ### Assembly memory preflight
 
@@ -378,6 +411,12 @@ preflight and budget API.
 
 The report separates memory already retained by the basis from persistent
 native assembler allocations and temporary CSR-pattern construction memory.
+H(curl) assemblers also expose order-specific estimators, including
+`estimate_tet_n3_assembly_memory`. These account for the tabulation arrays
+retained by the supplied basis and modeled CSR/scatter allocations; they do
+not include the Python process baseline, allocator fragmentation, or all
+library object overhead, so leave room for those when setting a process-wide
+memory budget.
 Its CSR nonzero count is a conservative, allocation-free upper bound.  Python
 object overhead, allocator fragmentation, and coefficient arrays supplied at
 assembly time are intentionally excluded and listed in the report assumptions.
