@@ -338,7 +338,7 @@
       "friction_punch_blank": 0.0,
       "friction_blank_die_and_holder": 0.144
     },
-    "material_model": "The paper reports mild steel with isotropic nonlinear hardening. Its exact stress-strain transcription and anisotropy assumptions must be checked against the source table before claiming material equivalence to canonical B3.",
+    "material_model": "The paper's FEA assumes material isotropy with nonlinear strain hardening. The exact stress-strain curve transcription should be checked against the source table before quantitative replication; the isotropic assumption differs from canonical Hill48 B3.",
     "springback_measurement_definitions": {
       "theta1": "angle between Ox and segment AB",
       "theta2": "angle between segments AB and EF"
@@ -353,7 +353,7 @@
         "theta2": 2.2353
       }
     },
-    "scope_note": "Use as a related experimental/FEA springback validation case, not as the canonical Numisheet B3 dataset or as force-stroke/thickness data. The paper's angle convention and contact split (frictionless punch, Coulomb friction at die and holder) differ from the 17.1-degree flange-angle target above."
+    "scope_note": "Use as a related experimental/FEA springback validation case, not as the canonical Numisheet B3 dataset or as force-stroke/thickness data. The paper's isotropic material assumption, angle convention, and contact split (frictionless punch, Coulomb friction at die and holder) differ from the Hill48 B3 and 17.1-degree flange-angle targets above."
   },
   "implementation_status": {
     "available_in_source": [
