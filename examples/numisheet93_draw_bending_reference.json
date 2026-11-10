@@ -24,8 +24,9 @@
       "hardening_exponent_n": 0.235
     },
     "springback_outputs": ["theta1_deg", "theta2_deg", "wall_radius_mm"],
-    "force_stroke_data": "Published FE force-displacement plots are available, but raw experimental force-stroke samples were not found in the cited sources; do not treat an FE force curve as experimental data.",
+    "force_stroke_data": "A same-condition B3 punch-force versus stroke curve has not been identified in the cited accessible sources. Burchitz Fig. 3.7 is a different top-hat mesh study (85 mm stroke, friction coefficient 0.162) and must not be used as B3 data. Flores et al. Fig. 21 is for the following square-sheet deep-drawing example, not the B3 strip test.",
     "raw_experimental_force_stroke_samples_available_locally": false,
+    "same_condition_published_force_stroke_curve_identified": false,
     "scope_note": "This canonical B3 case is distinct from the Abaqus input-deck variant below, which uses a 2.45 kN holder load. The current plane-strain J2 frictionless run matches neither case fully."
   },
   "reference_run": {
