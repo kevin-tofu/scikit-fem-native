@@ -108,6 +108,7 @@ class TensorValue:
             )
         return NotImplemented
 
+
 @dataclass(frozen=True)
 class SymmetricGradient:
     role: str
