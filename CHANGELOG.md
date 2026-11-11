@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.4 - 2026-11-11
+
+- Add native mortar-contact and rigid-profile operators used by sheet-forming
+  workflows, together with mesh/contact geometry support.
+- Add finite-strain material APIs, including Hill48 plasticity and its analytic
+  tangent, and expand nonlinear contact continuation coverage.
+- Improve scikit-fem API parity for H1 forms and solver utilities; add direct
+  compatibility tests for the supported paths.
+
 ## 0.4.3 - 2026-11-08
 
 - Make `trace(grad(u))` and `trace(sym_grad(u))` reduce to the native
