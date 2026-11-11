@@ -8,9 +8,9 @@ default material model is small-strain Hill48; pass
 ``--finite-strain-hill48`` for multiplicative associated Hill48 plasticity.
 Both use the official deck's tabular hardening curve by default. These remain
 experimental solid-element paths, not reproductions of the 70 mm shell
-benchmark. ``--finite-strain-hill48 --use-reference-friction`` selects the
-reference Hill48 curve and Coulomb coefficient while preserving the solid
-plane-strain formulation.
+benchmark. ``--canonical-b3-material`` selects the Burchitz Appendix A.3
+Hill48 ratios and Nadai hardening data; combine it with the load/friction
+options to define the complete process condition.
 """
 
 from __future__ import annotations
@@ -89,6 +89,30 @@ def _read_reference_curve(path: str | Path, x_column: str, y_column: str):
             f"increasing {x_column}"
         )
     return curve
+
+
+def _hill48_stress_ratios_from_r_values(r_values):
+    """Convert in-plane Lankford values to Abaqus Hill48 yield ratios.
+
+    The two transverse shear yield ratios are set to unity because the 2D
+    plane-strain kinematics do not activate those shear modes.
+    """
+    r0, r45, r90 = np.asarray(r_values, dtype=float)
+    if (not np.all(np.isfinite((r0, r45, r90)))
+            or min(r0, r45, r90) <= 0.):
+        raise ValueError("Hill48 r-values must be finite and positive")
+    f = r0 / (r90 * (1. + r0))
+    g = 1. / (1. + r0)
+    h = r0 / (1. + r0)
+    n = (r45 + 0.5) * (f + g)
+    return np.asarray((
+        1. / np.sqrt(g + h),
+        1. / np.sqrt(f + h),
+        1. / np.sqrt(f + g),
+        np.sqrt(1.5 / n),
+        1.,
+        1.,
+    ))
 
 
 def _compare_reference_curve(model_curve, reference_curve, *, x_name, y_name):
@@ -197,7 +221,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         finite_strain_hill48: bool = False,
         reference_force_stroke_csv: str | Path | None = None,
         reference_thickness_csv: str | Path | None = None,
-        reference_thickness_state: str = "springback") -> dict:
+        reference_thickness_state: str = "springback",
+        blank_holder_force_total_n: float | None = None,
+        canonical_b3_material: bool = False) -> dict:
     minimum_nx = 14 if refine_holder_return else (11 if refine_tool_contacts else 8)
     if nx < minimum_nx or nz < 2 or maximum_stroke_mm < 0. or maximum_increment_mm <= 0.:
         raise ValueError(
@@ -209,8 +235,17 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         raise ValueError("Puso isotropic hardening requires --finite-strain-j2")
     if finite_strain_hill48 and puso_isotropic_hardening:
         raise ValueError("Puso isotropic hardening is only configured for J2")
+    if canonical_b3_material and puso_isotropic_hardening:
+        raise ValueError("canonical B3 material cannot use Puso hardening")
+    if (canonical_b3_material and finite_strain_j2
+            and not finite_strain_hill48):
+        raise ValueError("canonical B3 material requires Hill48, not J2")
     if reference_thickness_state not in {"formed", "springback"}:
         raise ValueError("reference_thickness_state must be formed or springback")
+    if (blank_holder_force_total_n is not None
+            and (not np.isfinite(blank_holder_force_total_n)
+                 or blank_holder_force_total_n < 0.0)):
+        raise ValueError("blank_holder_force_total_n must be finite and nonnegative")
     finite_strain_j2 = finite_strain_j2 or finite_strain_hill48
     if re_equilibrate_checkpoint and not resume:
         raise ValueError("re-equilibrating a checkpoint requires --resume")
@@ -299,7 +334,23 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "SCIKIT_FVM_FORMING_HOLDER_CONTACT_CURVATURE_BLEND_LENGTH_MM "
             "must be finite and nonnegative"
         )
-    material_data = reference["material"]
+    material_data = dict(reference["material"])
+    canonical_b3_process = reference["canonical_numisheet93_b3"]["process"]
+    if canonical_b3_material:
+        material_data["young_modulus"] = float(
+            canonical_b3_process["young_modulus_MPa"]
+        )
+        material_data["poisson_ratio"] = float(
+            canonical_b3_process["poisson_ratio"]
+        )
+        material_data["initial_yield_stress"] = float(
+            canonical_b3_process["initial_yield_stress_MPa"]
+        )
+        material_data["hill48_coefficients_R11_R22_R33_R12_R13_R23"] = (
+            _hill48_stress_ratios_from_r_values(
+                canonical_b3_process["r_values_R0_R45_R90"]
+            ).tolist()
+        )
     geometry = reference["blank"]
     half_length = float(geometry["half_model_length"])
     thickness = float(geometry["thickness"])
@@ -317,9 +368,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "SCIKIT_FVM_FORMING_CONTACT_GAP_TOLERANCE_MM must be finite "
             "and positive"
         )
+    # The two-feature conservative soft-min biases the gap downward by at
+    # most tau*log(2).  Use a temperature tied to the admitted gap tolerance
+    # so adjacent polyline-segment switches have a finite transition width,
+    # while keeping that geometric bias below 0.35 of the tolerance.
     die_contact_feature_blend_temperature_mm = float(os.environ.get(
         "SCIKIT_FVM_FORMING_DIE_FEATURE_BLEND_TEMPERATURE_MM",
-        str(max(1e-9, 0.05 * forming_contact_gap_tolerance_mm)),
+        str(max(1e-9, 0.5 * forming_contact_gap_tolerance_mm)),
     ))
     if (not np.isfinite(die_contact_feature_blend_temperature_mm)
             or die_contact_feature_blend_temperature_mm < 0.):
@@ -664,15 +719,19 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             np.linspace(91., half_length, n_flange + 1)[1:],
         ]
     if refine_holder_return and refine_punch_arc:
-        # Preserve the holder-return partition and selectively bisect its
-        # material edges over the punch arc. This produces a controlled mesh
-        # comparison with the holder-return-only branch while resolving the
-        # punch contact-point transfers observed during forming.
+        # Preserve the holder-return partition and selectively bisect the
+        # punch/die contact corridor. Include x=18..25 mm because the observed
+        # punch contact at x~=21 mm otherwise remains on 1.75 mm boundary
+        # facets; splitting through x=36 mm also resolves the die transition.
+        # The long free flange keeps its holder-return grading.
         left = x_nodes[:-1]
         right = x_nodes[1:]
-        punch_arc_edges = (left >= 25. - 1e-12) & (right <= 36. + 1e-12)
+        forming_contact_edges = (
+            (left >= 18. - 1e-12) & (right <= 36. + 1e-12)
+        )
         x_nodes = np.sort(np.r_[
-            x_nodes, 0.5 * (left[punch_arc_edges] + right[punch_arc_edges])
+            x_nodes,
+            0.5 * (left[forming_contact_edges] + right[forming_contact_edges]),
         ])
     z_nodes = np.linspace(-0.5 * thickness, 0.5 * thickness, nz + 1)
     base_mesh = skfemntv.MeshTri.init_tensor(x_nodes, z_nodes)
@@ -690,9 +749,24 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         mesh, skfemntv.ElementVector(skfemntv.ElementTriP1(), dim=2),
         intorder=2, quadrature=p1_centroid_rule,
     )
-    hardening = material_data[
-        "hardening_curve_equivalent_plastic_strain_yield_stress_MPa"
-    ]
+    if canonical_b3_material:
+        canonical_yield = float(
+            canonical_b3_process["initial_yield_stress_MPa"]
+        )
+        canonical_c = float(canonical_b3_process["hardening_C_MPa"])
+        canonical_n = float(canonical_b3_process["hardening_exponent_n"])
+        canonical_epsilon_0 = (canonical_yield / canonical_c) ** (
+            1. / canonical_n
+        )
+        plastic_strain = np.linspace(0., 0.5, 501)
+        hardening = np.column_stack((
+            plastic_strain,
+            canonical_c * (canonical_epsilon_0 + plastic_strain) ** canonical_n,
+        ))
+    else:
+        hardening = material_data[
+            "hardening_curve_equivalent_plastic_strain_yield_stress_MPa"
+        ]
     if puso_isotropic_hardening:
         puso = reference["puso_isotropic_hardening"]
         plastic_strain = np.linspace(0.0, 0.5, 501)
@@ -705,6 +779,20 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 for term in puso["saturation_terms"]
             ),
         ))
+    material_digest = hashlib.sha256()
+    for name, values in (
+        ("young_modulus_MPa", [material_data["young_modulus"]]),
+        ("poisson_ratio", [material_data["poisson_ratio"]]),
+        ("hill48_stress_ratios", material_data[
+            "hill48_coefficients_R11_R22_R33_R12_R13_R23"
+        ]),
+        ("hardening_ep_stress_MPa", hardening),
+    ):
+        contiguous = np.ascontiguousarray(values, dtype=np.float64)
+        material_digest.update(name.encode("ascii"))
+        material_digest.update(str(contiguous.shape).encode("ascii"))
+        material_digest.update(contiguous.view(np.uint8))
+    material_signature = material_digest.hexdigest()
     material_tangent_method = os.environ.get(
         "SCIKIT_FVM_FORMING_MATERIAL_TANGENT_METHOD", "analytic"
     ).lower()
@@ -1252,8 +1340,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
 
     # Scale the total force to the half model's 5 mm out-of-plane width.
     modeled_width = 5.0
+    resolved_blank_holder_force_total_n = (
+        float(reference["process"]["blank_holder_force_total"])
+        if blank_holder_force_total_n is None
+        else float(blank_holder_force_total_n)
+    )
     half_model_holder_force = (
-        0.5 * reference["process"]["blank_holder_force_total"]
+        0.5 * resolved_blank_holder_force_total_n
         * modeled_width / reference["blank"]["width"]
     )
     punch_force_change_reference_N = max(half_model_holder_force, 1.0)
@@ -1391,10 +1484,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         "refine_holder_return": refine_holder_return,
         "finite_strain_j2": finite_strain_j2 and not finite_strain_hill48,
         "finite_strain_hill48": finite_strain_hill48,
+        "canonical_b3_material": canonical_b3_material,
         "puso_isotropic_hardening": puso_isotropic_hardening,
+        "material_signature": material_signature,
         "material_tangent_method": material_tangent_method,
         "friction_coefficient": float(friction_coefficient),
         "modeled_width_mm": modeled_width,
+        "blank_holder_force_total_N": resolved_blank_holder_force_total_n,
         "blank_holder_force_N_half_model": half_model_holder_force,
         "quadrature_points_per_element": int(basis.dx.shape[1]),
         "punch_force_increment_relative_tolerance": float(os.environ.get(
@@ -1575,8 +1671,16 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     comparable_saved_metadata.pop(key, None)
                     comparable_requested_metadata.pop(key, None)
             comparable_saved_metadata.setdefault("friction_coefficient", 0.0)
+            comparable_saved_metadata.setdefault(
+                "blank_holder_force_total_N",
+                float(reference["process"]["blank_holder_force_total"]),
+            )
             comparable_saved_metadata.setdefault("puso_isotropic_hardening", False)
             comparable_saved_metadata.setdefault("finite_strain_hill48", False)
+            comparable_saved_metadata.setdefault("canonical_b3_material", False)
+            comparable_saved_metadata.setdefault(
+                "material_signature", material_signature
+            )
             comparable_saved_metadata.setdefault("holder_position_control_mm", None)
             comparable_saved_metadata.setdefault(
                 "holder_newton_step_limit_mm", 0.1
@@ -6529,11 +6633,226 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             }
         return comparisons
 
+    def reference_condition_checks_for(stroke_mm):
+        reference_stroke = float(reference["process"]["punch_stroke"])
+        full_stroke_reached = bool(
+            stroke_mm >= reference_stroke
+            - max(1e-10, 1e-10 * reference_stroke)
+        )
+        canonical_b3_process = reference["canonical_numisheet93_b3"]["process"]
+        canonical_b3_holder_force_total_n = float(
+            canonical_b3_process["blank_holder_force_total_N"]
+        )
+        holder_force_matches = bool(np.isclose(
+            resolved_blank_holder_force_total_n,
+            canonical_b3_holder_force_total_n,
+            rtol=1e-10, atol=1e-8,
+        ))
+        friction_matches = bool(np.isclose(
+            friction_coefficient,
+            float(reference["process"]["friction_coefficient"]),
+            rtol=1e-10, atol=1e-12,
+        ))
+        canonical_yield = float(
+            canonical_b3_process["initial_yield_stress_MPa"]
+        )
+        canonical_c = float(canonical_b3_process["hardening_C_MPa"])
+        canonical_n = float(canonical_b3_process["hardening_exponent_n"])
+        canonical_epsilon_0 = (canonical_yield / canonical_c) ** (
+            1. / canonical_n
+        )
+        local_hardening = np.asarray(hardening, dtype=float)
+        canonical_hardening_stress = canonical_c * (
+            canonical_epsilon_0 + local_hardening[:, 0]
+        ) ** canonical_n
+        hardening_matches = bool(np.allclose(
+            local_hardening[:, 1], canonical_hardening_stress,
+            rtol=2e-3, atol=0.25,
+        ))
+        yield_stress_matches = bool(np.isclose(
+            float(local_hardening[0, 1]), canonical_yield,
+            rtol=1e-10, atol=1e-8,
+        ))
+        young_modulus_matches = bool(np.isclose(
+            float(material_data["young_modulus"]),
+            float(canonical_b3_process["young_modulus_MPa"]),
+            rtol=1e-10, atol=1e-8,
+        ))
+        poisson_ratio_matches = bool(np.isclose(
+            float(material_data["poisson_ratio"]),
+            float(canonical_b3_process["poisson_ratio"]),
+            rtol=1e-10, atol=1e-12,
+        ))
+        canonical_hill_ratios = np.asarray(
+            _hill48_stress_ratios_from_r_values(
+                canonical_b3_process["r_values_R0_R45_R90"]
+            ),
+            dtype=float,
+        ).reshape(-1)
+        local_hill_ratios = np.asarray(
+            material_data[
+                "hill48_coefficients_R11_R22_R33_R12_R13_R23"
+            ], dtype=float
+        ).reshape(-1)
+        # The plane-strain formulation uses R11, R22, R33 and R12.  The
+        # reference conversion also returns the two out-of-plane shear
+        # coefficients R13/R23; compare the same in-plane subset and make a
+        # short or malformed coefficient vector a clean mismatch instead of
+        # allowing np.allclose to raise during final result reporting.
+        yield_criterion_matches = bool(
+            not finite_strain_j2 or finite_strain_hill48
+        )
+        anisotropy_matches = bool(
+            local_hill_ratios.size >= 4
+            and canonical_hill_ratios.size >= 4
+            and np.allclose(
+                local_hill_ratios[:4], canonical_hill_ratios[:4],
+                rtol=2e-3, atol=2e-3,
+            )
+        )
+        material_matches = all((
+            yield_criterion_matches, anisotropy_matches, hardening_matches,
+            yield_stress_matches, young_modulus_matches, poisson_ratio_matches,
+        ))
+        load_control_matches = holder_position_control_mm is None
+        # The local solver uses plane-strain solids and point/mortar contact;
+        # the reference uses shell elements with thickness-aware contact.
+        shell_formulation_matches = False
+        return {
+            "full_reference_stroke_reached": full_stroke_reached,
+            "blank_holder_force_matches": holder_force_matches,
+            "friction_coefficient_matches": friction_matches,
+            "material_law_matches": material_matches,
+            "material_yield_criterion_matches": yield_criterion_matches,
+            "material_anisotropy_matches": anisotropy_matches,
+            "material_yield_stress_matches": yield_stress_matches,
+            "material_hardening_curve_matches": hardening_matches,
+            "young_modulus_matches": young_modulus_matches,
+            "poisson_ratio_matches": poisson_ratio_matches,
+            "load_control_matches": load_control_matches,
+            "shell_formulation_and_thickness_contact_match": (
+                shell_formulation_matches
+            ),
+        }
+
+    def reference_process_material_configuration_matches(checks):
+        return bool(all(checks[key] for key in (
+            "blank_holder_force_matches",
+            "friction_coefficient_matches",
+            "material_law_matches",
+            "load_control_matches",
+        )))
+
+    def reference_process_material_conditions_match(checks):
+        return bool(
+            checks["full_reference_stroke_reached"]
+            and reference_process_material_configuration_matches(checks)
+        )
+
+    def puso_reference_condition_checks_for(stroke_mm):
+        """Check the local Puso parameter path against its published case."""
+        puso = reference["puso_isotropic_hardening"]
+        process = puso["process"]
+        elastic = puso["elastic_material"]
+        local_hardening = np.asarray(hardening, dtype=float)
+        reference_stress = np.full(
+            local_hardening.shape[0],
+            float(puso["initial_yield_stress_MPa"]),
+        )
+        for term in puso["saturation_terms"]:
+            reference_stress += float(term["Q_MPa"]) * (
+                1.0 - np.exp(
+                    -float(term["b"]) * local_hardening[:, 0]
+                )
+            )
+        hardening_matches = bool(np.allclose(
+            local_hardening[:, 1], reference_stress,
+            rtol=1e-10, atol=1e-8,
+        ))
+        yield_stress_matches = bool(np.isclose(
+            local_hardening[0, 1],
+            float(puso["initial_yield_stress_MPa"]),
+            rtol=1e-10, atol=1e-8,
+        ))
+        young_modulus_matches = bool(np.isclose(
+            float(material_data["young_modulus"]),
+            float(elastic["young_modulus_MPa"]),
+            rtol=1e-10, atol=1e-8,
+        ))
+        poisson_ratio_matches = bool(np.isclose(
+            float(material_data["poisson_ratio"]),
+            float(elastic["poisson_ratio"]),
+            rtol=1e-10, atol=1e-12,
+        ))
+        yield_criterion_matches = bool(
+            finite_strain_j2 and not finite_strain_hill48
+        )
+        holder_force_matches = bool(np.isclose(
+            resolved_blank_holder_force_total_n,
+            float(process["blank_holder_force_total_N"]),
+            rtol=1e-10, atol=1e-8,
+        ))
+        friction_matches = bool(np.isclose(
+            friction_coefficient,
+            float(process["friction_coefficient"]),
+            rtol=1e-10, atol=1e-12,
+        ))
+        stroke_matches = bool(
+            stroke_mm >= float(process["punch_stroke_mm"])
+            - max(1e-10, 1e-10 * float(process["punch_stroke_mm"]))
+        )
+        load_control_matches = holder_position_control_mm is None
+        tool_profile_matches = HOLDER_CORNER_SMOOTHING_MM == 0.0
+        angle_measurement_definition = str(
+            reference["springback_reference"][
+                "experimental_angle_measurement_definition"
+            ]
+        )
+        angle_measurement_matches = (
+            "from horizontal" in angle_measurement_definition.lower()
+        )
+        process_material_match = all((
+            holder_force_matches, friction_matches, hardening_matches,
+            yield_stress_matches, young_modulus_matches,
+            poisson_ratio_matches, yield_criterion_matches,
+            load_control_matches, tool_profile_matches,
+        ))
+        return {
+            "full_reference_stroke_reached": stroke_matches,
+            "blank_holder_force_matches": holder_force_matches,
+            "friction_coefficient_matches": friction_matches,
+            "material_model_matches": yield_criterion_matches,
+            "material_hardening_curve_matches": hardening_matches,
+            "material_yield_stress_matches": yield_stress_matches,
+            "young_modulus_matches": young_modulus_matches,
+            "poisson_ratio_matches": poisson_ratio_matches,
+            "load_control_matches": load_control_matches,
+            "reference_tool_profile_matches": tool_profile_matches,
+            "angle_measurement_convention_matches": (
+                angle_measurement_matches
+            ),
+            "reference_angle_measurement_definition": (
+                angle_measurement_definition
+            ),
+            "model_angle_measurement_definition": (
+                "absolute line-fit angle of outer midplane flange nodes "
+                "from global horizontal"
+            ),
+            "process_material_conditions_match": process_material_match,
+            "published_simulation_formulation_confirmed": False,
+        }
+
     if forming_only:
         last_record = records[-1]
         formed_thickness_profile = thickness_profile_for(displacement)
         formed_minimum_thickness_x, formed_minimum_thickness = min(
             formed_thickness_profile, key=lambda item: item[1]
+        )
+        forming_reference_condition_checks = reference_condition_checks_for(
+            accepted_stroke
+        )
+        forming_puso_reference_checks = puso_reference_condition_checks_for(
+            accepted_stroke
         )
         return {
             "problem": "NUMISHEET '93 profile contact, forming-only run",
@@ -6548,8 +6867,14 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             ),
             "hardening_reference": (
                 "Puso UCRL-MA-140587 isotropic law"
-                if puso_isotropic_hardening else "official Abaqus deck"
+                if puso_isotropic_hardening else
+                "canonical B3 Nadai law"
+                if canonical_b3_material else "official Abaqus deck"
             ),
+            "canonical_b3_material": canonical_b3_material,
+            "material_signature": material_signature,
+            "blank_holder_force_total_N": resolved_blank_holder_force_total_n,
+            "blank_holder_force_N_half_model": half_model_holder_force,
             "friction_coefficient": float(friction_coefficient),
             "friction_coefficient_source": (
                 "NUMISHEET '93 reference process data"
@@ -6557,6 +6882,26 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             ),
             "reference_data_comparisons": reference_data_comparisons(
                 formed_thickness_profile, "formed"
+            ),
+            "reference_condition_checks": forming_reference_condition_checks,
+            "puso_reference_condition_checks": forming_puso_reference_checks,
+            "puso_process_material_conditions_match": (
+                forming_puso_reference_checks[
+                    "process_material_conditions_match"
+                ]
+            ),
+            "reference_process_material_conditions_match": (
+                reference_process_material_conditions_match(
+                    forming_reference_condition_checks
+                )
+            ),
+            "reference_formulation_matches": (
+                forming_reference_condition_checks[
+                    "shell_formulation_and_thickness_contact_match"
+                ]
+            ),
+            "full_reference_setup_matches": all(
+                forming_reference_condition_checks.values()
             ),
             "holder_position_control_mm": holder_position_control_mm,
             "maximum_stroke_mm": maximum_stroke_mm,
@@ -6986,36 +7331,34 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     formed_minimum_thickness_x, formed_minimum_thickness = min(
         formed_thickness_profile, key=lambda item: item[1]
     )
+    reference_condition_checks = reference_condition_checks_for(accepted_stroke)
+    puso_reference_condition_checks = puso_reference_condition_checks_for(
+        accepted_stroke
+    )
     reference_stroke = float(reference["process"]["punch_stroke"])
     reference_stroke_coverage = float(min(
         1., accepted_stroke / max(reference_stroke, 1e-30)
     ))
-    reference_stroke_reached = bool(
-        accepted_stroke >= reference_stroke
-        - max(1e-10, 1e-10 * reference_stroke)
+    reference_stroke_reached = reference_condition_checks[
+        "full_reference_stroke_reached"
+    ]
+    puso_reference_comparison_possible = bool(
+        puso_reference_condition_checks[
+            "process_material_conditions_match"
+        ]
+        and puso_reference_condition_checks["full_reference_stroke_reached"]
+        and puso_reference_condition_checks[
+            "angle_measurement_convention_matches"
+        ]
+        and punch_withdrawal_completed
+        and springback_residual <= springback_tolerance
     )
-    reference_friction_matches = bool(np.isclose(
-        friction_coefficient,
-        float(reference["process"]["friction_coefficient"]),
-        rtol=1e-10, atol=1e-12,
-    ))
-    reference_material_matches = bool(
-        (not finite_strain_j2 or finite_strain_hill48)
-        and not puso_isotropic_hardening
+    x_spacing = np.diff(x_nodes)
+    thickness_spacing = np.diff(z_nodes)
+    cell_aspect_ratios = np.maximum(
+        x_spacing[:, None] / thickness_spacing[None, :],
+        thickness_spacing[None, :] / x_spacing[:, None],
     )
-    reference_holder_control_matches = holder_position_control_mm is None
-    # The local solver uses a plane-strain solid mesh and point/mortar contact;
-    # the cited benchmark uses shell elements with thickness-aware contact.
-    reference_formulation_matches = False
-    reference_condition_checks = {
-        "full_reference_stroke_reached": reference_stroke_reached,
-        "friction_coefficient_matches": reference_friction_matches,
-        "material_law_matches": reference_material_matches,
-        "load_control_matches": reference_holder_control_matches,
-        "shell_formulation_and_thickness_contact_match": (
-            reference_formulation_matches
-        ),
-    }
     return {
         "problem": (
             "NUMISHEET '93 profile contact, finite-strain plane-strain Hill48 proof"
@@ -7034,9 +7377,13 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         ),
         "finite_strain_j2": finite_strain_j2 and not finite_strain_hill48,
         "finite_strain_hill48": finite_strain_hill48,
+        "canonical_b3_material": canonical_b3_material,
+        "material_signature": material_signature,
         "hardening_reference": (
             "Puso UCRL-MA-140587 isotropic law"
-            if puso_isotropic_hardening else "official Abaqus deck"
+            if puso_isotropic_hardening else
+            "canonical B3 Nadai law"
+            if canonical_b3_material else "official Abaqus deck"
         ),
         "friction_coefficient": float(friction_coefficient),
         "friction_coefficient_source": (
@@ -7053,10 +7400,22 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         "mesh": {
             "base_nx": nx,
             "base_nz": nz,
+            "refine_punch_arc": refine_punch_arc,
+            "refine_holder_return": refine_holder_return,
             "refine_tool_contacts": refine_tool_contacts,
             "uniform_refinement_level": mesh_refinement_level,
-            "effective_nx": nx * (2 ** mesh_refinement_level),
-            "effective_nz": nz * (2 ** mesh_refinement_level),
+            "effective_nx": int(x_spacing.size),
+            "effective_nz": int(thickness_spacing.size),
+            "minimum_x_spacing_mm": float(np.min(x_spacing)),
+            "maximum_x_spacing_mm": float(np.max(x_spacing)),
+            "minimum_thickness_spacing_mm": float(np.min(thickness_spacing)),
+            "maximum_thickness_spacing_mm": float(np.max(thickness_spacing)),
+            "minimum_tensor_cell_aspect_ratio": float(
+                np.min(cell_aspect_ratios)
+            ),
+            "maximum_tensor_cell_aspect_ratio": float(
+                np.max(cell_aspect_ratios)
+            ),
             "triangles": int(mesh.nelements),
                  "nodes": node_count, "dofs": int(basis.N)},
         "element_quadrature": {
@@ -7150,6 +7509,26 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "reference_stroke_coverage_fraction": reference_stroke_coverage,
             "full_reference_stroke_reached": reference_stroke_reached,
             "reference_condition_checks": reference_condition_checks,
+            "puso_reference_condition_checks": puso_reference_condition_checks,
+            "puso_process_material_conditions_match": (
+                puso_reference_condition_checks[
+                    "process_material_conditions_match"
+                ]
+            ),
+            "puso_springback_comparison_possible": (
+                puso_reference_comparison_possible
+            ),
+            "reference_process_material_conditions_match": (
+                reference_process_material_conditions_match(
+                    reference_condition_checks
+                )
+            ),
+            "reference_formulation_matches": reference_condition_checks[
+                "shell_formulation_and_thickness_contact_match"
+            ],
+            "full_reference_setup_matches": all(
+                reference_condition_checks.values()
+            ),
             "same_condition_benchmark_comparison_possible": bool(
                 all(reference_condition_checks.values())
             ),
@@ -7161,10 +7540,30 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         "independent_force_curve_available_locally", False
                     )
                 ),
-                "direct_comparison_valid": False,
+                "process_material_configuration_matches": (
+                    reference_process_material_configuration_matches(
+                        reference_condition_checks
+                    )
+                ),
+                "model_formulation_matches": reference_condition_checks[
+                    "shell_formulation_and_thickness_contact_match"
+                ],
+                "direct_comparison_valid": bool(
+                    reference_force_stroke_csv is not None
+                    and reference_process_material_configuration_matches(
+                        reference_condition_checks
+                    )
+                ),
                 "reason": (
-                    "CSV input enables a numerical overlap comparison, but does "
-                    "not certify matching model conditions."
+                    "Numerical overlap comparison is valid for the selected "
+                    "process/material conditions; the solid versus shell "
+                    "formulation difference remains reported separately."
+                    if (reference_force_stroke_csv is not None
+                        and reference_process_material_configuration_matches(
+                            reference_condition_checks
+                        )) else
+                    "CSV input is available, but BHF, friction, material, or "
+                    "load control does not match the reference."
                     if reference_force_stroke_csv is not None else
                     "The reference input requests punch RF/U history, but its "
                     "output database and an independent force-stroke curve are "
@@ -7177,15 +7576,52 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 "reference_measurements_available": (
                     reference_thickness_csv is not None
                 ),
+                "published_numerical_prediction": (
+                    reference["canonical_numisheet93_b3"][
+                        "published_thickness_prediction"
+                    ]
+                ),
+                "published_prediction_process_load_friction_stroke_match": bool(
+                    reference_condition_checks["blank_holder_force_matches"]
+                    and reference_condition_checks[
+                        "friction_coefficient_matches"
+                    ]
+                    and reference_stroke_reached
+                ),
+                "published_prediction_material_equivalence_established": False,
+                "published_prediction_region_mapping_available": False,
                 "direct_comparison_valid": False,
+                "user_csv_process_material_configuration_matches": (
+                    reference_process_material_configuration_matches(
+                        reference_condition_checks
+                    )
+                ),
+                "user_csv_model_formulation_matches": reference_condition_checks[
+                    "shell_formulation_and_thickness_contact_match"
+                ],
+                "user_csv_direct_comparison_valid": bool(
+                    reference_thickness_csv is not None
+                    and reference_process_material_configuration_matches(
+                        reference_condition_checks
+                    )
+                ),
                 "reason": (
-                    "CSV input enables a numerical overlap comparison, but does "
-                    "not certify matching model conditions."
+                    "User CSV overlap comparison is valid for the selected "
+                    "process/material conditions; the solid versus shell "
+                    "formulation difference remains reported separately."
+                    if (reference_thickness_csv is not None
+                        and reference_process_material_configuration_matches(
+                            reference_condition_checks
+                        )) else
+                    "A user CSV is available, but BHF, friction, material, or "
+                    "load control does not match the reference."
                     if reference_thickness_csv is not None else
-                    "The local benchmark data provide the initial 0.78 mm "
-                    "blank thickness but no measured post-forming thickness "
-                    "profile. Model profiles are reported separately for the "
-                    "formed and springback states."
+                    "A published ABAQUS table gives punch, die, and wall-region "
+                    "thickness predictions for the 19.6 kN process, but its "
+                    "material differs from canonical B3 and its region labels "
+                    "are not mapped to this model's x-profile. The local data "
+                    "contain no measured post-forming thickness profile. Model "
+                    "profiles are reported for formed and springback states."
                 ),
             },
             "user_supplied_reference_curves": reference_data_comparisons(
@@ -7223,36 +7659,53 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         "published_comparison"
                     ]["isotropic_hardening_flange_angle_after_springback_deg"],
                     "puso_hardening_law_selected": puso_isotropic_hardening,
-                    "reference_friction_condition_confirmed": False,
-                    "same_shell_formulation": False,
+                    "reference_friction_condition_confirmed": (
+                        puso_reference_condition_checks[
+                            "friction_coefficient_matches"
+                        ]
+                    ),
+                    "reference_process_material_conditions_match": (
+                        puso_reference_condition_checks[
+                            "process_material_conditions_match"
+                        ]
+                    ),
+                    "full_reference_stroke_reached": (
+                        puso_reference_condition_checks[
+                            "full_reference_stroke_reached"
+                        ]
+                    ),
+                    "springback_equilibrium_converged": bool(
+                        springback_residual <= springback_tolerance
+                    ),
+                    "punch_withdrawal_completed": punch_withdrawal_completed,
+                    "experimental_angle_comparison_valid": (
+                        puso_reference_comparison_possible
+                    ),
+                    "same_shell_formulation": None,
+                    "published_formulation_match_confirmed": False,
+                    "published_formulation_status": (
+                        "not documented well enough for a formulation match"
+                    ),
                     "direct_comparison_valid": False,
                     "interpretation": (
-                        "The Puso 17.20 degree result is reported as a method-level "
-                        "comparison only. The local Puso law can be selected, but "
-                        "the published friction condition and shell formulation "
-                        "are not established as matching this solid model."
+                        "The Puso 17.20 degree result is a direct process/material "
+                        "comparator when the Puso law, 2.45 kN holder load, and "
+                        "0.144 friction are selected. This solid-element run is "
+                        "still not an exact reproduction because the published "
+                        "element/contact formulation is not established as matching."
                     ),
                 },
-                "direct_comparison_valid": False,
+                "direct_comparison_valid": puso_reference_comparison_possible,
                 "reason": (
-                    "The experimental angle is a useful target, but this run "
-                    "uses a plane-strain solid model with "
-                    + ("finite-strain Hill48" if finite_strain_hill48
-                       else "isotropic finite-strain J2" if finite_strain_j2
-                       else "small-strain Hill48")
-                    + ", friction coefficient "
-                    + f"{friction_coefficient:g}, and no shell-thickness "
-                    "contact. The benchmark uses a shell formulation, "
-                    "friction coefficient 0.144, and tabular Hill48 response. "
-                    + (
-                        "The local Puso isotropic hardening option is active, "
-                        "but the published Puso simulation's friction and shell "
-                        "conditions are not established as matching."
-                        if puso_isotropic_hardening else
-                        "The published 17.20 degree isotropic result uses a "
-                        "fitted power-law hardening curve, not the local deck "
-                        "material curve."
-                    )
+                    "The 17.1 degree experimental mean is comparable when the "
+                    "Puso isotropic J2 law, 2.45 kN holder load, 0.144 friction, "
+                    "full stroke, and springback equilibrium all match. The "
+                    "local plane-strain solid formulation is recorded separately."
+                    if puso_reference_comparison_possible else
+                    "The 17.1 degree experiment is a valid target only for a "
+                    "converged full-stroke run matching the Puso material, "
+                    "2.45 kN holder load, and 0.144 friction; inspect the "
+                    "Puso-specific condition checks for unmet conditions."
                 ),
             },
         },
@@ -7295,6 +7748,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             force_stagnation_iteration_limit
         ),
         "blank_holder_force_N_half_model": half_model_holder_force,
+        "blank_holder_force_total_N": resolved_blank_holder_force_total_n,
         "steps": records,
         "increment_rejection_count": len(failure_log),
         "last_increment_rejections": failure_log,
@@ -7410,7 +7864,9 @@ def main():
     parser.add_argument("--maximum-stroke-mm", type=float, default=70.0)
     parser.add_argument("--maximum-increment-mm", type=float, default=0.1)
     parser.add_argument("--refine-punch-arc", action="store_true",
-                        help="redistribute x cells toward the punch corner radius")
+                        help=("redistribute x cells toward the punch corner "
+                              "radius; with --refine-holder-return, bisect "
+                              "the observed x=18..36 mm tool-contact corridor"))
     parser.add_argument("--refine-holder-corner", action="store_true",
                         help="concentrate x cells around the rounded blank-holder corner")
     parser.add_argument("--refine-tool-contacts", action="store_true",
@@ -7450,8 +7906,9 @@ def main():
                         help="return forming force/stroke results without springback")
     parser.add_argument(
         "--withdraw-punch-after-forming", action="store_true",
-        help=("continue the frictionless contact equilibrium path while "
-              "retracting the punch from the formed stroke to zero"),
+        help=("continue the contact equilibrium path with the configured "
+              "friction law while retracting the punch from the formed stroke "
+              "to zero"),
     )
     parser.add_argument(
         "--holder-position-control-mm", type=float, default=None,
@@ -7467,6 +7924,17 @@ def main():
                         help="maximum load-release fraction increment for springback")
     parser.add_argument("--friction-coefficient", type=float, default=0.0,
                         help="Coulomb coefficient for punch, die, and holder contact")
+    parser.add_argument(
+        "--blank-holder-force-total-n", type=float, default=None,
+        help=("override total blank-holder force across the full blank width "
+              "in N (for example, 19600 for the NUMISHEET B3 condition)")
+    )
+    parser.add_argument(
+        "--canonical-b3-material", action="store_true",
+        help=("use Burchitz Appendix A.3 Hill48 ratios and Nadai hardening "
+              "(YS=173.1 MPa, C=565.32 MPa, n=0.235) instead of the "
+              "official Abaqus deck's material table")
+    )
     parser.add_argument(
         "--use-reference-friction", action="store_true",
         help=("set friction to the coefficient recorded in the local "
@@ -7528,7 +7996,9 @@ def main():
                          args.finite_strain_hill48,
                          args.reference_force_stroke_csv,
                          args.reference_thickness_csv,
-                         args.reference_thickness_state), indent=2))
+                         args.reference_thickness_state,
+                         args.blank_holder_force_total_n,
+                         args.canonical_b3_material), indent=2))
 
 
 if __name__ == "__main__":
