@@ -31,9 +31,11 @@ Libraries such as scikit-fem therefore become more valuable, not less: they
 provide a transparent mathematical vocabulary while avoiding the cost of
 embedding every new formulation in a monolithic compiled solver.
 
-`scikit-fem-native` aims to combine that flexibility with faster assembly.  It is a
-selectable backend for Python finite-element applications, not a separate owner
-of their material models or physical formulations.
+`scikit-fem-native` aims to combine that flexibility with faster assembly. It
+provides reusable constitutive models and element-local physical kernels as
+well as a selectable backend for Python finite-element applications. Global
+system assembly, constraints, and coupling between physical fields remain
+composable responsibilities of the application or solver.
 
 ## Built on the work of scikit-fem
 
@@ -90,6 +92,17 @@ Applications can select `skfem.asm` or `skfemntv.asm` at their backend
 boundary while preserving the weak-form call site.  `skfemntv` is not yet a
 complete replacement for every scikit-fem feature, so backend selection should
 remain explicit.
+
+## Constitutive models and local element kernels
+
+The package also exposes reusable local physics APIs. For example,
+`IsotropicLinearElasticity` defines the material law and
+`Hex8LinearElasticityKernel` evaluates one element's stiffness and
+integration-point response. The kernel does not scatter into a global sparse
+matrix; the caller owns global DOF mapping, boundary constraints, and coupling
+to other fields. Thermal, surface, Tet10, Hex20, J2, and St. Venant–Kirchhoff
+local kernels follow the same separation. See the API reference and examples
+for supported element and quadrature combinations.
 
 ## Experimental H(div): affine RT0 simplices
 
