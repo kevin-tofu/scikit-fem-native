@@ -73,4 +73,26 @@ class IsotropicLinearElasticity:
         )
 
 
-__all__ = ["IsotropicLinearElasticity"]
+def isotropic_linear_elasticity_form(material: IsotropicLinearElasticity):
+    """Return the weak form for 3D isotropic small-strain elasticity.
+
+    The constitutive expression lives with the material model. The caller owns
+    global assembly and coupling to constraints or other physical fields.
+    """
+    if not isinstance(material, IsotropicLinearElasticity):
+        raise TypeError("material must be an IsotropicLinearElasticity")
+
+    from .forms import BilinearForm
+    from .helpers import ddot, div, sym_grad
+
+    @BilinearForm
+    def elasticity(u, v, _w):
+        return (
+            2.0 * material.lame_mu * ddot(sym_grad(u), sym_grad(v))
+            + material.lame_lambda * div(u) * div(v)
+        )
+
+    return elasticity
+
+
+__all__ = ["IsotropicLinearElasticity", "isotropic_linear_elasticity_form"]

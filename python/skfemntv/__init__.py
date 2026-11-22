@@ -150,7 +150,10 @@ from .hdiv_basis import (
     AffineSimplexRT0Basis,AffineTetRT0Basis,AffineTriRT0Basis,
 )
 from .hdiv_assembler import RT0DG0MixedAssembler,SimplexRT0Assembler
-from .linear_elasticity import IsotropicLinearElasticity
+from .linear_elasticity import (
+    IsotropicLinearElasticity,
+    isotropic_linear_elasticity_form,
+)
 from .thermal import (
     IsotropicThermalMaterial,
     ScalarThermalElementContributions,
@@ -224,6 +227,7 @@ except _PackageNotFoundError:
 __all__ = [
     "__version__",
     "IsotropicLinearElasticity",
+    "isotropic_linear_elasticity_form",
     "IsotropicThermalMaterial",
     "ScalarThermalElementContributions",
     "ScalarThermalElementKernel",
