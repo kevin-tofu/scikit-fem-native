@@ -95,6 +95,65 @@ class J2MaterialEvaluation:
     energy: np.ndarray
 
 
+def evaluate_j2_material_points(
+    strain: np.ndarray,
+    committed_state: np.ndarray,
+    *,
+    lame_lambda: float,
+    shear_modulus: float,
+    yield_stress: float,
+    hardening_modulus: float,
+) -> J2MaterialEvaluation:
+    """Evaluate a batched J2 point kernel from kktkit material parameters.
+
+    This is a low-level constitutive kernel entry point. It accepts numerical
+    parameters and committed quadrature state; material configuration and
+    state ownership remain with the calling analysis package.
+    """
+    eps = np.asarray(strain, dtype=np.float64)
+    if eps.ndim < 2 or eps.shape[-2:] != (3, 3) or not np.all(np.isfinite(eps)):
+        raise ValueError("strain must be finite with trailing shape (3, 3)")
+    if not np.allclose(eps, eps.swapaxes(-1, -2), rtol=1e-12, atol=1e-14):
+        raise ValueError("strain tensors must be symmetric")
+    batch_shape = eps.shape[:-2]
+    state = np.asarray(committed_state, dtype=np.float64)
+    expected_state_shape = batch_shape + (7,)
+    if state.shape != expected_state_shape or not np.all(np.isfinite(state)):
+        raise ValueError(f"committed_state must be finite with shape {expected_state_shape}")
+    if np.any(state[..., 6] < 0.0):
+        raise ValueError("committed equivalent plastic strain must be nonnegative")
+
+    material_values = np.asarray(
+        [lame_lambda, shear_modulus, yield_stress, hardening_modulus],
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(material_values)):
+        raise ValueError("J2 kernel parameters must be finite")
+    if shear_modulus <= 0.0 or lame_lambda + 2.0 * shear_modulus / 3.0 <= 0.0:
+        raise ValueError("J2 kernel requires positive shear and bulk moduli")
+    if yield_stress < 0.0 or hardening_modulus < 0.0:
+        raise ValueError("J2 yield stress and hardening modulus must be nonnegative")
+
+    flat_strain = np.ascontiguousarray(eps.reshape(-1, 3, 3))
+    flat_state = np.ascontiguousarray(state.reshape(-1, 7))
+    stress, tangent, trial, plastic, equivalent, energy = evaluate_j2_material(
+        flat_strain,
+        flat_state,
+        float(lame_lambda),
+        float(shear_modulus),
+        float(yield_stress),
+        float(hardening_modulus),
+    )
+    return J2MaterialEvaluation(
+        stress.reshape(batch_shape + (3, 3)),
+        tangent.reshape(batch_shape + (3, 3, 3, 3)),
+        trial.reshape(batch_shape + (7,)),
+        plastic.astype(bool).reshape(batch_shape),
+        equivalent.reshape(batch_shape),
+        energy.reshape(batch_shape),
+    )
+
+
 class J2PlasticityMaterial:
     """3D small-strain J2 material point with isotropic linear hardening.
 
@@ -114,8 +173,8 @@ class J2PlasticityMaterial:
         self.hardening_modulus=float(hardening_modulus)
         if self.young_modulus<=0. or not -1.<self.poisson_ratio<.5:
             raise ValueError("require young_modulus > 0 and -1 < poisson_ratio < 0.5")
-        if self.yield_stress<=0. or self.hardening_modulus<0.:
-            raise ValueError("yield_stress must be positive and hardening_modulus nonnegative")
+        if self.yield_stress<0. or self.hardening_modulus<0.:
+            raise ValueError("yield_stress and hardening_modulus must be nonnegative")
         self.mu=self.young_modulus/(2.*(1.+self.poisson_ratio))
         self.lambda_=self.young_modulus*self.poisson_ratio/(
             (1.+self.poisson_ratio)*(1.-2.*self.poisson_ratio))
@@ -131,27 +190,14 @@ class J2PlasticityMaterial:
 
     def evaluate(self,strain,committed_state) -> J2MaterialEvaluation:
         """Return stress, algorithmic tangent, and a fresh trial history."""
-        eps=np.asarray(strain,dtype=np.float64)
-        if eps.ndim<2 or eps.shape[-2:]!=(3,3) or not np.all(np.isfinite(eps)):
-            raise ValueError("strain must be finite with trailing shape (3, 3)")
-        if not np.allclose(eps,eps.swapaxes(-1,-2),rtol=1e-12,atol=1e-14):
-            raise ValueError("strain tensors must be symmetric")
-        batch=eps.shape[:-2]
-        state=np.asarray(committed_state,dtype=np.float64)
-        if state.shape!=batch+(7,) or not np.all(np.isfinite(state)):
-            raise ValueError(f"committed_state must be finite with shape {batch+(7,)}")
-        if np.any(state[...,6]<0.):
-            raise ValueError("committed equivalent plastic strain must be nonnegative")
-        flat_strain=np.ascontiguousarray(eps.reshape(-1,3,3))
-        flat_state=np.ascontiguousarray(state.reshape(-1,7))
-        stress,tangent,trial,plastic,equivalent,energy=evaluate_j2_material(
-            flat_strain,flat_state,self.lambda_,self.mu,
-            self.yield_stress,self.hardening_modulus)
-        return J2MaterialEvaluation(
-            stress.reshape(batch+(3,3)),
-            tangent.reshape(batch+(3,3,3,3)),
-            trial.reshape(batch+(7,)),plastic.astype(bool).reshape(batch),
-            equivalent.reshape(batch),energy.reshape(batch))
+        return evaluate_j2_material_points(
+            strain,
+            committed_state,
+            lame_lambda=self.lambda_,
+            shear_modulus=self.mu,
+            yield_stress=self.yield_stress,
+            hardening_modulus=self.hardening_modulus,
+        )
 
     def commit(self,evaluation: J2MaterialEvaluation) -> np.ndarray:
         """Adopt trial material history by making an independent copy."""
@@ -439,6 +485,7 @@ class NeoHookeanTet4Assembler(NeoHookeanAssembler):
 
 __all__=[
     "J2MaterialEvaluation","J2PlasticityAssembler","J2PlasticityMaterial",
+    "evaluate_j2_material_points",
     "J2PlasticityTet4Assembler","NeoHookeanAssembler","NeoHookeanMaterial",
     "NeoHookeanMaterialEvaluation","NeoHookeanTet4Assembler",
     "NonlinearEvaluation","PlasticEvaluation",

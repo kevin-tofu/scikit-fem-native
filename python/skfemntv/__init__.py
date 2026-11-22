@@ -167,6 +167,7 @@ from .nonlinear import (
     NeoHookeanTet4Assembler,
     NonlinearEvaluation,
     PlasticEvaluation,
+    evaluate_j2_material_points,
 )
 from .hill48 import (
     Hill48MaterialEvaluation,
@@ -255,6 +256,7 @@ __all__ = [
     "J2PlasticityAssembler",
     "J2PlasticityMaterial",
     "J2PlasticityTet4Assembler",
+    "evaluate_j2_material_points",
     "PlaneStrainJ2Assembler",
     "NeoHookeanAssembler",
     "NeoHookeanMaterial",

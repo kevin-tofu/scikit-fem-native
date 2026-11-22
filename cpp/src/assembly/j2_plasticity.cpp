@@ -100,7 +100,7 @@ py::tuple evaluate_j2_material(
     if(s.ndim!=2||s.shape[0]!=n||s.shape[1]!=7)
         throw std::invalid_argument("committed_state must have shape (points, 7)");
     if(!(std::isfinite(lambda)&&std::isfinite(mu)&&mu>0.&&lambda+2.*mu/3.>0.&&
-         std::isfinite(yield_stress)&&yield_stress>0.&&
+         std::isfinite(yield_stress)&&yield_stress>=0.&&
          std::isfinite(hardening)&&hardening>=0.))
         throw std::invalid_argument("material parameters are outside their valid range");
     const auto* ep=static_cast<const double*>(e.ptr);
@@ -156,7 +156,7 @@ py::tuple evaluate_j2_plasticity(
     if (u.ndim!=1 || s.ndim!=3 || s.shape[0]!=ne || s.shape[1]!=nq || s.shape[2]!=7)
         throw std::invalid_argument("committed_state must have shape (elements, quadrature, 7)");
     if (!(std::isfinite(lambda) && std::isfinite(mu) && mu>0. && lambda+2.*mu/3.>0. &&
-          std::isfinite(yield_stress) && yield_stress>0. &&
+          std::isfinite(yield_stress) && yield_stress>=0. &&
           std::isfinite(hardening) && hardening>=0.))
         throw std::invalid_argument("material parameters are outside their valid range");
     const auto* di=static_cast<const std::int64_t*>(d.ptr);
@@ -239,7 +239,7 @@ py::tuple evaluate_j2_plane_strain(
     if (u.ndim!=1 || s.ndim!=3 || s.shape[0]!=ne || s.shape[1]!=nq || s.shape[2]!=7)
         throw std::invalid_argument("committed_state must have shape (elements, quadrature, 7)");
     if (!(std::isfinite(lambda) && std::isfinite(mu) && mu>0. && lambda+2.*mu/3.>0. &&
-          std::isfinite(yield_stress) && yield_stress>0. &&
+          std::isfinite(yield_stress) && yield_stress>=0. &&
           std::isfinite(hardening) && hardening>=0.))
         throw std::invalid_argument("material parameters are outside their valid range");
     const auto* di=static_cast<const std::int64_t*>(d.ptr);

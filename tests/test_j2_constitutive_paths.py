@@ -21,6 +21,37 @@ def test_hydrostatic_strain_does_not_activate_j2_plasticity():
     np.testing.assert_array_equal(response.trial_state,state)
 
 
+def test_low_level_point_kernel_matches_material_point_facade():
+    model=material()
+    strain=np.asarray([np.diag([.01,0.,0.]),np.diag([.0001,0.,0.])])
+    state=model.initial_state((2,))
+    expected=model.evaluate(strain,state)
+    actual=skfemntv.evaluate_j2_material_points(
+        strain,
+        state,
+        lame_lambda=model.lambda_,
+        shear_modulus=model.mu,
+        yield_stress=model.yield_stress,
+        hardening_modulus=model.hardening_modulus,
+    )
+    for name in (
+        "stress",
+        "tangent",
+        "trial_state",
+        "plastic_points",
+        "equivalent_stress",
+        "energy",
+    ):
+        np.testing.assert_allclose(getattr(actual,name),getattr(expected,name))
+
+
+def test_low_level_point_kernel_accepts_zero_yield_stress():
+    model=skfemntv.J2PlasticityMaterial(1000.,.25,0.,20.)
+    response=model.evaluate(np.diag([1.e-4,0.,0.]),model.initial_state())
+    assert bool(response.plastic_points)
+    assert response.trial_state[6]>0.
+
+
 def test_pure_shear_uses_von_mises_shear_yield_condition():
     model=material()
     strain=np.zeros((3,3))
