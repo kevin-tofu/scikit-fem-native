@@ -35,6 +35,14 @@ embedding every new formulation in a monolithic compiled solver.
 selectable backend for Python finite-element applications, not a separate owner
 of their material models or physical formulations.
 
+For applications that own material configuration and state, the nonlinear
+module also exposes low-level batched point kernels. For example,
+`evaluate_j2_material_points` accepts strain tensors, committed point states,
+and scalar constitutive parameters, and returns stress, tangent, and trial
+state. A caller can integrate these outputs with generic native linear and
+cross-bilinear forms. The standalone `J2PlasticityMaterial` facade delegates
+to the same point kernel.
+
 ## Built on the work of scikit-fem
 
 This project exists because
