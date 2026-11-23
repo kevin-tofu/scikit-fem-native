@@ -164,6 +164,138 @@ class J2PlasticityMaterial:
         return np.array(evaluation.trial_state,dtype=np.float64,copy=True)
 
 
+@dataclass(frozen=True)
+class J2ElementEvaluation:
+    """Element-local J2 residual, tangent, and quadrature response."""
+
+    strain: np.ndarray
+    stress: np.ndarray
+    tangent: np.ndarray
+    residual: np.ndarray
+    element_tangent: np.ndarray
+    trial_state: np.ndarray
+    plastic_points: np.ndarray
+    equivalent_stress: np.ndarray
+    energy: float
+
+
+class J2ElementKernel:
+    """Integrate J2 element responses without global DOF scatter."""
+
+    def __init__(self, material: J2PlasticityMaterial):
+        if not isinstance(material, J2PlasticityMaterial):
+            raise TypeError("material must be a J2PlasticityMaterial")
+        self.material = material
+
+    def evaluate(
+        self,
+        displacement: np.ndarray,
+        shape_gradients: np.ndarray,
+        quadrature_weights: np.ndarray,
+        committed_state: np.ndarray,
+        *,
+        compute_tangent: bool = True,
+    ) -> J2ElementEvaluation:
+        values = np.asarray(displacement, dtype=np.float64)
+        gradients = np.asarray(shape_gradients, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
+        state = np.asarray(committed_state, dtype=np.float64)
+        if values.ndim != 2 or values.shape[1] != 3:
+            raise ValueError("element displacement must have shape (nodes, 3)")
+        if gradients.ndim != 3 or gradients.shape[1:] != (values.shape[0], 3):
+            raise ValueError("shape_gradients must have shape (quadrature, nodes, 3)")
+        result = self.evaluate_batch(
+            values[None, ...],
+            gradients[None, ...],
+            weights[None, ...],
+            state[None, ...],
+            compute_tangent=compute_tangent,
+        )
+        return J2ElementEvaluation(
+            strain=result.strain[0],
+            stress=result.stress[0],
+            tangent=result.tangent[0],
+            residual=result.residual[0],
+            element_tangent=result.element_tangent[0],
+            trial_state=result.trial_state[0],
+            plastic_points=result.plastic_points[0],
+            equivalent_stress=result.equivalent_stress[0],
+            energy=result.energy,
+        )
+
+    def evaluate_batch(
+        self,
+        displacement: np.ndarray,
+        shape_gradients: np.ndarray,
+        quadrature_weights: np.ndarray,
+        committed_state: np.ndarray,
+        *,
+        compute_tangent: bool = True,
+    ) -> J2ElementEvaluation:
+        """Evaluate a batch of cells while leaving all global scatter to caller."""
+        values = np.asarray(displacement, dtype=np.float64)
+        gradients = np.asarray(shape_gradients, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
+        state = np.asarray(committed_state, dtype=np.float64)
+        if values.ndim != 3 or values.shape[2] != 3:
+            raise ValueError("batch displacement must have shape (elements, nodes, 3)")
+        element_count, node_count = values.shape[:2]
+        if gradients.ndim != 4 or gradients.shape[0] != element_count:
+            raise ValueError(
+                "batch shape_gradients must have shape (elements, quadrature, nodes, 3)"
+            )
+        quadrature_count = gradients.shape[1]
+        if gradients.shape[2:] != (node_count, 3):
+            raise ValueError("shape gradients do not match element displacement")
+        if weights.shape != (element_count, quadrature_count) or np.any(weights <= 0.0):
+            raise ValueError("quadrature_weights must be positive per element point")
+        if state.shape != (element_count, quadrature_count, 7):
+            raise ValueError("committed_state must have shape (elements, quadrature, 7)")
+        if not all(
+            np.all(np.isfinite(item)) for item in (values, gradients, weights, state)
+        ):
+            raise ValueError("element batch inputs must be finite")
+        displacement_gradient = np.einsum(
+            "eni,eqnj->eqij", values, gradients, optimize=True
+        )
+        strain = 0.5 * (
+            displacement_gradient + np.swapaxes(displacement_gradient, -1, -2)
+        )
+        material = self.material.evaluate(strain, state)
+        residual = np.einsum(
+            "eqnj,eqij,eq->eni",
+            gradients,
+            material.stress,
+            weights,
+            optimize=True,
+        ).reshape((element_count, node_count * 3))
+        if compute_tangent:
+            tensor = np.einsum(
+                "eqaj,eqijkl,eqbl,eq->eaibk",
+                gradients,
+                material.tangent,
+                gradients,
+                weights,
+                optimize=True,
+            )
+            local_tangent = np.ascontiguousarray(
+                tensor.reshape((element_count, node_count * 3, node_count * 3))
+            )
+        else:
+            local_tangent = np.empty((element_count, 0, 0), dtype=np.float64)
+        return J2ElementEvaluation(
+            strain=strain,
+            stress=material.stress,
+            tangent=material.tangent,
+            residual=residual,
+            element_tangent=local_tangent,
+            trial_state=material.trial_state,
+            plastic_points=material.plastic_points,
+            equivalent_stress=material.equivalent_stress,
+            energy=float(np.sum(material.energy * weights)),
+        )
+
+
 class J2PlasticityAssembler:
     """Small-strain 3D J2 plasticity with isotropic linear hardening.
 
@@ -366,6 +498,260 @@ class NeoHookeanMaterial:
             tangent.reshape(batch+(3,3,3,3)),
             energy.reshape(batch),cauchy.reshape(batch+(3,3)),
             equivalent.reshape(batch))
+
+
+@dataclass(frozen=True)
+class StVenantKirchhoffMaterialEvaluation:
+    """Batched total-Lagrangian stress and tangent response.
+
+    ``tangent[..., i, J, k, L]`` is ``dP[i, J] / dF[k, L]``.
+    """
+
+    deformation_gradient: np.ndarray
+    green_lagrange_strain: np.ndarray
+    second_piola_kirchhoff_stress: np.ndarray
+    first_piola_kirchhoff_stress: np.ndarray
+    cauchy_stress: np.ndarray
+    tangent: np.ndarray
+    strain_energy_density: np.ndarray
+
+
+@dataclass(frozen=True)
+class StVenantKirchhoffMaterial:
+    """Isotropic St. Venant–Kirchhoff material-point law.
+
+    This class owns constitutive response. Element quadrature and global
+    assembly remain the responsibility of an assembler.
+    """
+
+    young_modulus: float
+    poisson_ratio: float
+
+    def __post_init__(self):
+        young=float(self.young_modulus)
+        poisson=float(self.poisson_ratio)
+        if not np.isfinite(young) or young<=0.:
+            raise ValueError("young_modulus must be positive and finite")
+        if not np.isfinite(poisson) or not -1.<poisson<.5:
+            raise ValueError("poisson_ratio must be finite and in (-1, 0.5)")
+        object.__setattr__(self,"young_modulus",young)
+        object.__setattr__(self,"poisson_ratio",poisson)
+
+    @property
+    def lame_lambda(self):
+        e,nu=self.young_modulus,self.poisson_ratio
+        return e*nu/((1.+nu)*(1.-2.*nu))
+
+    @property
+    def lame_mu(self):
+        return self.young_modulus/(2.*(1.+self.poisson_ratio))
+
+    def evaluate(self,deformation_gradient) -> StVenantKirchhoffMaterialEvaluation:
+        f=np.asarray(deformation_gradient,dtype=np.float64)
+        if f.ndim<2 or f.shape[-2:]!=(3,3) or not np.all(np.isfinite(f)):
+            raise ValueError(
+                "deformation_gradient must be finite with trailing shape (3, 3)"
+            )
+        jacobian=np.linalg.det(f)
+        if np.any(jacobian<=0.):
+            raise ValueError("deformation_gradient must have positive determinant")
+        identity=np.eye(3)
+        strain=.5*(np.swapaxes(f,-1,-2)@f-identity)
+        trace=np.trace(strain,axis1=-2,axis2=-1)
+        second_piola=(
+            self.lame_lambda*trace[...,None,None]*identity
+            +2.*self.lame_mu*strain
+        )
+        first_piola=f@second_piola
+        cauchy=(first_piola@np.swapaxes(f,-1,-2))/jacobian[...,None,None]
+        energy=(
+            .5*self.lame_lambda*trace**2
+            +self.lame_mu*np.sum(strain*strain,axis=(-2,-1))
+        )
+        tangent=np.empty(f.shape[:-2]+(3,3,3,3),dtype=np.float64)
+        for k in range(3):
+            for l in range(3):
+                delta_f=np.zeros_like(f)
+                delta_f[...,k,l]=1.
+                delta_strain=.5*(
+                    np.swapaxes(delta_f,-1,-2)@f
+                    +np.swapaxes(f,-1,-2)@delta_f
+                )
+                delta_trace=np.trace(delta_strain,axis1=-2,axis2=-1)
+                delta_second_piola=(
+                    self.lame_lambda*delta_trace[...,None,None]*identity
+                    +2.*self.lame_mu*delta_strain
+                )
+                delta_first_piola=delta_f@second_piola+f@delta_second_piola
+                tangent[..., :, :, k, l]=delta_first_piola
+        return StVenantKirchhoffMaterialEvaluation(
+            deformation_gradient=f.copy(),
+            green_lagrange_strain=strain,
+            second_piola_kirchhoff_stress=second_piola,
+            first_piola_kirchhoff_stress=first_piola,
+            cauchy_stress=cauchy,
+            tangent=tangent,
+            strain_energy_density=energy,
+        )
+
+
+@dataclass(frozen=True)
+class ThermoelasticStVenantKirchhoffMaterialEvaluation:
+    """Finite-deformation thermoelastic stress and consistent field tangents."""
+
+    deformation_gradient: np.ndarray
+    thermal_strain: np.ndarray
+    mechanical_green_lagrange_strain: np.ndarray
+    second_piola_kirchhoff_stress: np.ndarray
+    first_piola_kirchhoff_stress: np.ndarray
+    tangent_deformation_gradient: np.ndarray
+    tangent_temperature_change: np.ndarray
+    strain_energy_density: np.ndarray
+    entropy_density: np.ndarray
+    entropy_deformation_gradient: np.ndarray
+    entropy_temperature_change: np.ndarray
+
+
+@dataclass(frozen=True)
+class ThermoelasticStVenantKirchhoffMaterial:
+    """StVK material with isotropic thermal eigenstrain.
+
+    The constitutive strain is ``E_mech = 0.5 * (F.T @ F - I) - alpha*dT*I``.
+    Thermal strain is linearized in temperature change, while the mechanical
+    kinematics retain the total-Lagrangian deformation gradient.
+    """
+
+    young_modulus: float
+    poisson_ratio: float
+    thermal_expansion_coefficient: float
+
+    def __post_init__(self) -> None:
+        young = float(self.young_modulus)
+        poisson = float(self.poisson_ratio)
+        expansion = float(self.thermal_expansion_coefficient)
+        if not np.isfinite(young) or young <= 0.0:
+            raise ValueError("young_modulus must be positive and finite")
+        if not np.isfinite(poisson) or not -1.0 < poisson < 0.5:
+            raise ValueError("poisson_ratio must be finite and in (-1, 0.5)")
+        if not np.isfinite(expansion):
+            raise ValueError("thermal_expansion_coefficient must be finite")
+        object.__setattr__(self, "young_modulus", young)
+        object.__setattr__(self, "poisson_ratio", poisson)
+        object.__setattr__(self, "thermal_expansion_coefficient", expansion)
+
+    @property
+    def lame_lambda(self) -> float:
+        young = self.young_modulus
+        poisson = self.poisson_ratio
+        return young * poisson / ((1.0 + poisson) * (1.0 - 2.0 * poisson))
+
+    @property
+    def lame_mu(self) -> float:
+        return self.young_modulus / (2.0 * (1.0 + self.poisson_ratio))
+
+    def evaluate(
+        self,
+        deformation_gradient: np.ndarray,
+        temperature_change: np.ndarray | float,
+    ) -> ThermoelasticStVenantKirchhoffMaterialEvaluation:
+        deformation = np.asarray(deformation_gradient, dtype=np.float64)
+        if (
+            deformation.ndim < 2
+            or deformation.shape[-2:] != (3, 3)
+            or not np.all(np.isfinite(deformation))
+        ):
+            raise ValueError(
+                "deformation_gradient must be finite with trailing shape (3, 3)"
+            )
+        jacobian = np.linalg.det(deformation)
+        if np.any(jacobian <= 0.0):
+            raise ValueError("deformation_gradient must have positive determinant")
+        temperature = np.asarray(temperature_change, dtype=np.float64)
+        try:
+            temperature = np.broadcast_to(temperature, deformation.shape[:-2])
+        except ValueError as error:
+            raise ValueError(
+                "temperature_change must be scalar or match deformation points"
+            ) from error
+        if not np.all(np.isfinite(temperature)):
+            raise ValueError("temperature_change must be finite")
+
+        identity = np.eye(3)
+        thermal_strain = (
+            self.thermal_expansion_coefficient
+            * temperature[..., None, None]
+            * identity
+        )
+        green_strain = 0.5 * (
+            np.swapaxes(deformation, -1, -2) @ deformation - identity
+        )
+        mechanical_strain = green_strain - thermal_strain
+        strain_trace = np.trace(mechanical_strain, axis1=-2, axis2=-1)
+        second_piola = (
+            self.lame_lambda * strain_trace[..., None, None] * identity
+            + 2.0 * self.lame_mu * mechanical_strain
+        )
+        first_piola = deformation @ second_piola
+        cauchy = (
+            first_piola @ np.swapaxes(deformation, -1, -2)
+        ) / jacobian[..., None, None]
+        energy = (
+            0.5 * self.lame_lambda * strain_trace**2
+            + self.lame_mu * np.sum(mechanical_strain**2, axis=(-2, -1))
+        )
+        tangent_deformation = np.empty(
+            deformation.shape[:-2] + (3, 3, 3, 3), dtype=np.float64
+        )
+        entropy_deformation = np.empty(deformation.shape[:-2] + (3, 3))
+        for k in range(3):
+            for component in range(3):
+                delta_deformation = np.zeros_like(deformation)
+                delta_deformation[..., k, component] = 1.0
+                delta_strain = 0.5 * (
+                    np.swapaxes(delta_deformation, -1, -2) @ deformation
+                    + np.swapaxes(deformation, -1, -2) @ delta_deformation
+                )
+                delta_trace = np.trace(delta_strain, axis1=-2, axis2=-1)
+                delta_second_piola = (
+                    self.lame_lambda * delta_trace[..., None, None] * identity
+                    + 2.0 * self.lame_mu * delta_strain
+                )
+                delta_first_piola = (
+                    delta_deformation @ second_piola
+                    + deformation @ delta_second_piola
+                )
+                tangent_deformation[..., :, :, k, component] = delta_first_piola
+                entropy_deformation[..., k, component] = (
+                    self.thermal_expansion_coefficient
+                    * np.trace(delta_second_piola, axis1=-2, axis2=-1)
+                )
+
+        thermal_stress_derivative = -self.thermal_expansion_coefficient * (
+            3.0 * self.lame_lambda + 2.0 * self.lame_mu
+        ) * identity
+        tangent_temperature = deformation @ thermal_stress_derivative
+        entropy_density = self.thermal_expansion_coefficient * np.trace(
+            second_piola, axis1=-2, axis2=-1
+        )
+        entropy_temperature = np.full(
+            temperature.shape,
+            -3.0
+            * self.thermal_expansion_coefficient**2
+            * (3.0 * self.lame_lambda + 2.0 * self.lame_mu),
+        )
+        return ThermoelasticStVenantKirchhoffMaterialEvaluation(
+            deformation_gradient=deformation.copy(),
+            thermal_strain=thermal_strain,
+            mechanical_green_lagrange_strain=mechanical_strain,
+            second_piola_kirchhoff_stress=second_piola,
+            first_piola_kirchhoff_stress=first_piola,
+            tangent_deformation_gradient=tangent_deformation,
+            tangent_temperature_change=tangent_temperature,
+            strain_energy_density=energy,
+            entropy_density=entropy_density,
+            entropy_deformation_gradient=entropy_deformation,
+            entropy_temperature_change=entropy_temperature,
+        )
 
 
 class NeoHookeanAssembler:

@@ -150,12 +150,59 @@ from .hdiv_basis import (
     AffineSimplexRT0Basis,AffineTetRT0Basis,AffineTriRT0Basis,
 )
 from .hdiv_assembler import RT0DG0MixedAssembler,SimplexRT0Assembler
+from .linear_elasticity import (
+    IsotropicLinearElasticity,
+    isotropic_linear_elasticity_form,
+)
+from .thermal import (
+    AffineTemperatureConductivity,
+    AffineTemperatureConductivityKernel,
+    IsotropicThermalMaterial,
+    KelvinVoigtDissipationContributions,
+    KelvinVoigtDissipationKernel,
+    NonlinearThermalElementContributions,
+    ScalarThermalElementContributions,
+    ScalarThermalElementKernel,
+    ThermalFluxEvaluation,
+    evaluate_thermal_flux,
+)
+from .hex8_elasticity import (
+    Hex8LinearElasticityIntegration,
+    Hex8LinearElasticityKernel,
+    Hex8LinearElasticityResponse,
+    Hex8StVenantKirchhoffKernel,
+    Hex8StVenantKirchhoffResponse,
+)
+from .hex20_elasticity import (
+    Hex20FacetLoadContributions,
+    Hex20LinearElasticityKernel,
+    Hex20LinearElasticityResponse,
+)
+from .tet10_elasticity import (
+    Tet10IntegrationData,
+    Tet10LinearElasticityKernel,
+    Tet10LinearElasticityResponse,
+    Tet10StVenantKirchhoffKernel,
+    Tet10StVenantKirchhoffResponse,
+)
+from .tet4_elasticity import (
+    Tet4StVenantKirchhoffKernel,
+    Tet4StVenantKirchhoffResponse,
+)
+from .surface_kernels import (
+    Quad4SurfaceIntegrationData,
+    Quad4SurfaceKernel,
+    Tri6SurfaceKernel,
+    Tri6SurfaceQuadratureData,
+)
 from .finite_strain import (
     FiniteStrainHill48Material,FiniteStrainJ2Evaluation,FiniteStrainJ2Material,
     PlaneStrainFiniteStrainHill48Assembler,PlaneStrainFiniteStrainJ2Assembler,
     PlaneStrainFiniteStrainPlasticEvaluation,
 )
 from .nonlinear import (
+    J2ElementEvaluation,
+    J2ElementKernel,
     J2MaterialEvaluation,
     J2PlasticityAssembler,
     J2PlasticityMaterial,
@@ -167,6 +214,10 @@ from .nonlinear import (
     NeoHookeanTet4Assembler,
     NonlinearEvaluation,
     PlasticEvaluation,
+    StVenantKirchhoffMaterial,
+    StVenantKirchhoffMaterialEvaluation,
+    ThermoelasticStVenantKirchhoffMaterial,
+    ThermoelasticStVenantKirchhoffMaterialEvaluation,
 )
 from .hill48 import (
     Hill48MaterialEvaluation,
@@ -184,6 +235,41 @@ except _PackageNotFoundError:
 
 __all__ = [
     "__version__",
+    "IsotropicLinearElasticity",
+    "isotropic_linear_elasticity_form",
+    "AffineTemperatureConductivity",
+    "AffineTemperatureConductivityKernel",
+    "IsotropicThermalMaterial",
+    "KelvinVoigtDissipationContributions",
+    "KelvinVoigtDissipationKernel",
+    "NonlinearThermalElementContributions",
+    "ScalarThermalElementContributions",
+    "ScalarThermalElementKernel",
+    "ThermalFluxEvaluation",
+    "evaluate_thermal_flux",
+    "Hex8LinearElasticityIntegration",
+    "Hex8LinearElasticityKernel",
+    "Hex8LinearElasticityResponse",
+    "Hex8StVenantKirchhoffKernel",
+    "Hex8StVenantKirchhoffResponse",
+    "Hex20FacetLoadContributions",
+    "Hex20LinearElasticityKernel",
+    "Hex20LinearElasticityResponse",
+    "Tet10IntegrationData",
+    "Tet10LinearElasticityKernel",
+    "Tet10LinearElasticityResponse",
+    "Tet10StVenantKirchhoffKernel",
+    "Tet10StVenantKirchhoffResponse",
+    "Tet4StVenantKirchhoffKernel",
+    "Tet4StVenantKirchhoffResponse",
+    "Quad4SurfaceIntegrationData",
+    "Quad4SurfaceKernel",
+    "Tri6SurfaceKernel",
+    "Tri6SurfaceQuadratureData",
+    "J2ElementEvaluation",
+    "J2ElementKernel",
+    "StVenantKirchhoffMaterial",
+    "StVenantKirchhoffMaterialEvaluation",
     "BACKEND",
     "CrossTabulation",
     "NativeCrossBilinearForm",
@@ -351,4 +437,45 @@ __all__ = [
     "ImplicitInterfacePair",
     "LevelSet",
     "LevelSetDiagnostics",
+]
+
+from .thermoelastic import (
+    ThermoelasticAssemblyEvaluation,
+    ThermoelasticStVenantKirchhoffAssembler,
+)
+
+__all__ += [
+    "ThermoelasticStVenantKirchhoffMaterial",
+    "ThermoelasticStVenantKirchhoffMaterialEvaluation",
+    "ThermoelasticAssemblyEvaluation",
+    "ThermoelasticStVenantKirchhoffAssembler",
+]
+
+from .weakforms import (
+    body_force_weak_form,
+    isotropic_linear_elasticity_weak_form,
+    isotropic_mass_weak_form,
+    isotropic_viscous_weak_form,
+    normal_pressure_weak_form,
+    scalar_thermal_capacity_weak_form,
+    scalar_thermal_conductivity_weak_form,
+    surface_convection_weak_form,
+    surface_heat_flux_weak_form,
+    surface_traction_weak_form,
+    thermal_expansion_coupling_weak_form,
+    volumetric_heat_source_weak_form,
+)
+__all__ += [
+    "body_force_weak_form",
+    "isotropic_linear_elasticity_weak_form",
+    "isotropic_mass_weak_form",
+    "isotropic_viscous_weak_form",
+    "normal_pressure_weak_form",
+    "scalar_thermal_capacity_weak_form",
+    "scalar_thermal_conductivity_weak_form",
+    "surface_convection_weak_form",
+    "surface_heat_flux_weak_form",
+    "surface_traction_weak_form",
+    "thermal_expansion_coupling_weak_form",
+    "volumetric_heat_source_weak_form",
 ]
