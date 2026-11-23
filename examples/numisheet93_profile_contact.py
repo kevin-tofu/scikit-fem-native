@@ -272,6 +272,19 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "SCIKIT_FVM_FORMING_INCREMENT_FLOOR_MM must be finite, positive, "
             "and no larger than maximum_increment_mm"
         )
+    resume_increment_setting = os.environ.get(
+        "SCIKIT_FVM_FORMING_RESUME_INCREMENT_MM"
+    )
+    resume_increment_mm = (
+        None if resume_increment_setting is None
+        else float(resume_increment_setting)
+    )
+    if (resume_increment_mm is not None
+            and (not np.isfinite(resume_increment_mm)
+                 or resume_increment_mm <= 0.)):
+        raise ValueError(
+            "SCIKIT_FVM_FORMING_RESUME_INCREMENT_MM must be finite and positive"
+        )
     forming_increment_recovery_factor = float(os.environ.get(
         "SCIKIT_FVM_FORMING_INCREMENT_RECOVERY_FACTOR", "1.5"
     ))
@@ -565,6 +578,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         finite_strain_j2
         and semismooth_first_setting in {"1", "true", "yes"}
     )
+    holder_support_transfer_default = not contact_semismooth_first
+    holder_support_transfer_enabled = os.environ.get(
+        "SCIKIT_FVM_FORMING_HOLDER_SUPPORT_TRANSFER",
+        "1" if holder_support_transfer_default else "0",
+    ).lower() in {"1", "true", "yes"}
     directional_tangent_refinements = int(os.environ.get(
         # At first yield the constitutive Jacobian is direction dependent.
         # Refresh once along the contact-constrained Newton direction by
@@ -1539,6 +1557,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         ),
         "holder_position_control_mm": holder_position_control_mm,
         "soft_holder_support_seed": soft_holder_support_seed,
+        "holder_support_transfer_enabled": holder_support_transfer_enabled,
         "soft_punch_support_seed": soft_punch_support_seed,
         "soft_die_support_seed": os.environ.get(
             "SCIKIT_FVM_FORMING_SOFT_DIE_SUPPORT_SEED", ""
@@ -1563,6 +1582,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     checkpoint_holder_position_changed = False
     saved_mesh_refinement_level = mesh_refinement_level
     nested_mesh_transfer = False
+    contact_discretization_baseline_pending = False
     if resume:
         if not checkpoint.is_file():
             raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
@@ -1646,6 +1666,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                          or float(saved_metadata.get(
                              "mortar_gap_smoothing_temperature_mm", 1e-5
                          )) != mortar_gap_smoothing_temperature_mm))
+            )
+            contact_discretization_baseline_pending = (
+                nested_mesh_transfer or contact_multipliers_need_rebuild
+                or contact_sampling_changed
             )
             checkpoint_state_current_layout = not (
                 contact_multipliers_need_rebuild or contact_sampling_changed
@@ -1736,18 +1760,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     comparable_requested_metadata[support_seed_key],
                 )
             # Checkpoints predating the optional punch seed mode used a
-            # required punch reaction seed. Preserve that legacy default so
-            # enabling the soft mode rebuilds the contact multipliers.
+            # required punch reaction seed. Preserve that legacy metadata
+            # default; the seed choice is compared as an initialization mode
+            # below and does not invalidate contact-row reactions.
             comparable_saved_metadata.setdefault(
                 "soft_punch_support_seed", False
-            )
-            checkpoint_support_seed_changed = any(
-                bool(comparable_saved_metadata[key])
-                != bool(comparable_requested_metadata[key])
-                for key in (
-                    "soft_holder_support_seed", "soft_punch_support_seed",
-                    "soft_die_support_seed",
-                )
             )
             comparable_saved_metadata.setdefault(
                 "punch_force_increment_max_subdivisions", 4
@@ -1804,6 +1821,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 # may change this cap and let the existing force/plastic
                 # increment controls subdivide steps where needed.
                 "maximum_increment_mm",
+                # The target stroke is a continuation endpoint, not model
+                # physics. Permit extending a formed checkpoint to the full
+                # benchmark stroke without changing its committed state.
+                "maximum_stroke_mm",
                 "holder_position_control_mm",
                 "holder_support_search_radius_mm",
                 "holder_support_seed_gap_limit_mm",
@@ -1814,10 +1835,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 "punch_force_increment_relative_tolerance",
                 "maximum_plastic_increment_per_step",
                 # These are active-set initialization strategies, not model
-                # physics. Permit changing them on resume; their multipliers
-                # are discarded below so the new strategy starts from the
-                # saved displacement and constitutive history cleanly.
+                # physics. Permit changing them on resume while retaining any
+                # contact multipliers that can be mapped to the current rows.
                 "soft_holder_support_seed",
+                "holder_support_transfer_enabled",
                 "soft_punch_support_seed",
                 "soft_die_support_seed",
                 # Curvature blending changes only the approximate contact
@@ -1896,7 +1917,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 failure_log = json.loads(str(saved["failure_log_json"].item()))
             if "suggested_increment_mm" in saved.files:
                 suggested_increment_mm = min(
-                    float(saved["suggested_increment_mm"]), maximum_increment_mm
+                    (float(saved["suggested_increment_mm"])
+                     if resume_increment_mm is None else resume_increment_mm),
+                    maximum_increment_mm,
                 )
             # A saved floor belongs to a failed trial, not to the committed
             # equilibrium state.  Restart each new continuation attempt from
@@ -2203,13 +2226,12 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             else:
                 committed_contact_multipliers = np.zeros(row_count)
                 committed_friction_multipliers = np.zeros(row_count)
-            if (checkpoint_holder_position_changed
-                    or checkpoint_support_seed_changed):
+            if checkpoint_holder_position_changed:
                 # A changed holder actuator setting changes both the contact
-                # geometry and the generalized vertical load. A changed
-                # support-seed strategy also changes which unilateral rows
-                # are mandatory. Rebuild the initial reactions from the
-                # restarted state instead of carrying incompatible multipliers.
+                # geometry and the generalized vertical load, so its saved
+                # reactions are incompatible with the restarted state. A
+                # support-seed strategy only changes active-set initialization;
+                # retain compatible row reactions as a warm start.
                 committed_contact_multipliers.fill(0.)
                 committed_friction_multipliers.fill(0.)
                 checkpoint_has_contact_multipliers = False
@@ -2289,6 +2311,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     "springback_unload_fractions_json",
                 ):
                     checkpoint_extra.pop(key, None)
+                # The restored state is the saved formed configuration, not
+                # the partially unloaded springback iterate.  Keep the local
+                # guard in sync with the cleared checkpoint metadata so an
+                # explicit same-stroke contact re-equilibration is permitted.
+                springback_checkpoint_active = False
                 # Resuming the saved formed state starts a new forming and
                 # unloading cycle.  Do not carry the prior partial-stroke
                 # withdrawal marker forward, or a later full-stroke run with
@@ -2588,10 +2615,11 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
 
         def switch_holder_support(contact_result):
             """Move the unilateral holder seed when its contact opens or pulls."""
-            if contact_semismooth_first:
+            if not holder_support_transfer_enabled:
                 # The FB solve treats every holder row as a unilateral
-                # complementarity pair, so pinning or transferring one seed
-                # would reintroduce an artificial reaction path.
+                # complementarity pair. In active-set mode, disabling this
+                # switch independently allows solver-path comparisons without
+                # moving the required holder reaction seed.
                 return None
             if holder_seed_row is None:
                 return None
@@ -2914,19 +2942,34 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 & local_neighbor_mask
                 & (current_gaps[punch_rows] <= local_gap_limit)
             ]
-            # A row visited earlier in this support-transfer chain can still
-            # be the only valid force path after the active-set solve.  Prefer
-            # an actual compressive reaction even when that row was visited;
-            # ``visited`` only prevents geometric reseeding loops.
+            # A previously visited row can become compressive in the new
+            # active-set solve, but requiring it again can ping-pong the seed
+            # between two neighboring mortar samples.  Prefer unvisited
+            # compressive rows.  If every compressive candidate was already
+            # tried in this transfer chain, retain those rows only as an
+            # unilateral active-set warm start and release the required seed.
             active_compressive = local_candidates[
                 contact_result.active_rows[local_candidates]
                 & (contact_result.multipliers[local_candidates] < -1e-2)
             ]
-            if active_compressive.size:
-                replacement = int(active_compressive[
-                    np.argmin(current_gaps[active_compressive])
+            unvisited_active_compressive = active_compressive[
+                ~np.isin(
+                    active_compressive,
+                    tuple(punch_support_visited_rows),
+                )
+            ]
+            release_to_unilateral = False
+            if unvisited_active_compressive.size:
+                replacement = int(unvisited_active_compressive[
+                    np.argmin(current_gaps[unvisited_active_compressive])
                 ])
                 replacement_mode = "compressive"
+            elif active_compressive.size:
+                initial_active[active_compressive] = True
+                required_active[active_compressive] = False
+                replacement = -1
+                replacement_mode = "release-to-unilateral"
+                release_to_unilateral = True
             else:
                 # At a support transition the nearest geometrically closed
                 # punch row is often inactive in this linearization. Requiring
@@ -2998,31 +3041,40 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 # row with no nearby compressive replacement is different: it
                 # has already failed as a reaction path for this increment.
                 punch_support_released_rows.add(old_row)
-                nearest_probe_rows = np.argsort(point_distances)[:min(
-                    5, point_distances.size
-                )]
-                nearest_probe = [
-                    (
-                        int(punch_rows[index]),
-                        float(point_distances[index]),
-                        float(current_gaps[punch_rows[index]]),
-                        float(contact_result.multipliers[punch_rows[index]]),
-                        bool(contact_result.active_rows[punch_rows[index]]),
-                        bool(punch_rows[index] in punch_support_visited_rows),
-                        bool(punch_rows[index] in punch_support_released_rows),
+                if release_to_unilateral:
+                    print(
+                        "[forming-contact] release required punch seed "
+                        f"row={old_row}; nearby compressive rows were already "
+                        "visited in this transfer chain and remain unilateral "
+                        "active-set warm starts",
+                        flush=True,
                     )
-                    for index in nearest_probe_rows
-                ]
-                print(
-                    "[forming-contact] release unsupported punch seed "
-                    f"row={old_row} (lambda={old_multiplier:.3e}, "
-                    f"gap={current_gaps[old_row]:.3e} mm); "
-                    f"no local punch sample within {local_distance_limit:.3e} mm "
-                    "carried a plausible compression; nearest "
-                    "(row,distance,gap,lambda,active,visited,released)="
-                    f"{nearest_probe}",
-                    flush=True,
-                )
+                else:
+                    nearest_probe_rows = np.argsort(point_distances)[:min(
+                        5, point_distances.size
+                    )]
+                    nearest_probe = [
+                        (
+                            int(punch_rows[index]),
+                            float(point_distances[index]),
+                            float(current_gaps[punch_rows[index]]),
+                            float(contact_result.multipliers[punch_rows[index]]),
+                            bool(contact_result.active_rows[punch_rows[index]]),
+                            bool(punch_rows[index] in punch_support_visited_rows),
+                            bool(punch_rows[index] in punch_support_released_rows),
+                        )
+                        for index in nearest_probe_rows
+                    ]
+                    print(
+                        "[forming-contact] release unsupported punch seed "
+                        f"row={old_row} (lambda={old_multiplier:.3e}, "
+                        f"gap={current_gaps[old_row]:.3e} mm); "
+                        f"no local punch sample within {local_distance_limit:.3e} mm "
+                        "carried a plausible compression; nearest "
+                        "(row,distance,gap,lambda,active,visited,released)="
+                        f"{nearest_probe}",
+                        flush=True,
+                    )
             return replacement
 
         def retry_with_holder_support(new_row, solver_label, previous_result):
@@ -3087,7 +3139,10 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             return (
                 contact_result,
                 f"{next_label}; punch-support-transfer-from-{solver_label}",
-                new_row,
+                # The third result is reserved for the holder support row.
+                # A punch row index must not escape into the holder-support
+                # state carried by the outer Newton iteration.
+                downstream_row,
             )
 
         for regularization_factor in regularization_factors:
@@ -3341,14 +3396,43 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "SCIKIT_FVM_FORMING_FORCE_CHANGE_TOLERANCE must be finite and "
             "positive"
         )
-    for record in records:
+    for record_index, record in enumerate(records):
         relative_change = record.get(
             "punch_force_prediction_error_relative",
             record.get("punch_force_relative_change"),
         )
+        local_change = record.get("punch_force_local_relative_change")
+        if local_change is None:
+            local_change = 0.0
+            if (record_index > 0
+                    and not record.get(
+                        "contact_discretization_re_equilibration", False
+                    )):
+                previous_record = records[record_index - 1]
+                interval = (
+                    float(record.get("stroke_mm", 0.0))
+                    - float(previous_record.get("stroke_mm", 0.0))
+                )
+                if interval > 1e-14:
+                    current_force = float(
+                        record.get("punch_force_N_half_model", 0.0)
+                    )
+                    previous_force = float(
+                        previous_record.get("punch_force_N_half_model", 0.0)
+                    )
+                    local_floor = max(
+                        0.05 * punch_force_change_reference_N, 1.0
+                    )
+                    local_change = abs(
+                        current_force - previous_force
+                    ) / max(
+                        abs(current_force), abs(previous_force), local_floor
+                    )
+            record["punch_force_local_relative_change"] = float(local_change)
         if relative_change is not None:
             record["force_resolution_unresolved_for_requested_tolerance"] = (
-                float(relative_change) > forming_force_change_tolerance
+                max(float(relative_change), float(local_change))
+                > forming_force_change_tolerance
             )
     slow_progress_iteration_limit = int(
         os.environ.get("SCIKIT_FVM_FORMING_SLOW_PROGRESS_LIMIT", "8")
@@ -3370,6 +3454,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         )
     def advance_to(stroke: float, subdivision_depth: int = 0):
         nonlocal checkpoint_state_current_layout
+        nonlocal contact_discretization_baseline_pending
         nonlocal displacement, holder_z, committed, committed_contact_multipliers
         nonlocal committed_friction_multipliers
         nonlocal previous_displacement, previous_holder_z, previous_stroke
@@ -5114,6 +5199,29 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                                 or contact_feasible_merit_accept
                             )
                         )
+                        # At the edge of the normalized contact tolerance,
+                        # the max contact metric can oscillate by a fraction
+                        # of one tolerance as the controlling die row changes.
+                        # Rejecting a full coupled Newton step for that tiny
+                        # oscillation led to repeated alpha=1/8..1/4 steps,
+                        # even when both force residual and combined physical
+                        # merit improved substantially. Permit a small bounded
+                        # contact-metric tradeoff; strict contact tolerances
+                        # below still gate convergence and history commit.
+                        equilibrium_contact_tradeoff_accept = (
+                            equilibrium_progress
+                            and candidate_contact_violation
+                            <= current_contact_violation
+                            + max(2e-2, 2e-2 * current_contact_violation)
+                            and candidate_merit
+                            <= current_merit - max(
+                                1e-10, 1e-3 * max(current_merit, 1.)
+                            )
+                        )
+                        equilibrium_filter_accept = (
+                            equilibrium_filter_accept
+                            or equilibrium_contact_tradeoff_accept
+                        )
                     else:
                         # While contact is infeasible, do not trade a large
                         # increase in complementarity for a negligible force
@@ -5520,13 +5628,16 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     force_stagnation_window_start_iteration = iteration
                     force_stagnation_window_reduction = None
                 if (candidate_eval is not None and not candidate_is_converged
-                        and newton_step_length <= 1.25e-1):
+                        and newton_step_length <= 2.5e-1):
                     small_alpha_iterations += 1
                 else:
                     small_alpha_iterations = 0
                 # Repeatedly damped Armijo steps signal a poor local tangent or
-                # a contact branch transition. Raise regularization and retry
-                # the same iterate before spending the full Newton budget on
+                # a contact branch transition. Include quarter steps here:
+                # repeated traces at migrating tool rows settled on alpha=1/4,
+                # below the force-progress threshold, without ever triggering
+                # a tangent regularization retry. Raise regularization and
+                # retry the same iterate before spending the Newton budget on
                 # nearly unchanged steps.
                 if (candidate_eval is not None
                         and not candidate_is_converged
@@ -5857,13 +5968,23 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         punch_detachment_event = False
         secant_prediction_rejected = False
         relative_force_change = 0.0
+        local_relative_force_change = 0.0
         relative_force_prediction_error = 0.0
+        contact_discretization_re_equilibration = (
+            contact_discretization_baseline_pending
+            and abs(float(stroke) - accepted_stroke) <= 1e-12
+        )
         holder_jump = abs(trial_holder_z - holder_z)
         holder_jump_exceeds_tolerance = (
             holder_position_control_mm is None
             and holder_jump > holder_jump_tolerance_mm
         )
-        if records:
+        # A mesh or contact-sampling transfer changes discrete reactions even
+        # when the physical stroke is unchanged. The first equilibrium with
+        # the new discretization establishes a new force-history baseline;
+        # comparing it to the prior discretization would create a fictitious
+        # force jump and can recursively cut back a zero-length increment.
+        if records and not contact_discretization_re_equilibration:
             previous_punch_force = float(
                 records[-1]["punch_force_N_half_model"]
             )
@@ -5877,6 +5998,20 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 abs(punch_force), abs(previous_punch_force),
                 abs(punch_force_change_reference_N), 1.0,
             )
+            # Keep the reference-load-scaled change above to control the
+            # absolute force error near first contact and detachment. Also
+            # resolve the curve relative to its local reaction once that
+            # reaction is measurable: scaling only by the holder reference
+            # can accept 10--20% changes when punch force is still small.
+            local_force_floor = max(
+                0.05 * punch_force_change_reference_N, 1.0
+            )
+            local_relative_force_change = abs(
+                punch_force - previous_punch_force
+            ) / max(
+                abs(punch_force), abs(previous_punch_force),
+                local_force_floor,
+            )
             relative_force_prediction_error = relative_force_change
             if len(records) >= 2:
                 previous_record = records[-2]
@@ -5885,9 +6020,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     - float(previous_record["stroke_mm"])
                 )
                 secant_records = (previous_record, records[-1])
-                secant_force_floor = max(
-                    0.05 * punch_force_change_reference_N, 1.0
-                )
+                secant_force_floor = local_force_floor
                 secant_history_is_smooth = all(
                     not record.get("force_resolution_unresolved", False)
                     and not record.get("holder_jump_unresolved", False)
@@ -5927,8 +6060,17 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                         )
             if (relative_force_prediction_error
                     > forming_force_change_tolerance
+                    or local_relative_force_change
+                    > forming_force_change_tolerance
                     or holder_jump_exceeds_tolerance):
                 reasons = []
+                if (local_relative_force_change
+                        > forming_force_change_tolerance):
+                    reasons.append(
+                        "punch-force local change cutback: relative change "
+                        f"{local_relative_force_change:.3e} exceeds "
+                        f"{forming_force_change_tolerance:.3e}"
+                    )
                 if (relative_force_prediction_error
                         > forming_force_change_tolerance):
                     reasons.append(
@@ -5951,6 +6093,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     "subdivision_depth": int(subdivision_depth),
                     "reason": reason,
                     "punch_force_relative_change": float(relative_force_change),
+                    "punch_force_local_relative_change": float(
+                        local_relative_force_change
+                    ),
                     "punch_force_prediction_error_relative": float(
                         relative_force_prediction_error
                     ),
@@ -5985,6 +6130,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 # event and record whether it includes full punch detachment.
                 force_resolution_unresolved = (
                     relative_force_prediction_error
+                    > forming_force_change_tolerance
+                    or local_relative_force_change
                     > forming_force_change_tolerance
                 )
                 force_resolution_unresolved_for_requested_tolerance = (
@@ -6081,6 +6228,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         )
         records.append({
             "step": len(records), "stroke_mm": float(stroke), "punch_force_N_half_model": punch_force,
+            "contact_discretization_re_equilibration": (
+                contact_discretization_re_equilibration
+            ),
             "normal_punch_force_N_half_model": normal_punch_force,
             "friction_punch_force_N_half_model": friction_punch_force,
             "holder_position_mm": holder_z, "newton_iterations": iteration,
@@ -6103,6 +6253,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 punch_rows
             ][active_punch].tolist(),
             "active_punch_contact_gaps_mm": punch_gaps[active_punch].tolist(),
+            # Retain the complete unilateral row state, including inactive
+            # near-contact rows.  The active-only view above cannot distinguish
+            # a smoothly moving contact patch from active-set chatter when two
+            # accepted equilibria have similarly small gaps.
+            "punch_contact_row_gaps_mm": punch_gaps.tolist(),
+            "punch_contact_row_multipliers_N_per_mm": multipliers[
+                punch_rows
+            ].tolist(),
+            "punch_contact_row_active": accepted_punch_active.tolist(),
             "active_punch_contact_normals": punch_projection.normals[
                 active_punch
             ].tolist(),
@@ -6209,6 +6368,9 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             "holder_jump_unresolved": holder_jump_unresolved,
             "punch_detachment_event": punch_detachment_event,
             "punch_force_relative_change": relative_force_change,
+            "punch_force_local_relative_change": (
+                local_relative_force_change
+            ),
             "punch_force_prediction_error_relative": (
                 relative_force_prediction_error
             ),
@@ -6227,6 +6389,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 np.max(committed[..., equivalent_plastic_strain_index])
             ),
         })
+        if contact_discretization_re_equilibration:
+            contact_discretization_baseline_pending = False
         checkpoint_state_current_layout = True
         save_checkpoint()
         print(
@@ -6473,6 +6637,29 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
         save_checkpoint()
     if punch_withdrawal_active:
         while accepted_stroke > 1e-10:
+            # Once the punch is detached and has zero reaction, withdrawing
+            # it through a positive gap does not change the blank equilibrium.
+            # Jump directly to zero in this case instead of writing thousands
+            # of identical equilibrium checkpoints at the forming increment.
+            punch_reaction_free = (
+                records
+                and abs(records[-1].get("punch_force_N_half_model", 0.)) <= 1e-12
+                and np.all(np.abs(
+                    committed_contact_multipliers[punch_rows]
+                ) <= 1e-10)
+                and np.all(np.abs(
+                    committed_friction_multipliers[punch_rows]
+                ) <= 1e-10)
+            )
+            if punch_reaction_free:
+                zero_stroke_gaps, _, _ = tool_state(
+                    displacement, holder_z, 0.
+                )
+                if np.min(
+                    zero_stroke_gaps[:punch_rows.size], initial=np.inf
+                ) >= -1e-7:
+                    advance_to(0.)
+                    continue
             withdrawal_increment = min(
                 maximum_increment_mm,
                 max(minimum_increment_mm, suggested_increment_mm),
@@ -6593,6 +6780,15 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
     def centerline_thickness(profile):
         return min(profile, key=lambda item: abs(item[0]))[1]
 
+    forming_force_stroke_curve_resolved = not any(
+        record.get(
+            "force_resolution_unresolved_for_requested_tolerance",
+            record.get("force_resolution_unresolved", False),
+        )
+        or record.get("holder_jump_unresolved", False)
+        for record in records
+    )
+
     def reference_data_comparisons(thickness_profile, thickness_state):
         comparisons = {}
         if reference_force_stroke_curve_input is not None:
@@ -6612,6 +6808,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             ], dtype=float)
             comparisons["punch_force_stroke"] = {
                 "reference_csv": str(Path(reference_force_stroke_csv)),
+                "model_curve_resolved": forming_force_stroke_curve_resolved,
                 **_compare_reference_curve(
                     model_force_curve,
                     reference_force_stroke_curve_input,
@@ -6921,13 +7118,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                 ))
                 for record in records
             ),
-            "forming_force_stroke_curve_resolved": not any(
-                record.get(
-                    "force_resolution_unresolved_for_requested_tolerance",
-                    record.get("force_resolution_unresolved", False),
-                )
-                or record.get("holder_jump_unresolved", False)
-                for record in records
+            "forming_force_stroke_curve_resolved": (
+                forming_force_stroke_curve_resolved
             ),
             "forming_tolerance_history_complete": all(
                 "contact_complementarity_tolerance_N_mm" in record
@@ -7488,13 +7680,8 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
             ))
             for record in records
         ),
-        "forming_force_stroke_curve_resolved": not any(
-            record.get(
-                "force_resolution_unresolved_for_requested_tolerance",
-                record.get("force_resolution_unresolved", False),
-            )
-            or record.get("holder_jump_unresolved", False)
-            for record in records
+        "forming_force_stroke_curve_resolved": (
+            forming_force_stroke_curve_resolved
         ),
         "forming_tolerance_history_complete": all(
             "contact_complementarity_tolerance_N_mm" in record
@@ -7553,6 +7740,7 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     and reference_process_material_configuration_matches(
                         reference_condition_checks
                     )
+                    and forming_force_stroke_curve_resolved
                 ),
                 "reason": (
                     "Numerical overlap comparison is valid for the selected "
@@ -7561,7 +7749,14 @@ def run(nx: int = 70, nz: int = 4, maximum_stroke_mm: float = 70.0,
                     if (reference_force_stroke_csv is not None
                         and reference_process_material_configuration_matches(
                             reference_condition_checks
-                        )) else
+                        ) and forming_force_stroke_curve_resolved) else
+                    "The model contains unresolved punch-force or holder-branch "
+                    "increments; the overlap error is reported for diagnosis, "
+                    "but direct force-curve comparison is not valid."
+                    if (reference_force_stroke_csv is not None
+                        and reference_process_material_configuration_matches(
+                            reference_condition_checks
+                        ) and not forming_force_stroke_curve_resolved) else
                     "CSV input is available, but BHF, friction, material, or "
                     "load control does not match the reference."
                     if reference_force_stroke_csv is not None else

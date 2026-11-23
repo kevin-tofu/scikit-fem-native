@@ -1,0 +1,38 @@
+{
+  "diagnostic": "same-stroke re-equilibration from the accepted 31.440203337 mm state",
+  "source_checkpoint": "/tmp/forming-contact4-holderforce-mesh1-toolcontacts-31p44-tangent2-dt001-to70.npz",
+  "solver_branches": [
+    {
+      "contact_semismooth_first": true,
+      "result_checkpoint": "/tmp/forming-contact4-step638-reequil-semismooth.npz",
+      "step": 639,
+      "stroke_mm": 31.4402033370337,
+      "force_N_half_model": 32.40001440688016,
+      "equilibrium_residual_inf_N_per_mm": 0.23778449906067678,
+      "active_punch_rows": [
+        159
+      ],
+      "active_punch_point_xz_mm": [
+        23.75810714421238,
+        -28.738148613517772
+      ]
+    },
+    {
+      "contact_semismooth_first": false,
+      "result_checkpoint": "/tmp/forming-contact4-step638-reequil-active-set.npz",
+      "step": 639,
+      "stroke_mm": 31.4402033370337,
+      "force_N_half_model": 32.40001440688016,
+      "equilibrium_residual_inf_N_per_mm": 0.23778449906067678,
+      "active_punch_rows": [
+        159
+      ],
+      "active_punch_point_xz_mm": [
+        23.75810714421238,
+        -28.738148613517772
+      ]
+    }
+  ],
+  "interpretation": "At this accepted state, re-equilibration converged to the same contact row, force, and residual for both solver orderings. This argues against the solver ordering alone creating the low-force branch. The preceding step-635 force drop remains unresolved and may reflect path instability or another discretization/continuation effect.",
+  "benchmark_valid": false
+}
