@@ -101,8 +101,19 @@ The package also exposes reusable local physics APIs. For example,
 integration-point response. The kernel does not scatter into a global sparse
 matrix; the caller owns global DOF mapping, boundary constraints, and coupling
 to other fields. Thermal, surface, Tet10, Hex20, J2, and St. Venant–Kirchhoff
-local kernels follow the same separation. See the API reference and examples
-for supported element and quadrature combinations.
+local kernels follow the same separation.
+
+A complete small-strain mechanics solve is available in
+[`examples/linear_elasticity_standalone.py`](examples/linear_elasticity_standalone.py):
+
+```bash
+python examples/linear_elasticity_standalone.py
+```
+
+It creates a tetrahedral mesh, defines an isotropic material and weak form,
+assembles with `skfemntv.asm`, applies a clamp, and solves with SciPy. It does
+not import or require kktkit. The example demonstrates single-physics assembly;
+multiphysics coupling and KKT constraints remain application-level concerns.
 
 ## Experimental H(div): affine RT0 simplices
 
