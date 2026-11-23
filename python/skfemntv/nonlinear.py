@@ -595,6 +595,165 @@ class StVenantKirchhoffMaterial:
         )
 
 
+@dataclass(frozen=True)
+class ThermoelasticStVenantKirchhoffMaterialEvaluation:
+    """Finite-deformation thermoelastic stress and consistent field tangents."""
+
+    deformation_gradient: np.ndarray
+    thermal_strain: np.ndarray
+    mechanical_green_lagrange_strain: np.ndarray
+    second_piola_kirchhoff_stress: np.ndarray
+    first_piola_kirchhoff_stress: np.ndarray
+    tangent_deformation_gradient: np.ndarray
+    tangent_temperature_change: np.ndarray
+    strain_energy_density: np.ndarray
+    entropy_density: np.ndarray
+    entropy_deformation_gradient: np.ndarray
+    entropy_temperature_change: np.ndarray
+
+
+@dataclass(frozen=True)
+class ThermoelasticStVenantKirchhoffMaterial:
+    """StVK material with isotropic thermal eigenstrain.
+
+    The constitutive strain is ``E_mech = 0.5 * (F.T @ F - I) - alpha*dT*I``.
+    Thermal strain is linearized in temperature change, while the mechanical
+    kinematics retain the total-Lagrangian deformation gradient.
+    """
+
+    young_modulus: float
+    poisson_ratio: float
+    thermal_expansion_coefficient: float
+
+    def __post_init__(self) -> None:
+        young = float(self.young_modulus)
+        poisson = float(self.poisson_ratio)
+        expansion = float(self.thermal_expansion_coefficient)
+        if not np.isfinite(young) or young <= 0.0:
+            raise ValueError("young_modulus must be positive and finite")
+        if not np.isfinite(poisson) or not -1.0 < poisson < 0.5:
+            raise ValueError("poisson_ratio must be finite and in (-1, 0.5)")
+        if not np.isfinite(expansion):
+            raise ValueError("thermal_expansion_coefficient must be finite")
+        object.__setattr__(self, "young_modulus", young)
+        object.__setattr__(self, "poisson_ratio", poisson)
+        object.__setattr__(self, "thermal_expansion_coefficient", expansion)
+
+    @property
+    def lame_lambda(self) -> float:
+        young = self.young_modulus
+        poisson = self.poisson_ratio
+        return young * poisson / ((1.0 + poisson) * (1.0 - 2.0 * poisson))
+
+    @property
+    def lame_mu(self) -> float:
+        return self.young_modulus / (2.0 * (1.0 + self.poisson_ratio))
+
+    def evaluate(
+        self,
+        deformation_gradient: np.ndarray,
+        temperature_change: np.ndarray | float,
+    ) -> ThermoelasticStVenantKirchhoffMaterialEvaluation:
+        deformation = np.asarray(deformation_gradient, dtype=np.float64)
+        if (
+            deformation.ndim < 2
+            or deformation.shape[-2:] != (3, 3)
+            or not np.all(np.isfinite(deformation))
+        ):
+            raise ValueError(
+                "deformation_gradient must be finite with trailing shape (3, 3)"
+            )
+        jacobian = np.linalg.det(deformation)
+        if np.any(jacobian <= 0.0):
+            raise ValueError("deformation_gradient must have positive determinant")
+        temperature = np.asarray(temperature_change, dtype=np.float64)
+        try:
+            temperature = np.broadcast_to(temperature, deformation.shape[:-2])
+        except ValueError as error:
+            raise ValueError(
+                "temperature_change must be scalar or match deformation points"
+            ) from error
+        if not np.all(np.isfinite(temperature)):
+            raise ValueError("temperature_change must be finite")
+
+        identity = np.eye(3)
+        thermal_strain = (
+            self.thermal_expansion_coefficient
+            * temperature[..., None, None]
+            * identity
+        )
+        green_strain = 0.5 * (
+            np.swapaxes(deformation, -1, -2) @ deformation - identity
+        )
+        mechanical_strain = green_strain - thermal_strain
+        strain_trace = np.trace(mechanical_strain, axis1=-2, axis2=-1)
+        second_piola = (
+            self.lame_lambda * strain_trace[..., None, None] * identity
+            + 2.0 * self.lame_mu * mechanical_strain
+        )
+        first_piola = deformation @ second_piola
+        cauchy = (
+            first_piola @ np.swapaxes(deformation, -1, -2)
+        ) / jacobian[..., None, None]
+        energy = (
+            0.5 * self.lame_lambda * strain_trace**2
+            + self.lame_mu * np.sum(mechanical_strain**2, axis=(-2, -1))
+        )
+        tangent_deformation = np.empty(
+            deformation.shape[:-2] + (3, 3, 3, 3), dtype=np.float64
+        )
+        entropy_deformation = np.empty(deformation.shape[:-2] + (3, 3))
+        for k in range(3):
+            for component in range(3):
+                delta_deformation = np.zeros_like(deformation)
+                delta_deformation[..., k, component] = 1.0
+                delta_strain = 0.5 * (
+                    np.swapaxes(delta_deformation, -1, -2) @ deformation
+                    + np.swapaxes(deformation, -1, -2) @ delta_deformation
+                )
+                delta_trace = np.trace(delta_strain, axis1=-2, axis2=-1)
+                delta_second_piola = (
+                    self.lame_lambda * delta_trace[..., None, None] * identity
+                    + 2.0 * self.lame_mu * delta_strain
+                )
+                delta_first_piola = (
+                    delta_deformation @ second_piola
+                    + deformation @ delta_second_piola
+                )
+                tangent_deformation[..., :, :, k, component] = delta_first_piola
+                entropy_deformation[..., k, component] = (
+                    self.thermal_expansion_coefficient
+                    * np.trace(delta_second_piola, axis1=-2, axis2=-1)
+                )
+
+        thermal_stress_derivative = -self.thermal_expansion_coefficient * (
+            3.0 * self.lame_lambda + 2.0 * self.lame_mu
+        ) * identity
+        tangent_temperature = deformation @ thermal_stress_derivative
+        entropy_density = self.thermal_expansion_coefficient * np.trace(
+            second_piola, axis1=-2, axis2=-1
+        )
+        entropy_temperature = np.full(
+            temperature.shape,
+            -3.0
+            * self.thermal_expansion_coefficient**2
+            * (3.0 * self.lame_lambda + 2.0 * self.lame_mu),
+        )
+        return ThermoelasticStVenantKirchhoffMaterialEvaluation(
+            deformation_gradient=deformation.copy(),
+            thermal_strain=thermal_strain,
+            mechanical_green_lagrange_strain=mechanical_strain,
+            second_piola_kirchhoff_stress=second_piola,
+            first_piola_kirchhoff_stress=first_piola,
+            tangent_deformation_gradient=tangent_deformation,
+            tangent_temperature_change=tangent_temperature,
+            strain_energy_density=energy,
+            entropy_density=entropy_density,
+            entropy_deformation_gradient=entropy_deformation,
+            entropy_temperature_change=entropy_temperature,
+        )
+
+
 class NeoHookeanAssembler:
     """Total-Lagrangian compressible Neo-Hookean assembler.
 

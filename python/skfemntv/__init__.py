@@ -155,9 +155,16 @@ from .linear_elasticity import (
     isotropic_linear_elasticity_form,
 )
 from .thermal import (
+    AffineTemperatureConductivity,
+    AffineTemperatureConductivityKernel,
     IsotropicThermalMaterial,
+    KelvinVoigtDissipationContributions,
+    KelvinVoigtDissipationKernel,
+    NonlinearThermalElementContributions,
     ScalarThermalElementContributions,
     ScalarThermalElementKernel,
+    ThermalFluxEvaluation,
+    evaluate_thermal_flux,
 )
 from .hex8_elasticity import (
     Hex8LinearElasticityIntegration,
@@ -209,6 +216,8 @@ from .nonlinear import (
     PlasticEvaluation,
     StVenantKirchhoffMaterial,
     StVenantKirchhoffMaterialEvaluation,
+    ThermoelasticStVenantKirchhoffMaterial,
+    ThermoelasticStVenantKirchhoffMaterialEvaluation,
 )
 from .hill48 import (
     Hill48MaterialEvaluation,
@@ -228,9 +237,16 @@ __all__ = [
     "__version__",
     "IsotropicLinearElasticity",
     "isotropic_linear_elasticity_form",
+    "AffineTemperatureConductivity",
+    "AffineTemperatureConductivityKernel",
     "IsotropicThermalMaterial",
+    "KelvinVoigtDissipationContributions",
+    "KelvinVoigtDissipationKernel",
+    "NonlinearThermalElementContributions",
     "ScalarThermalElementContributions",
     "ScalarThermalElementKernel",
+    "ThermalFluxEvaluation",
+    "evaluate_thermal_flux",
     "Hex8LinearElasticityIntegration",
     "Hex8LinearElasticityKernel",
     "Hex8LinearElasticityResponse",
@@ -421,4 +437,45 @@ __all__ = [
     "ImplicitInterfacePair",
     "LevelSet",
     "LevelSetDiagnostics",
+]
+
+from .thermoelastic import (
+    ThermoelasticAssemblyEvaluation,
+    ThermoelasticStVenantKirchhoffAssembler,
+)
+
+__all__ += [
+    "ThermoelasticStVenantKirchhoffMaterial",
+    "ThermoelasticStVenantKirchhoffMaterialEvaluation",
+    "ThermoelasticAssemblyEvaluation",
+    "ThermoelasticStVenantKirchhoffAssembler",
+]
+
+from .weakforms import (
+    body_force_weak_form,
+    isotropic_linear_elasticity_weak_form,
+    isotropic_mass_weak_form,
+    isotropic_viscous_weak_form,
+    normal_pressure_weak_form,
+    scalar_thermal_capacity_weak_form,
+    scalar_thermal_conductivity_weak_form,
+    surface_convection_weak_form,
+    surface_heat_flux_weak_form,
+    surface_traction_weak_form,
+    thermal_expansion_coupling_weak_form,
+    volumetric_heat_source_weak_form,
+)
+__all__ += [
+    "body_force_weak_form",
+    "isotropic_linear_elasticity_weak_form",
+    "isotropic_mass_weak_form",
+    "isotropic_viscous_weak_form",
+    "normal_pressure_weak_form",
+    "scalar_thermal_capacity_weak_form",
+    "scalar_thermal_conductivity_weak_form",
+    "surface_convection_weak_form",
+    "surface_heat_flux_weak_form",
+    "surface_traction_weak_form",
+    "thermal_expansion_coupling_weak_form",
+    "volumetric_heat_source_weak_form",
 ]

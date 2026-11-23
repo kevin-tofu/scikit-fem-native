@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a Total-Lagrangian St. Venant–Kirchhoff thermoelastic material and Tet assembly for mechanical and thermal residual/tangent blocks.
+- Export reusable linear, thermal, and surface weak forms, and provide their parity and finite-difference regression tests.
 - Add reusable element-local linear elasticity, thermal, surface-load, J2, and
   St. Venant–Kirchhoff kernels. These APIs return element contributions and leave
   global DOF scatter and multiphysics/contact coupling to the calling solver.
