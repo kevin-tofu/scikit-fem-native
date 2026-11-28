@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.4.7 - 2026-11-28
+
+- Fix fatigue tutorial imports so its regression test also runs from isolated
+  wheel-test working directories.
+
 ## 0.4.6 - 2026-11-28
 
 - Add shifted-Heaviside XFEM and crack-tip enrichment for 2D Mode-I crack
