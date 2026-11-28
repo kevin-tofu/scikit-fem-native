@@ -33,6 +33,19 @@ The `E=1` example uses dimensionless values. Its Paris coefficient is chosen
 for a visible demonstration and is not a material calibration. Outputs are a
 cycle-history CSV, a PNG, and one VTU per solved crack length.
 
+To render the saved displacement fields and crack-growth history as a 10-second
+MP4, install `ffmpeg` and run:
+
+```bash
+python tutorials/fracture_mode_i/fatigue/render_fatigue_video.py
+```
+
+The video is written to
+`tutorials/fracture_mode_i/fatigue/results/fatigue-growth.mp4`. This is a
+post-processing step and does not rerun the fatigue analysis. Use
+`--results-dir` and `--output` to select different input and output locations;
+`--seconds-per-step` changes the hold time for each saved crack state.
+
 This is a quasistatic, linear-elastic Paris-law example. It does not model
 plasticity, overload retardation, closure, mixed-mode direction changes, or
 variable-amplitude cycle counting. The stress-fit `K_I` estimator should be
