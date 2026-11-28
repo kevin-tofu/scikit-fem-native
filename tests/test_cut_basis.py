@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 import skfemntv
-from skfemntv.helpers import ddot,dot,grad
+from skfemntv.helpers import ddot,div,dot,grad,sym_grad
 
 
 @pytest.mark.parametrize("mesh,element",[
@@ -160,6 +160,39 @@ def test_full_domain_cut_assembly_matches_regular_basis():
         skfemntv.asm(mass_stiffness,cut).toarray(),
         skfemntv.asm(mass_stiffness,regular).toarray(),atol=2.e-14,
     )
+
+
+@pytest.mark.parametrize(
+    "mesh,element",
+    [
+        (skfemntv.MeshTri(),skfemntv.ElementTriP1()),
+        (skfemntv.MeshTet(),skfemntv.ElementTetP1()),
+    ],
+)
+def test_cut_elasticity_assembly_matches_regular_basis(mesh,element):
+    vector_element=skfemntv.ElementVector(element,dim=mesh.dim())
+    regular=skfemntv.Basis(mesh,vector_element,intorder=3)
+    cut=skfemntv.CutCellBasis(
+        regular,
+        skfemntv.LevelSet(-np.ones(mesh.p.shape[1]),tolerance=0.)
+        .cut_quadrature(mesh,intorder=3),
+    )
+    lame_lambda=1.7
+    lame_mu=.8
+
+    @skfemntv.BilinearForm
+    def elasticity(u,v,w):
+        return (
+            2.*lame_mu*ddot(sym_grad(u),sym_grad(v))
+            +lame_lambda*div(u)*div(v)
+        )
+
+    regular_matrix=skfemntv.asm(elasticity,regular).toarray()
+    cut_matrix=skfemntv.asm(elasticity,cut,num_threads=2).toarray()
+    np.testing.assert_allclose(
+        cut_matrix,regular_matrix,rtol=2.e-13,atol=2.e-13
+    )
+    np.testing.assert_allclose(cut_matrix,cut_matrix.T,atol=2.e-14)
 
 
 def test_cut_assembly_serial_parallel_agree():

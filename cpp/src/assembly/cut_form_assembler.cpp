@@ -149,17 +149,24 @@ public:
         py::array_t<double,py::array::c_style|py::array::forcecast>gradients,
         py::array_t<double,py::array::c_style|py::array::forcecast>weights):
         CutFormData(dofs,offsets,shape,gradients,weights){build_pattern();build_coloring();}
-    void assemble(py::object value_object,py::object gradient_object,int requested_threads){
-        py::array_t<double,py::array::c_style|py::array::forcecast>vh,gh;
+    void assemble(py::object value_object,py::object gradient_object,
+                  int requested_threads,py::object symmetric_gradient_object,
+                  py::object divergence_object){
+        py::array_t<double,py::array::c_style|py::array::forcecast>vh,gh,sh,dh;
         const double*value=coefficient(value_object,vh,"value");
         const double*gradient=coefficient(gradient_object,gh,"gradient");
-        if(!value&&!gradient)throw std::invalid_argument("at least one coefficient is required");
+        const double*symmetric_gradient=coefficient(
+            symmetric_gradient_object,sh,"symmetric_gradient");
+        const double*divergence=coefficient(divergence_object,dh,"divergence");
+        if(!value&&!gradient&&!symmetric_gradient&&!divergence)
+            throw std::invalid_argument("at least one coefficient is required");
         std::fill(values_.begin(),values_.end(),0.);
         {py::gil_scoped_release release;
         for(const auto&color:colors_)native_fem::parallel_for_workers(
             color.size(),requested_threads,[&](std::size_t,std::size_t begin,std::size_t end){
                 for(auto index=begin;index<end;++index)
-                    assemble_cell(color[index],value,gradient);
+                    assemble_cell(color[index],value,gradient,
+                                  symmetric_gradient,divergence);
             });}
     }
     py::array indptr(){return view(indptr_,py::cast(this));}
@@ -176,18 +183,33 @@ private:
             throw std::invalid_argument(std::string("cut ")+name+" coefficient has an invalid shape");
         return (double*)info.ptr;
     }
-    void assemble_cell(int cell,const double*value,const double*gradient){
+    void assemble_cell(int cell,const double*value,const double*gradient,
+                       const double*symmetric_gradient,const double*divergence){
         for(int q=offsets_[cell];q<offsets_[cell+1];++q)for(int a=0;a<nodes_;++a)
             for(int b=0;b<nodes_;++b){
-                double entry=0.;
-                if(value)entry+=value[q]*shape_[q*nodes_+a]*shape_[q*nodes_+b];
+                double diagonal_entry=0.;
+                if(value)diagonal_entry+=value[q]*shape_[q*nodes_+a]*shape_[q*nodes_+b];
                 if(gradient)for(int d=0;d<dimension_;++d)
-                    entry+=gradient[q]*gradients_[(q*nodes_+a)*dimension_+d]*
+                    diagonal_entry+=gradient[q]*gradients_[(q*nodes_+a)*dimension_+d]*
                         gradients_[(q*nodes_+b)*dimension_+d];
-                entry*=weights_[q];
-                for(int component=0;component<components_;++component){
-                    int i=a*components_+component,j=b*components_+component;
-                    values_[scatter_[(cell*local_dofs_+i)*local_dofs_+j]]+=entry;
+                for(int c=0;c<components_;++c)for(int d=0;d<components_;++d){
+                    double entry=c==d?diagonal_entry:0.;
+                    if(symmetric_gradient){
+                        double contraction=
+                            gradients_[(q*nodes_+a)*dimension_+d]*
+                            gradients_[(q*nodes_+b)*dimension_+c];
+                        if(c==d)for(int k=0;k<dimension_;++k)
+                            contraction+=
+                                gradients_[(q*nodes_+a)*dimension_+k]*
+                                gradients_[(q*nodes_+b)*dimension_+k];
+                        entry+=.5*symmetric_gradient[q]*contraction;
+                    }
+                    if(divergence)entry+=divergence[q]*
+                        gradients_[(q*nodes_+a)*dimension_+c]*
+                        gradients_[(q*nodes_+b)*dimension_+d];
+                    const int i=a*components_+c,j=b*components_+d;
+                    values_[scatter_[(cell*local_dofs_+i)*local_dofs_+j]]+=
+                        weights_[q]*entry;
                 }
             }
     }
@@ -248,7 +270,9 @@ void native_fem::bind_cut_form_assemblers(py::module_&module){
             py::array_t<double,py::array::c_style|py::array::forcecast>,
             py::array_t<double,py::array::c_style|py::array::forcecast>>())
         .def("assemble",&CutBilinearFormAssembler::assemble,py::arg("value")=py::none(),
-            py::arg("gradient")=py::none(),py::arg("num_threads")=0)
+            py::arg("gradient")=py::none(),py::arg("num_threads")=0,
+            py::arg("symmetric_gradient")=py::none(),
+            py::arg("divergence")=py::none())
         .def_property_readonly("indptr",&CutBilinearFormAssembler::indptr)
         .def_property_readonly("indices",&CutBilinearFormAssembler::indices)
         .def_property_readonly("values",&CutBilinearFormAssembler::values)

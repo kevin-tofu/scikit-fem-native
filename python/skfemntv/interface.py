@@ -18,7 +18,7 @@ class InterfaceField:
 
 
 def jump(field: InterfaceField, *args):
-    """Return a two-sided jump, including scikit-fem's ``jump(w, u)``."""
+    """Return a two-sided jump; interior forms may pass trial and test together."""
     if hasattr(field,"idx"):
         values=tuple(
             ((-1.)**field.idx[index])*value
@@ -42,8 +42,16 @@ def avg(field: InterfaceField, weights=(0.5, 0.5)):
     return master_weight * field.master + slave_weight * field.slave
 
 
-def normal_grad(field: InterfaceField):
-    """Return paired outward-normal derivatives as an InterfaceField."""
+def normal_grad(field: InterfaceField, *args):
+    """Return an interface normal derivative or a symbolic interior trace.
+
+    ``normal_grad(w, u)`` is the interior-facet form used with ``avg``;
+    ``normal_grad(interface_field)`` evaluates paired numeric traces.
+    """
+    if hasattr(field, "idx") and len(args) == 1:
+        from .forms import _interior_normal_gradient
+
+        return _interior_normal_gradient(field, args[0])
     if hasattr(field, "_interface_transform"):
         return field._interface_transform("kind","normal_gradient")
     if not isinstance(field, InterfaceField):

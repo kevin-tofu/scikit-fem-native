@@ -67,14 +67,15 @@ class NativeBilinearForm:
         )
         divergence = self._coefficient("divergence", divergence)
         if self._cut:
-            if symmetric_gradient is not None or divergence is not None:
-                raise ValueError(
-                    "cut-basis symmetric-gradient and divergence assembly "
-                    "is not supported"
-                )
             if value is not None:value=value.reshape(-1)
             if gradient is not None:gradient=gradient.reshape(-1)
-            self._native.assemble(value,gradient,num_threads)
+            if symmetric_gradient is not None:
+                symmetric_gradient=symmetric_gradient.reshape(-1)
+            if divergence is not None:
+                divergence=divergence.reshape(-1)
+            self._native.assemble(
+                value,gradient,num_threads,symmetric_gradient,divergence
+            )
         else:
             self._native.assemble(
                 value,gradient,symmetric_gradient,divergence,num_threads
