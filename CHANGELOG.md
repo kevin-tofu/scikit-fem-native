@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.4.6 - 2026-11-28
+
+- Add shifted-Heaviside XFEM and crack-tip enrichment for 2D Mode-I crack
+  benchmarks, including cut-cell elastic assembly and regression coverage.
+- Add a GridapTopOpt wheel level-set comparison and reproducible crack-growth
+  and Paris-law fatigue tutorials with per-step VTU output.
+- Add a CutFEM symmetric-gradient/divergence kernel and support for interior
+  facet normal-gradient forms used by ghost-penalty stabilization.
 - Add a Total-Lagrangian St. Venant–Kirchhoff thermoelastic material and Tet assembly for mechanical and thermal residual/tangent blocks.
 - Export reusable linear, thermal, and surface weak forms, and provide their parity and finite-difference regression tests.
 - Add reusable element-local linear elasticity, thermal, surface-load, J2, and

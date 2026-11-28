@@ -78,6 +78,13 @@ from .levelset import (
 )
 from .cut_basis import CutCellBasis,ImplicitFacetBasis
 from .implicit_interface import ImplicitInterfacePair
+from .xfem import (
+    ModeICrackTipCutBasis,
+    ShiftedHeavisideCutBasis,
+    ShiftedHeavisideInterfacePair,
+    ShiftedHeavisideTraceBasis,
+    ShiftedHeavisideVectorCutBasis,
+)
 from .forms import (
     BilinearForm,
     Functional,
@@ -435,6 +442,11 @@ __all__ = [
     "ImplicitInterfaceQuadrature",
     "ImplicitFacetBasis",
     "ImplicitInterfacePair",
+    "ShiftedHeavisideCutBasis",
+    "ModeICrackTipCutBasis",
+    "ShiftedHeavisideVectorCutBasis",
+    "ShiftedHeavisideTraceBasis",
+    "ShiftedHeavisideInterfacePair",
     "LevelSet",
     "LevelSetDiagnostics",
 ]

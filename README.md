@@ -115,6 +115,14 @@ assembles with `skfemntv.asm`, applies a clamp, and solves with SciPy. It does
 not import or require kktkit. The example demonstrates single-physics assembly;
 multiphysics coupling and KKT constraints remain application-level concerns.
 
+## Tutorials: unfitted FEM and fracture
+
+The [tutorial index](tutorials/README.md) includes a GridapTopOpt wheel
+level-set comparison, a Mode I XFEM crack benchmark, a load-controlled crack
+growth example, and a Paris-law fatigue demonstration. The fracture examples
+write per-step VTU fields and explicitly document the limits of their
+stress-fit stress-intensity estimate.
+
 ## Experimental H(div): affine RT0 simplices
 
 Affine triangle and tetrahedron RT0 elements are available through the public

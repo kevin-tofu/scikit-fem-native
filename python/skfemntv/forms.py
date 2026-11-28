@@ -92,19 +92,37 @@ class _NormalTrace:
     role: str
     factor: float = 1.0
     coefficient: Any = None
+    side_index: int | None = None
     _is_normal_trace = True
+
+    def _interface_transform(self, operation, value):
+        if operation != "weights" or self.side_index is None:
+            raise UnsupportedNativeForm(
+                "normal-gradient averaging requires an interior-facet side"
+            )
+        weights = tuple(value)
+        if len(weights) != 2:
+            raise ValueError("interface trace weights must have two entries")
+        return _NormalTrace(
+            self.role,
+            self.factor * float(weights[self.side_index]),
+            self.coefficient,
+            self.side_index,
+        )
 
     def with_coefficient(self,coefficient):
         if self.coefficient is not None:
             raise UnsupportedNativeForm(
                 "multiple normal-trace coefficients are not supported"
             )
-        return _NormalTrace(self.role,self.factor,coefficient)
+        return _NormalTrace(
+            self.role,self.factor,coefficient,self.side_index
+        )
 
     def __mul__(self,other):
         if np.isscalar(other):
             return _NormalTrace(
-                self.role,self.factor*other,self.coefficient
+                self.role,self.factor*other,self.coefficient,self.side_index
             )
         if isinstance(other,_NormalTrace) and self.role!=other.role:
             if self.coefficient is not None and other.coefficient is not None:
@@ -120,6 +138,21 @@ class _NormalTrace:
         return NotImplemented
 
     __rmul__=__mul__
+
+
+def _interior_normal_gradient(context, field):
+    if not isinstance(field, (_TrialValue, _TestValue)):
+        raise UnsupportedNativeForm(
+            "interior normal_grad expects a trial or test field"
+        )
+    if not hasattr(context, "idx"):
+        raise UnsupportedNativeForm(
+            "normal_grad(context, field) is only valid on interior facets"
+        )
+    side_indices = tuple(context.idx)
+    role = "trial" if isinstance(field, _TrialValue) else "test"
+    side_index = side_indices[0] if role == "trial" else side_indices[1]
+    return _NormalTrace(role, field.factor, side_index=side_index)
 
 
 class _BilinearForm:
@@ -844,7 +877,7 @@ def _anisotropic_tensor_coefficient(raw,coefficient_shape,dimension):
 
 def _native_cross_bilinear_assemble(
     form,trial_basis,test_basis,idx,kwargs,*,memory_limit_bytes=None,
-    memory_safety_factor=1.25,
+    memory_safety_factor=1.25,cache_native_assemblers=True,
 ):
     geometry={
         "x":_QuadratureValue(np.moveaxis(
@@ -879,17 +912,19 @@ def _native_cross_bilinear_assemble(
             "cross-basis BilinearForm must reduce to value, gradient, "
             "or divergence contractions"
         )
-    by_trial=form._cross_cache.setdefault(
-        trial_basis,WeakKeyDictionary()
+    by_trial=(
+        form._cross_cache.setdefault(trial_basis,WeakKeyDictionary())
+        if cache_native_assemblers else None
     )
-    native=by_trial.get(test_basis)
+    native=by_trial.get(test_basis) if by_trial is not None else None
     if native is None:
         native=NativeCrossBilinearForm(
             test_basis,trial_basis,
             memory_limit_bytes=memory_limit_bytes,
             memory_safety_factor=memory_safety_factor,
         )
-        by_trial[test_basis]=native
+        if by_trial is not None:
+            by_trial[test_basis]=native
     elif memory_limit_bytes is not None:
         from .preflight import enforce_memory_budget
         enforce_memory_budget(
@@ -901,13 +936,23 @@ def _native_cross_bilinear_assemble(
         coefficient=_evaluate_coefficient(
             term.coefficient,kwargs,factor=term.factor,squeeze=True
         )
-        matrix=native.assemble(term.kind,coefficient)
+        if term.kind == "value_normal_gradient":
+            matrix=native.assemble_kinds(
+                "value","normal_gradient",coefficient
+            )
+        elif term.kind == "normal_gradient_value":
+            matrix=native.assemble_kinds(
+                "normal_gradient","value",coefficient
+            )
+        else:
+            matrix=native.assemble(term.kind,coefficient)
         result=matrix if result is None else result+matrix
     return result
 
 
 def _native_interior_bilinear_assemble(
-    form,trial_bases,test_bases,kwargs
+    form,trial_bases,test_bases,kwargs,*,cache_native_assemblers=True,
+    memory_limit_bytes=None,memory_safety_factor=1.25,
 ):
     trial_bases=tuple(trial_bases)
     test_bases=tuple(test_bases)
@@ -919,8 +964,17 @@ def _native_interior_bilinear_assemble(
             matrix=_native_cross_bilinear_assemble(
                 form,trial_basis,test_basis,
                 (trial_index,test_index),kwargs,
+                memory_limit_bytes=memory_limit_bytes,
+                memory_safety_factor=memory_safety_factor,
+                cache_native_assemblers=cache_native_assemblers,
             )
             result=matrix if result is None else result+matrix
+            if not cache_native_assemblers:
+                by_trial=form._cross_cache.get(trial_basis)
+                if by_trial is not None:
+                    by_trial.pop(test_basis,None)
+                    if len(by_trial)==0:
+                        form._cross_cache.pop(trial_basis,None)
     return result
 
 
@@ -1104,13 +1158,17 @@ def _native_interface_linear_assemble(
 
 def asm(
     form,*bases,num_threads=None,memory_limit_bytes=None,
-    memory_safety_factor=1.25,**kwargs
+    memory_safety_factor=1.25,cache_native_assemblers=True,**kwargs
 ):
     """Assemble strictly with the native backend.
 
     Unsupported forms raise ``UnsupportedNativeForm``; this function never
-    silently delegates assembly to scikit-fem.
+    silently delegates assembly to scikit-fem. For two-sided interior-facet
+    forms, ``cache_native_assemblers=False`` releases each side-pair's sparse
+    assembler after assembly instead of retaining it for a later reuse.
     """
+    if not isinstance(cache_native_assemblers,bool):
+        raise TypeError("cache_native_assemblers must be a bool")
     requested_threads=0
     if num_threads is not None:
         from .runtime import available_num_threads
@@ -1201,7 +1259,10 @@ def asm(
                     "interior BilinearForm"
                 )
             return _native_interior_bilinear_assemble(
-                form,bases[0],bases[1],kwargs
+                form,bases[0],bases[1],kwargs,
+                cache_native_assemblers=cache_native_assemblers,
+                memory_limit_bytes=memory_limit_bytes,
+                memory_safety_factor=memory_safety_factor,
             )
         if len(bases)==2:
             if num_threads is not None:
@@ -1267,6 +1328,25 @@ def asm(
 
 
 def dot(left, right):
+    if isinstance(left, _NormalTrace) and isinstance(
+        right, (_TrialValue, _TestValue)
+    ):
+        if left.role == "trial" and isinstance(right, _TestValue):
+            return _BilinearTerm(
+                "value_normal_gradient",
+                left.coefficient,
+                left.factor * right.factor,
+            )
+        if left.role == "test" and isinstance(right, _TrialValue):
+            return _BilinearTerm(
+                "normal_gradient_value",
+                left.coefficient,
+                left.factor * right.factor,
+            )
+    if isinstance(right, _NormalTrace) and isinstance(
+        left, (_TrialValue, _TestValue)
+    ):
+        return dot(right, left)
     if isinstance(left,(_TrialValue,_TestValue)) and isinstance(
         right,(_TrialValue,_TestValue)
     ):
