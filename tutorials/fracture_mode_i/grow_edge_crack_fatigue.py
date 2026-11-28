@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tutorials.fracture_mode_i.grow_edge_crack import solve_growth_state
+from grow_edge_crack import solve_growth_state
 
 
 @dataclass(frozen=True)

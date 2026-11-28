@@ -1,4 +1,11 @@
-from tutorials.fracture_mode_i.grow_edge_crack_fatigue import run_fatigue
+import sys
+from pathlib import Path
+
+
+TUTORIAL_DIR = Path(__file__).resolve().parents[1] / "tutorials" / "fracture_mode_i"
+sys.path.insert(0, str(TUTORIAL_DIR))
+
+from grow_edge_crack_fatigue import run_fatigue  # noqa: E402
 
 
 def test_paris_law_advances_crack_and_accumulates_cycles():
